@@ -4,7 +4,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-Role = Literal["admin", "operator", "viewer"]
+Role = Literal["admin", "penjualan", "pengadaan", "viewer"]
 
 
 def _uid() -> str:

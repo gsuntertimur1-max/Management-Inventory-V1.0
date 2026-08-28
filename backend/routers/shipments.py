@@ -62,20 +62,35 @@ async def create_shipment(payload: ShipmentCreate, caller=Depends(principal)):
     if not payload.items:
         raise HTTPException(status_code=400, detail="Minimal satu item barang harus ditambahkan")
 
-    merged: Dict[str, int] = {}
+    merged: Dict[str, float] = {}
     for line in payload.items:
-        merged[line.product_id] = merged.get(line.product_id, 0) + line.quantity
+        if line.weight is None and line.quantity is None:
+            raise HTTPException(status_code=400, detail="Isi kuantum berat untuk setiap barang")
+        products_doc = await db.products.find_one({"id": line.product_id})
+        if not products_doc:
+            raise HTTPException(status_code=404, detail="Produk pada item pengeluaran tidak ditemukan")
+        wpu = float(products_doc.get("weight_per_unit", 1)) or 1
+        # Weight is the only figure entered; primary units are derived from it.
+        weight = float(line.weight) if line.weight is not None else float(line.quantity or 0) * wpu
+        merged[line.product_id] = merged.get(line.product_id, 0.0) + weight
 
     products: Dict[str, dict] = {}
-    for product_id, qty in merged.items():
+    for product_id, weight in merged.items():
         product = await db.products.find_one({"id": product_id})
         if not product:
             raise HTTPException(status_code=404, detail="Produk pada item pengeluaran tidak ditemukan")
+        wpu = float(product.get("weight_per_unit", 1)) or 1
+        qty = int(round(weight / wpu))
+        if qty < 1:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Kuantum {product['name']} terlalu kecil (minimal {wpu} {product.get('weight_unit', 'Kg')})",
+            )
         stock = int(product.get("current_stock", 0))
         if qty > stock:
             raise HTTPException(
                 status_code=400,
-                detail=f"Stok {product['name']} tidak cukup. Tersedia {stock}, diminta {qty}",
+                detail=f"Stok {product['name']} tidak cukup. Tersedia {stock} {product.get('unit', 'Pcs')}, diminta {qty}",
             )
         products[product_id] = product
 
@@ -84,8 +99,11 @@ async def create_shipment(payload: ShipmentCreate, caller=Depends(principal)):
     queue_no = await _next_queue_no(day)
 
     items: List[ShipmentItem] = []
-    for product_id, qty in merged.items():
+    for product_id, weight in merged.items():
         product = products[product_id]
+        wpu = float(product.get("weight_per_unit", 1)) or 1
+        ups = int(product.get("units_per_secondary", 1)) or 1
+        qty = int(round(weight / wpu))
         after = int(product.get("current_stock", 0)) - qty
         items.append(ShipmentItem(
             product_id=product_id,
@@ -93,6 +111,12 @@ async def create_shipment(payload: ShipmentCreate, caller=Depends(principal)):
             product_sku=product["sku"],
             unit=product.get("unit", "Pcs"),
             quantity=qty,
+            weight=round(qty * wpu, 3),
+            weight_unit=product.get("weight_unit", "Kg"),
+            weight_per_unit=wpu,
+            secondary_qty=round(qty / ups, 2),
+            secondary_unit=product.get("secondary_unit", "Dus"),
+            units_per_secondary=ups,
             stock_after=after,
         ))
 
@@ -105,6 +129,7 @@ async def create_shipment(payload: ShipmentCreate, caller=Depends(principal)):
         date=day,
         items=items,
         total_quantity=sum(i.quantity for i in items),
+        total_weight=round(sum(i.weight for i in items), 3),
         created_by=caller.id if caller else None,
         created_by_name=(caller.full_name or caller.username) if caller else "",
     )

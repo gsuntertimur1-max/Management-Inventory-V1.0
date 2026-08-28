@@ -32,7 +32,7 @@ export default function App() {
       <Route
         path="/products"
         element={
-          <RequireAuth action="inventory:write">
+          <RequireAuth action="procurement:write">
             <Products />
           </RequireAuth>
         }
@@ -40,7 +40,7 @@ export default function App() {
       <Route
         path="/import"
         element={
-          <RequireAuth action="inventory:write">
+          <RequireAuth action="procurement:write">
             <ImportProducts />
           </RequireAuth>
         }
@@ -48,7 +48,7 @@ export default function App() {
       <Route
         path="/stock-movement"
         element={
-          <RequireAuth action="inventory:write">
+          <RequireAuth action="sales:write|procurement:write">
             <StockMovement />
           </RequireAuth>
         }
@@ -64,7 +64,7 @@ export default function App() {
       <Route
         path="/suppliers"
         element={
-          <RequireAuth action="inventory:write">
+          <RequireAuth action="procurement:write">
             <Suppliers />
           </RequireAuth>
         }
@@ -72,7 +72,7 @@ export default function App() {
       <Route
         path="/purchase-orders"
         element={
-          <RequireAuth action="inventory:write">
+          <RequireAuth action="procurement:write">
             <PurchaseOrders />
           </RequireAuth>
         }
@@ -80,7 +80,7 @@ export default function App() {
       <Route
         path="/shipments"
         element={
-          <RequireAuth action="inventory:read">
+          <RequireAuth action="sales:read">
             <Shipments />
           </RequireAuth>
         }
@@ -88,7 +88,7 @@ export default function App() {
       <Route
         path="/antrian"
         element={
-          <RequireAuth action="inventory:read">
+          <RequireAuth action="sales:read">
             <QueueDisplay />
           </RequireAuth>
         }
@@ -112,7 +112,7 @@ export default function App() {
       <Route
         path="/print/surat-jalan"
         element={
-          <RequireAuth action="inventory:read">
+          <RequireAuth action="sales:read">
             <PrintDeliveryNote />
           </RequireAuth>
         }
@@ -120,7 +120,7 @@ export default function App() {
       <Route
         path="/print/bon-muat/:id"
         element={
-          <RequireAuth action="inventory:read">
+          <RequireAuth action="sales:read">
             <PrintLoadingSlip />
           </RequireAuth>
         }

@@ -28,6 +28,7 @@ import type {
   Transaction,
   TransactionCreate,
 } from "@/lib/types";
+import { can, useAuth } from "@/lib/session";
 import { cn } from "@/lib/utils";
 
 interface Line {
@@ -40,7 +41,10 @@ const emptyLine = (): Line => ({ key: Date.now() + Math.random(), product_id: ""
 
 export default function StockMovement() {
   const qc = useQueryClient();
-  const [type, setType] = useState<MovementType>("MASUK");
+  const { role } = useAuth();
+  const canIn = can(role, "procurement:write");
+  const canOut = can(role, "sales:write");
+  const [type, setType] = useState<MovementType>(canIn ? "MASUK" : "KELUAR");
   const [lines, setLines] = useState<Line[]>([{ key: 1, product_id: "", quantity: "1" }]);
   const [party, setParty] = useState("");
   const [reference, setReference] = useState("");
@@ -48,22 +52,41 @@ export default function StockMovement() {
   const [lastShipment, setLastShipment] = useState<Shipment | null>(null);
 
   const productsQ = useQuery({ queryKey: ["products"], queryFn: () => apiGet<Product[]>("/products") });
-  const suppliersQ = useQuery({ queryKey: ["suppliers"], queryFn: () => apiGet<Supplier[]>("/suppliers") });
+  // Only procurement roles may read suppliers; skip the request for sales-only users.
+  const suppliersQ = useQuery({
+    queryKey: ["suppliers"],
+    queryFn: () => apiGet<Supplier[]>("/suppliers"),
+    enabled: canIn,
+  });
 
   const products = productsQ.isError ? [] : productsQ.data ?? [];
   const suppliers = suppliersQ.isError ? [] : suppliersQ.data ?? [];
 
+  // Outbound is entered as WEIGHT only; primary units (Pcs) and secondary packaging (Dus)
+  // are derived from the product's packaging setup. Inbound is still entered in primary units.
   const detailed = useMemo(
     () =>
       lines.map((l) => {
         const product = products.find((p) => p.id === l.product_id);
-        const qty = Number(l.quantity) || 0;
-        return { line: l, product, qty, shortage: !!product && type === "KELUAR" && qty > product.current_stock };
+        const entered = Number(l.quantity) || 0;
+        const wpu = product?.weight_per_unit && product.weight_per_unit > 0 ? product.weight_per_unit : 1;
+        const ups = product?.units_per_secondary && product.units_per_secondary > 0 ? product.units_per_secondary : 1;
+        const qty = type === "KELUAR" ? Math.round(entered / wpu) : entered;
+        const weight = type === "KELUAR" ? entered : entered * wpu;
+        return {
+          line: l,
+          product,
+          qty,
+          weight,
+          secondary: qty / ups,
+          shortage: !!product && type === "KELUAR" && qty > product.current_stock,
+        };
       }),
     [lines, products, type],
   );
 
   const totalUnits = detailed.reduce((s, d) => s + d.qty, 0);
+  const totalWeight = detailed.reduce((s, d) => s + d.weight, 0);
   const totalValue = detailed.reduce((s, d) => s + (d.product?.purchase_price ?? 0) * d.qty, 0);
 
   const invalidate = () => {
@@ -117,12 +140,13 @@ export default function StockMovement() {
   });
 
   const submit = () => {
-    const items = detailed
-      .filter((d) => d.product && d.qty > 0)
-      .map((d) => ({ product_id: d.line.product_id, quantity: d.qty }));
-
-    if (items.length === 0) {
-      toast.error("Pilih produk dan isi jumlah minimal 1");
+    const valid = detailed.filter((d) => d.product && d.qty > 0);
+    if (valid.length === 0) {
+      toast.error(
+        type === "KELUAR"
+          ? "Pilih produk dan isi kuantum berat"
+          : "Pilih produk dan isi jumlah minimal 1",
+      );
       return;
     }
     if (type === "KELUAR") {
@@ -131,14 +155,19 @@ export default function StockMovement() {
         toast.error(`Stok ${short.product?.name} tidak cukup (tersedia ${short.product?.current_stock})`);
         return;
       }
-      saveOutbound.mutate({ party, reference_no: reference, notes, items });
+      saveOutbound.mutate({
+        party,
+        reference_no: reference,
+        notes,
+        items: valid.map((d) => ({ product_id: d.line.product_id, weight: d.weight })),
+      });
       return;
     }
     saveInbound.mutate(
-      items.map((i) => ({
-        product_id: i.product_id,
+      valid.map((d) => ({
+        product_id: d.line.product_id,
         type: "MASUK" as MovementType,
-        quantity: i.quantity,
+        quantity: d.qty,
         party,
         reference_no: reference,
         notes,
@@ -171,6 +200,7 @@ export default function StockMovement() {
             </CardHeader>
             <CardContent className="space-y-5">
               <div className="grid grid-cols-2 gap-3">
+                {canIn && (
                 <button
                   type="button"
                   data-testid="form-movement-type-in"
@@ -184,6 +214,8 @@ export default function StockMovement() {
                 >
                   <ArrowDownLeft className="size-4" /> STOK MASUK
                 </button>
+                )}
+                {canOut && (
                 <button
                   type="button"
                   data-testid="form-movement-type-out"
@@ -197,10 +229,11 @@ export default function StockMovement() {
                 >
                   <ArrowUpRight className="size-4" /> STOK KELUAR
                 </button>
+                )}
               </div>
 
               <div className="space-y-3">
-                <Label>Daftar Barang</Label>
+                <Label>{type === "KELUAR" ? "Daftar Barang (isi kuantum berat saja)" : "Daftar Barang"}</Label>
                 {detailed.map((d, idx) => (
                   <div key={d.line.key} className="space-y-1" data-testid="movement-item-row">
                     <div className="flex flex-wrap items-center gap-2">
@@ -233,8 +266,9 @@ export default function StockMovement() {
                       <Input
                         className="w-28"
                         type="number"
-                        min={1}
-                        aria-label="Jumlah unit"
+                        min={0}
+                        step="any"
+                        aria-label={type === "KELUAR" ? "Kuantum berat" : "Jumlah unit"}
                         data-testid={`form-movement-quantity-${idx}`}
                         value={d.line.quantity}
                         onChange={(e) =>
@@ -246,7 +280,7 @@ export default function StockMovement() {
                         }
                       />
                       <span className="w-16 text-xs text-muted-foreground">
-                        {d.product?.unit ?? "—"}
+                        {type === "KELUAR" ? (d.product?.weight_unit ?? "Kg") : (d.product?.unit ?? "—")}
                       </span>
                       <Button
                         variant="ghost"
@@ -266,9 +300,19 @@ export default function StockMovement() {
                           "pl-1 text-xs",
                           d.shortage ? "text-red-400" : "text-muted-foreground",
                         )}
+                        data-testid={`movement-derived-${idx}`}
                       >
+                        {type === "KELUAR" ? (
+                          <>
+                            = {angka(d.qty)} {d.product.unit} = {d.secondary.toFixed(2)}{" "}
+                            {d.product.secondary_unit} ({d.product.units_per_secondary}{" "}
+                            {d.product.unit}/{d.product.secondary_unit} ·{" "}
+                            {d.product.weight_per_unit} {d.product.weight_unit}/{d.product.unit})
+                            {" · "}
+                          </>
+                        ) : null}
                         Stok saat ini {angka(d.product.current_stock)} {d.product.unit}
-                        {d.shortage ? " — jumlah melebihi stok tersedia" : ""}
+                        {d.shortage ? " — melebihi stok tersedia" : ""}
                       </p>
                     )}
                   </div>
@@ -398,6 +442,12 @@ export default function StockMovement() {
                   <dt className="text-muted-foreground">Total unit</dt>
                   <dd className="font-mono font-semibold" data-testid="preview-total-units">
                     {angka(totalUnits)}
+                  </dd>
+                </div>
+                <div className="flex justify-between border-b border-border pb-2">
+                  <dt className="text-muted-foreground">Total berat</dt>
+                  <dd className="font-mono font-semibold" data-testid="preview-total-weight">
+                    {totalWeight.toFixed(2)}
                   </dd>
                 </div>
                 <div className="flex justify-between border-b border-border pb-2">

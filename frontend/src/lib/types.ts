@@ -25,6 +25,11 @@ export interface Product {
   sku: string;
   category: string;
   unit: string;
+  weight_per_unit: number;
+  weight_unit: string;
+  secondary_unit: string;
+  units_per_secondary: number;
+  min_stock: number;
   purchase_price: number;
   selling_price: number;
   current_stock: number;
@@ -39,6 +44,11 @@ export interface ProductCreate {
   sku: string;
   category: string;
   unit: string;
+  weight_per_unit: number;
+  weight_unit: string;
+  secondary_unit: string;
+  units_per_secondary: number;
+  min_stock: number;
   purchase_price: number;
   selling_price: number;
   current_stock: number;
@@ -76,12 +86,18 @@ export interface ShipmentItem {
   product_sku: string;
   unit: string;
   quantity: number;
+  weight: number;
+  weight_unit: string;
+  weight_per_unit: number;
+  secondary_qty: number;
+  secondary_unit: string;
+  units_per_secondary: number;
   stock_after: number;
 }
 
 export interface ShipmentItemInput {
   product_id: string;
-  quantity: number;
+  weight: number;
 }
 
 export interface Shipment {
@@ -94,6 +110,7 @@ export interface Shipment {
   date: string;
   items: ShipmentItem[];
   total_quantity: number;
+  total_weight: number;
   status: ShipmentStatus;
   created_by: string | null;
   created_by_name: string;
@@ -224,3 +241,7 @@ export const CATEGORIES = [
 ];
 
 export const UNITS = ["Pcs", "Box", "Unit", "Kg", "Liter", "Pack", "Roll", "Set"];
+
+export const WEIGHT_UNITS = ["Kg", "Liter", "Gram", "Ton", "mL"];
+
+export const SECONDARY_UNITS = ["Dus", "Karung", "Krat", "Pallet", "Bal", "Peti"];

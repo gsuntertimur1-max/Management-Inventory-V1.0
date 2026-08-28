@@ -25,6 +25,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { apiGet, apiPatch } from "@/lib/api";
+import { can, useAuth } from "@/lib/session";
 import { angka, waktu } from "@/lib/format";
 import type { Shipment, ShipmentStatus } from "@/lib/types";
 
@@ -43,6 +44,8 @@ const STATUS_LABELS: Record<string, string> = {
 
 export default function Shipments() {
   const qc = useQueryClient();
+  const { role } = useAuth();
+  const canWrite = can(role, "sales:write");
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("SEMUA");
   const [selected, setSelected] = useState<string[]>([]);
@@ -117,6 +120,7 @@ export default function Shipments() {
             >
               <Monitor className="size-4" /> Layar Antrian
             </Link>
+            {canWrite && (
             <Link
               to="/stock-movement"
               data-testid="link-new-shipment"
@@ -124,6 +128,7 @@ export default function Shipments() {
             >
               <Plus className="size-4" /> Pengeluaran Baru
             </Link>
+            )}
           </div>
         </div>
 
@@ -174,6 +179,7 @@ export default function Shipments() {
                   <TableHead>Penerima</TableHead>
                   <TableHead>Dicatat Oleh</TableHead>
                   <TableHead>Barang</TableHead>
+                  <TableHead className="text-right">Total Berat</TableHead>
                   <TableHead className="text-right">Total Unit</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Aksi</TableHead>
@@ -182,7 +188,7 @@ export default function Shipments() {
               <TableBody data-testid="table-shipments-body">
                 {filtered.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={11} className="py-10 text-center text-sm text-muted-foreground">
                       Belum ada pengeluaran barang.
                     </TableCell>
                   </TableRow>
@@ -209,9 +215,13 @@ export default function Shipments() {
                     <TableCell className="text-xs text-muted-foreground">
                       {s.items.map((i) => (
                         <span key={i.product_id} className="block">
-                          {i.product_name} × {angka(i.quantity)} {i.unit}
+                          {i.product_name} × {i.weight} {i.weight_unit} ({angka(i.quantity)}{" "}
+                          {i.unit} / {i.secondary_qty} {i.secondary_unit})
                         </span>
                       ))}
+                    </TableCell>
+                    <TableCell className="text-right font-mono" data-testid={`shipment-weight-${s.doc_no}`}>
+                      {s.total_weight}
                     </TableCell>
                     <TableCell className="text-right font-mono">{angka(s.total_quantity)}</TableCell>
                     <TableCell>
@@ -221,7 +231,7 @@ export default function Shipments() {
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center justify-end gap-1">
-                        {s.status === "MENUNGGU" && (
+                        {canWrite && s.status === "MENUNGGU" && (
                           <Button
                             size="sm"
                             variant="outline"
@@ -231,7 +241,7 @@ export default function Shipments() {
                             Mulai Muat
                           </Button>
                         )}
-                        {s.status === "DIMUAT" && (
+                        {canWrite && s.status === "DIMUAT" && (
                           <Button
                             size="sm"
                             variant="outline"

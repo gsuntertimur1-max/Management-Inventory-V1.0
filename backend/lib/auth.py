@@ -34,19 +34,27 @@ def verify_password(password: str, password_hash: str, salt: str) -> bool:
 
 
 # --- permissions: what each role may do ---
+# admin      : everything
+# penjualan  : outbound only (barang keluar / surat jalan)
+# pengadaan  : procurement only (PO, stok masuk, produk & supplier)
+# viewer     : read-only on remaining stock + sales
 PERMISSIONS: Dict[Role, List[str]] = {
     "admin": [
-        "stock:read", "inventory:read", "inventory:write",
-        "reports:read", "settings:write", "users:manage", "data:reset",
+        "stock:read", "sales:read", "sales:write", "procurement:read", "procurement:write",
+        "inventory:read", "reports:read", "settings:write", "users:manage", "data:reset",
     ],
-    "operator": ["stock:read", "inventory:read", "inventory:write", "reports:read"],
-    "viewer": ["stock:read"],
+    "penjualan": ["stock:read", "sales:read", "sales:write", "inventory:read", "reports:read"],
+    "pengadaan": [
+        "stock:read", "procurement:read", "procurement:write", "inventory:read", "reports:read",
+    ],
+    "viewer": ["stock:read", "sales:read"],
 }
 
 ROLE_LABELS: Dict[str, str] = {
     "admin": "Administrator",
-    "operator": "Operator Gudang",
-    "viewer": "Pemantau (lihat stok)",
+    "penjualan": "Penjualan (barang keluar)",
+    "pengadaan": "Pengadaan (barang masuk)",
+    "viewer": "Pemantau (lihat stok & penjualan)",
 }
 
 # --- route -> required action table (method, path regex) ---
@@ -59,26 +67,28 @@ _RULES: List[Tuple[str, str, Optional[str]]] = [
     ("GET", r"^/api/$", None),
     # user administration
     ("*", r"^/api/auth/users(/.*)?$", "users:manage"),
-    # stock visibility (viewer included)
+    # stock visibility (every role, viewer included)
     ("GET", r"^/api/products$", "stock:read"),
     ("GET", r"^/api/products/[^/]+$", "stock:read"),
     ("GET", r"^/api/stats$", "stock:read"),
-    # reads for staff
-    ("GET", r"^/api/suppliers$", "inventory:read"),
+    # sales / outbound
+    ("GET", r"^/api/shipments(/.*)?$", "sales:read"),
+    ("*", r"^/api/shipments(/.*)?$", "sales:write"),
+    # procurement / inbound
+    ("GET", r"^/api/suppliers$", "procurement:read"),
+    ("GET", r"^/api/purchase-orders(/.*)?$", "procurement:read"),
+    ("*", r"^/api/suppliers(/.*)?$", "procurement:write"),
+    ("*", r"^/api/purchase-orders(/.*)?$", "procurement:write"),
+    ("POST", r"^/api/products/import$", "procurement:write"),
+    ("*", r"^/api/products(/.*)?$", "procurement:write"),
+    ("POST", r"^/api/transactions$", "procurement:write"),
+    # shared reads
     ("GET", r"^/api/transactions(/.*)?$", "inventory:read"),
-    ("GET", r"^/api/shipments(/.*)?$", "inventory:read"),
-    ("GET", r"^/api/purchase-orders(/.*)?$", "inventory:read"),
-    ("GET", r"^/api/settings$", "inventory:read"),
+    ("GET", r"^/api/settings$", "stock:read"),
     ("GET", r"^/api/reports/.*$", "reports:read"),
-    # writes
-    ("POST", r"^/api/products/import$", "inventory:write"),
+    # admin only
     ("POST", r"^/api/seed$", "data:reset"),
     ("PUT", r"^/api/settings$", "settings:write"),
-    ("*", r"^/api/products(/.*)?$", "inventory:write"),
-    ("*", r"^/api/suppliers(/.*)?$", "inventory:write"),
-    ("*", r"^/api/transactions(/.*)?$", "inventory:write"),
-    ("*", r"^/api/shipments(/.*)?$", "inventory:write"),
-    ("*", r"^/api/purchase-orders(/.*)?$", "inventory:write"),
 ]
 
 
@@ -191,3 +201,8 @@ async def ensure_default_admin() -> None:
         username=username, full_name="Administrator Gudang", role="admin",
         password_hash=password_hash, salt=salt,
     ).model_dump())
+
+
+async def migrate_legacy_roles() -> None:
+    """The old 'operator' role was split into 'penjualan' + 'pengadaan'; keep old accounts usable."""
+    await db.users.update_many({"role": "operator"}, {"$set": {"role": "penjualan"}})

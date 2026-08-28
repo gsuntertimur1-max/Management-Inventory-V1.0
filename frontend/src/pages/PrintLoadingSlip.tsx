@@ -95,13 +95,25 @@ export default function PrintLoadingSlip() {
                 <div className="flex justify-between">
                   <span>{item.product_sku}</span>
                   <span className="font-bold">
+                    {item.weight} {item.weight_unit}
+                  </span>
+                </div>
+                <div className="flex justify-between text-[7.5pt]">
+                  <span>
                     {angka(item.quantity)} {item.unit}
+                  </span>
+                  <span>
+                    {item.secondary_qty} {item.secondary_unit} @{item.units_per_secondary}
                   </span>
                 </div>
               </div>
             ))}
             <div className="mt-1 flex justify-between border-t border-dashed border-black pt-1 text-[10pt] font-bold">
-              <span>TOTAL MUAT</span>
+              <span>TOTAL BERAT</span>
+              <span data-testid="slip-total-weight">{s.total_weight}</span>
+            </div>
+            <div className="flex justify-between text-[8.5pt] font-bold">
+              <span>TOTAL SATUAN</span>
               <span data-testid="slip-total-quantity">{angka(s.total_quantity)}</span>
             </div>
             <div className="flex justify-between text-[8pt]">

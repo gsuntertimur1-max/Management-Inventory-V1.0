@@ -21,23 +21,24 @@ SUPPLIERS: List[Dict[str, str]] = [
      "category_supplied": "F&B / Bahan Makanan"},
 ]
 
-# (name, sku, category, unit, purchase, selling, stock, supplier_idx, location)
+# (name, sku, category, unit, purchase, selling, stock, supplier_idx, location,
+#  weight_per_unit, weight_unit, secondary_unit, units_per_secondary, min_stock)
 PRODUCTS: List[tuple] = [
-    ("Laptop ThinkPad T14 Gen 4", "ELEC-TP-001", "Elektronik & Gadget", "Unit", 14500000, 17250000, 24, 0, "Rak A-01"),
-    ("Monitor LED 24\" IPS", "ELEC-MON-024", "Elektronik & Gadget", "Unit", 1850000, 2350000, 46, 0, "Rak A-02"),
-    ("Mouse Wireless Ergonomis", "ELEC-MSE-110", "Elektronik & Gadget", "Pcs", 145000, 219000, 180, 0, "Rak A-03"),
-    ("Printer Laser Mono A4", "ELEC-PRN-A4", "Elektronik & Gadget", "Unit", 2450000, 2980000, 12, 0, "Rak A-04"),
-    ("Kertas HVS A4 80gr", "OFF-PPR-A480", "Peralatan Kantor", "Box", 178000, 235000, 320, 1, "Rak B-01"),
-    ("Pulpen Gel Hitam 0.5mm", "OFF-PEN-G05", "Peralatan Kantor", "Pack", 32000, 48000, 540, 1, "Rak B-02"),
-    ("Filing Cabinet 4 Drawer", "OFF-CAB-4D", "Peralatan Kantor", "Unit", 1950000, 2450000, 8, 1, "Zona Barat"),
-    ("Beras Premium Pandan Wangi", "FNB-RCE-25K", "F&B / Bahan Makanan", "Kg", 15500, 18900, 1250, 3, "Rak C-01"),
-    ("Minyak Goreng Kemasan 2L", "FNB-OIL-2L", "F&B / Bahan Makanan", "Pcs", 34000, 41500, 410, 3, "Rak C-02"),
-    ("Gula Kristal Putih", "FNB-SGR-50K", "F&B / Bahan Makanan", "Kg", 14200, 17500, 780, 3, "Rak C-03"),
-    ("Kaos Polos Cotton Combed 30s", "APP-TSH-30S", "Pakaian & Tekstil", "Pcs", 42000, 79000, 260, 1, "Rak D-01"),
-    ("Kain Katun Roll 50m", "APP-FAB-R50", "Pakaian & Tekstil", "Roll", 875000, 1150000, 18, 1, "Rak D-02"),
-    ("Bor Listrik Impact 13mm", "HRD-DRL-13", "Hardware & Perkakas", "Unit", 685000, 899000, 34, 2, "Rak E-01"),
-    ("Semen Portland 40kg", "HRD-CMT-40", "Hardware & Perkakas", "Pcs", 62000, 74500, 520, 2, "Zona Timur"),
-    ("Kunci Set Tool Kit 108pcs", "HRD-TLK-108", "Hardware & Perkakas", "Set", 415000, 549000, 27, 2, "Rak E-02"),
+    ("Laptop ThinkPad T14 Gen 4", "ELEC-TP-001", "Elektronik & Gadget", "Unit", 14500000, 17250000, 24, 0, "Rak A-01", 2.5, "Kg", "Dus", 4, 10),
+    ("Monitor LED 24\" IPS", "ELEC-MON-024", "Elektronik & Gadget", "Unit", 1850000, 2350000, 46, 0, "Rak A-02", 4, "Kg", "Dus", 6, 15),
+    ("Mouse Wireless Ergonomis", "ELEC-MSE-110", "Elektronik & Gadget", "Pcs", 145000, 219000, 180, 0, "Rak A-03", 0.2, "Kg", "Dus", 50, 60),
+    ("Printer Laser Mono A4", "ELEC-PRN-A4", "Elektronik & Gadget", "Unit", 2450000, 2980000, 12, 0, "Rak A-04", 8, "Kg", "Dus", 2, 15),
+    ("Kertas HVS A4 80gr", "OFF-PPR-A480", "Peralatan Kantor", "Box", 178000, 235000, 320, 1, "Rak B-01", 12.5, "Kg", "Pallet", 40, 80),
+    ("Pulpen Gel Hitam 0.5mm", "OFF-PEN-G05", "Peralatan Kantor", "Pack", 32000, 48000, 540, 1, "Rak B-02", 0.24, "Kg", "Dus", 24, 100),
+    ("Filing Cabinet 4 Drawer", "OFF-CAB-4D", "Peralatan Kantor", "Unit", 1950000, 2450000, 8, 1, "Zona Barat", 35, "Kg", "Peti", 1, 6),
+    ("Beras Premium Pandan Wangi", "FNB-RCE-25K", "F&B / Bahan Makanan", "Pcs", 15500, 18900, 1250, 3, "Rak C-01", 25, "Kg", "Karung", 1, 200),
+    ("Minyak Goreng Kemasan 2L", "FNB-OIL-2L", "F&B / Bahan Makanan", "Pcs", 34000, 41500, 410, 3, "Rak C-02", 2, "Liter", "Dus", 6, 120),
+    ("Gula Kristal Putih 1kg", "FNB-SGR-1K", "F&B / Bahan Makanan", "Pcs", 14200, 17500, 780, 3, "Rak C-03", 1, "Kg", "Dus", 24, 240),
+    ("Kaos Polos Cotton Combed 30s", "APP-TSH-30S", "Pakaian & Tekstil", "Pcs", 42000, 79000, 260, 1, "Rak D-01", 0.18, "Kg", "Bal", 60, 100),
+    ("Kain Katun Roll 50m", "APP-FAB-R50", "Pakaian & Tekstil", "Roll", 875000, 1150000, 18, 1, "Rak D-02", 22, "Kg", "Bal", 4, 20),
+    ("Bor Listrik Impact 13mm", "HRD-DRL-13", "Hardware & Perkakas", "Unit", 685000, 899000, 34, 2, "Rak E-01", 3.2, "Kg", "Dus", 8, 12),
+    ("Semen Portland 40kg", "HRD-CMT-40", "Hardware & Perkakas", "Pcs", 62000, 74500, 520, 2, "Zona Timur", 40, "Kg", "Pallet", 30, 150),
+    ("Kunci Set Tool Kit 108pcs", "HRD-TLK-108", "Hardware & Perkakas", "Set", 415000, 549000, 27, 2, "Rak E-02", 5.5, "Kg", "Dus", 6, 30),
 ]
 
 # Inbound only: (product_idx, qty, reference, notes, days_ago)
@@ -97,11 +98,14 @@ async def run_seed() -> Dict[str, int]:
     await db.suppliers.insert_many([s.model_dump() for s in suppliers])
 
     products: List[Product] = []
-    for name, sku, cat, unit, buy, sell, stock, sidx, loc in PRODUCTS:
+    for (name, sku, cat, unit, buy, sell, stock, sidx, loc,
+         wpu, wunit, sunit, ups, minstock) in PRODUCTS:
         products.append(Product(
             name=name, sku=sku, category=cat, unit=unit, purchase_price=buy,
             selling_price=sell, current_stock=stock, supplier_id=suppliers[sidx].id,
             supplier_name=suppliers[sidx].name, location=loc,
+            weight_per_unit=wpu, weight_unit=wunit, secondary_unit=sunit,
+            units_per_secondary=ups, min_stock=minstock,
         ))
     await db.products.insert_many([p.model_dump() for p in products])
 
@@ -141,11 +145,16 @@ async def run_seed() -> Dict[str, int]:
             items.append(ShipmentItem(
                 product_id=p.id, product_name=p.name, product_sku=p.sku,
                 unit=p.unit, quantity=qty, stock_after=stock[p.id],
+                weight=round(qty * p.weight_per_unit, 3), weight_unit=p.weight_unit,
+                weight_per_unit=p.weight_per_unit,
+                secondary_qty=round(qty / (p.units_per_secondary or 1), 2),
+                secondary_unit=p.secondary_unit, units_per_secondary=p.units_per_secondary,
             ))
 
         shipment = Shipment(
             doc_no=doc_no, queue_no=queue_no, party=party, reference_no=ref, notes=notes,
             date=day, items=items, total_quantity=sum(i.quantity for i in items),
+            total_weight=round(sum(i.weight for i in items), 3),
             status=status, created_at=moment, created_by_name=OPERATOR_NAME,
         )
         shipments.append(shipment.model_dump())

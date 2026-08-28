@@ -32,20 +32,17 @@ import {
 } from "@/components/ui/table";
 import { ApiError, apiDelete, apiGet, apiPatch, apiPost } from "@/lib/api";
 import { waktu } from "@/lib/format";
-import { ROLE_LABELS, useAuth } from "@/lib/session";
+import { ROLE_HINTS, ROLE_LABELS, useAuth } from "@/lib/session";
 import type { CurrentUser, Role } from "@/lib/session";
-
-const ROLE_HINTS: Record<Role, string> = {
-  admin: "Akses penuh termasuk pengaturan & pengguna",
-  operator: "Catat stok, surat jalan, PO — tanpa pengaturan",
-  viewer: "Hanya melihat sisa stok (tanpa harga)",
-};
 
 const ROLE_VARIANT: Record<Role, "default" | "secondary" | "outline"> = {
   admin: "default",
-  operator: "secondary",
+  penjualan: "secondary",
+  pengadaan: "secondary",
   viewer: "outline",
 };
+
+const ROLE_OPTIONS: Role[] = ["admin", "penjualan", "pengadaan", "viewer"];
 
 export default function Users() {
   const qc = useQueryClient();
@@ -145,8 +142,8 @@ export default function Users() {
           </Button>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          {(Object.keys(ROLE_HINTS) as Role[]).map((r) => (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {ROLE_OPTIONS.map((r) => (
             <Card key={r} data-testid={`role-card-${r}`}>
               <CardContent className="space-y-2">
                 <Badge variant={ROLE_VARIANT[r]}>{ROLE_LABELS[r]}</Badge>
@@ -194,9 +191,11 @@ export default function Users() {
                           <SelectValue>{(v) => ROLE_LABELS[v as Role] ?? String(v)}</SelectValue>
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="admin">Administrator</SelectItem>
-                          <SelectItem value="operator">Operator Gudang</SelectItem>
-                          <SelectItem value="viewer">Pemantau Stok</SelectItem>
+                          {ROLE_OPTIONS.map((r) => (
+                            <SelectItem key={r} value={r}>
+                              {ROLE_LABELS[r]}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </TableCell>
@@ -267,9 +266,11 @@ export default function Users() {
                   <SelectValue>{(v) => ROLE_LABELS[v as Role] ?? "Pilih peran"}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="admin">Administrator</SelectItem>
-                  <SelectItem value="operator">Operator Gudang</SelectItem>
-                  <SelectItem value="viewer">Pemantau Stok</SelectItem>
+                  {ROLE_OPTIONS.map((r) => (
+                    <SelectItem key={r} value={r}>
+                      {ROLE_LABELS[r]}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">{ROLE_HINTS[role]}</p>

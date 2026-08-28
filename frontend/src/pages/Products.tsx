@@ -33,7 +33,7 @@ import {
 } from "@/components/ui/table";
 import { ApiError, apiDelete, apiGet, apiPost, apiPut } from "@/lib/api";
 import { angka, rupiah } from "@/lib/format";
-import { CATEGORIES, UNITS } from "@/lib/types";
+import { CATEGORIES, SECONDARY_UNITS, UNITS, WEIGHT_UNITS } from "@/lib/types";
 import type { Product, ProductCreate, Supplier } from "@/lib/types";
 
 const EMPTY: ProductCreate = {
@@ -41,6 +41,11 @@ const EMPTY: ProductCreate = {
   sku: "",
   category: "Elektronik & Gadget",
   unit: "Pcs",
+  weight_per_unit: 1,
+  weight_unit: "Kg",
+  secondary_unit: "Dus",
+  units_per_secondary: 1,
+  min_stock: 0,
   purchase_price: 0,
   selling_price: 0,
   current_stock: 0,
@@ -116,6 +121,11 @@ export default function Products() {
       sku: p.sku,
       category: p.category,
       unit: p.unit,
+      weight_per_unit: p.weight_per_unit,
+      weight_unit: p.weight_unit,
+      secondary_unit: p.secondary_unit,
+      units_per_secondary: p.units_per_secondary,
+      min_stock: p.min_stock,
       purchase_price: p.purchase_price,
       selling_price: p.selling_price,
       current_stock: p.current_stock,
@@ -328,6 +338,86 @@ export default function Products() {
                 value={String(form.current_stock)}
                 onChange={(e) => setForm({ ...form, current_stock: Number(e.target.value) })}
               />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="p-min">Stok Minimum (peringatan)</Label>
+              <Input
+                id="p-min"
+                type="number"
+                data-testid="form-product-min-stock"
+                value={String(form.min_stock)}
+                onChange={(e) => setForm({ ...form, min_stock: Number(e.target.value) })}
+              />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
+                Kemasan Sekunder
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Contoh: Gula 1 Kg per Pcs, 24 Pcs dikemas dalam 1 Dus.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="p-wpu">Berat / Isi per Satuan</Label>
+              <Input
+                id="p-wpu"
+                type="number"
+                step="0.01"
+                data-testid="form-product-weight-per-unit"
+                value={String(form.weight_per_unit)}
+                onChange={(e) => setForm({ ...form, weight_per_unit: Number(e.target.value) })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Satuan Berat</Label>
+              <Select
+                value={form.weight_unit}
+                onValueChange={(v: string) => setForm({ ...form, weight_unit: v })}
+              >
+                <SelectTrigger data-testid="form-product-weight-unit">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {WEIGHT_UNITS.map((u) => (
+                    <SelectItem key={u} value={u}>
+                      {u}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Satuan Kemasan Sekunder</Label>
+              <Select
+                value={form.secondary_unit}
+                onValueChange={(v: string) => setForm({ ...form, secondary_unit: v })}
+              >
+                <SelectTrigger data-testid="form-product-secondary-unit">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SECONDARY_UNITS.map((u) => (
+                    <SelectItem key={u} value={u}>
+                      {u}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="p-ups">Isi per Kemasan Sekunder</Label>
+              <Input
+                id="p-ups"
+                type="number"
+                data-testid="form-product-units-per-secondary"
+                value={String(form.units_per_secondary)}
+                onChange={(e) => setForm({ ...form, units_per_secondary: Number(e.target.value) })}
+              />
+              <p className="text-xs text-muted-foreground">
+                {form.units_per_secondary || 1} {form.unit} = 1 {form.secondary_unit} ·{" "}
+                {((form.units_per_secondary || 1) * (form.weight_per_unit || 0)).toFixed(2)}{" "}
+                {form.weight_unit} per {form.secondary_unit}
+              </p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="p-buy">Harga Modal / Beli (Rp)</Label>

@@ -68,19 +68,29 @@ async def export_products():
     for p in docs:
         stock = int(p.get("current_stock", 0))
         buy = float(p.get("purchase_price", 0))
+        min_stock = int(p.get("min_stock", 0))
+        ups = int(p.get("units_per_secondary", 1)) or 1
         rows.append([
             p.get("name", ""), p.get("sku", ""), p.get("category", ""), p.get("unit", ""),
-            stock, buy, float(p.get("selling_price", 0)), buy * stock,
+            stock, min_stock,
+            "PERLU RESTOCK" if min_stock > 0 and stock <= min_stock else "AMAN",
+            f"{p.get('weight_per_unit', 1)} {p.get('weight_unit', 'Kg')}",
+            f"{ups} {p.get('unit', 'Pcs')}/{p.get('secondary_unit', 'Dus')}",
+            round(stock * float(p.get("weight_per_unit", 1)), 3),
+            round(stock / ups, 2),
+            buy, float(p.get("selling_price", 0)), buy * stock,
             p.get("supplier_name", ""), p.get("location", ""),
         ])
-    total_value = sum(r[7] for r in rows)
-    rows.append(["TOTAL", "", "", "", sum(int(r[4]) for r in rows), "", "", total_value, "", ""])
+    total_value = sum(r[13] for r in rows)
+    rows.append(["TOTAL", "", "", "", sum(int(r[4]) for r in rows), "", "", "", "", "", "",
+                 "", "", total_value, "", ""])
 
     wb = Workbook()
     _write_sheet(
         wb, "Daftar Produk", "Laporan Daftar Produk & Nilai Stok",
-        ["Nama Produk", "SKU", "Kategori", "Satuan", "Stok", "Harga Modal (Rp)",
-         "Harga Jual (Rp)", "Nilai Total (Rp)", "Supplier", "Lokasi"],
+        ["Nama Produk", "SKU", "Kategori", "Satuan", "Stok", "Stok Minimum", "Status Stok",
+         "Berat/Satuan", "Isi Kemasan Sekunder", "Total Berat", "Total Kemasan Sekunder",
+         "Harga Modal (Rp)", "Harga Jual (Rp)", "Nilai Total (Rp)", "Supplier", "Lokasi"],
         rows,
     )
     return _stream(wb, f"laporan-produk-{datetime.now(timezone.utc).date().isoformat()}.xlsx")

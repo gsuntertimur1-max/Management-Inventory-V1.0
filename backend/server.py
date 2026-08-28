@@ -22,6 +22,7 @@ from lib.db import client, db
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await ensure_default_admin()
+    await migrate_legacy_roles()
     yield
     client.close()
 
@@ -30,7 +31,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 # Create a router with the /api prefix — `enforce` gates every route on it (deny-by-default).
-from lib.auth import enforce, ensure_default_admin
+from lib.auth import enforce, ensure_default_admin, migrate_legacy_roles
 
 api_router = APIRouter(prefix="/api", dependencies=[Depends(enforce)])
 

@@ -3,8 +3,10 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import {
   Activity,
+  AlertTriangle,
   ArrowDownLeft,
   ArrowUpRight,
+  ClipboardList,
   Coins,
   Layers,
   Package,
@@ -52,7 +54,7 @@ export default function Dashboard() {
   const [stockSearch, setStockSearch] = useState("");
   const { role } = useAuth();
   const showMoney = can(role, "inventory:read");
-  const canWrite = can(role, "inventory:write");
+  const canWrite = can(role, "procurement:write");
 
   const statsQ = useQuery({ queryKey: ["stats"], queryFn: () => apiGet<Stats>("/stats") });
   // Viewers may not read transaction history, so never fire the request for them.
@@ -76,6 +78,15 @@ export default function Dashboard() {
       )
       .sort((a, b) => a.name.localeCompare(b.name, "id"));
   }, [products, stockSearch]);
+
+  const isLow = (p: Product) => p.min_stock > 0 && p.current_stock <= p.min_stock;
+  const lowStock = useMemo(
+    () =>
+      [...products]
+        .filter(isLow)
+        .sort((a, b) => a.current_stock / (a.min_stock || 1) - b.current_stock / (b.min_stock || 1)),
+    [products],
+  );
 
   const kpis: Kpi[] = [
     {
@@ -178,6 +189,64 @@ export default function Dashboard() {
           ))}
         </div>
 
+        <Card data-testid="low-stock-card" className="border-amber-500/30">
+          <CardHeader>
+            <CardTitle className="flex flex-wrap items-center gap-2 text-lg">
+              <AlertTriangle className="size-5 text-amber-400" />
+              Peringatan Stok Minimum
+              <Badge variant="secondary" data-testid="low-stock-count">
+                {angka(lowStock.length)} barang
+              </Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {lowStock.length === 0 ? (
+              <p className="text-sm text-muted-foreground" data-testid="low-stock-empty">
+                Semua stok masih di atas batas minimum. Tidak ada yang perlu direstock.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {lowStock.map((p) => (
+                  <div
+                    key={p.id}
+                    data-testid={`low-stock-row-${p.sku}`}
+                    className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-500/25 bg-amber-500/5 p-3"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold">{p.name}</p>
+                      <p className="font-mono text-xs text-muted-foreground">
+                        {p.sku} · {p.location || "tanpa lokasi"}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-mono text-sm font-bold text-amber-300">
+                        {angka(p.current_stock)} / min {angka(p.min_stock)} {p.unit}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Saran pesan {angka(Math.max(p.min_stock * 2 - p.current_stock, p.min_stock))}{" "}
+                        {p.unit}
+                      </p>
+                    </div>
+                    <div className="w-full sm:w-56">
+                      <p className="text-xs text-muted-foreground">Supplier</p>
+                      <p className="truncate text-sm">{p.supplier_name || "belum ada supplier"}</p>
+                    </div>
+                    {canWrite && (
+                      <Link
+                        to="/purchase-orders"
+                        data-testid={`low-stock-order-${p.sku}`}
+                        className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground transition-transform duration-150 hover:-translate-y-0.5"
+                      >
+                        <ClipboardList className="size-4" /> Buat PO
+                      </Link>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
         <Card data-testid="stock-per-product-card">
           <CardHeader>
             <CardTitle className="text-lg">Sisa Stok per Barang (A → Z)</CardTitle>
@@ -201,6 +270,7 @@ export default function Dashboard() {
                     <TableHead>SKU</TableHead>
                     <TableHead>Kategori</TableHead>
                     <TableHead className="text-right">Sisa Stok</TableHead>
+                    <TableHead className="text-right">Kemasan Sekunder</TableHead>
                     {showMoney && <TableHead className="text-right">Nilai Stok</TableHead>}
                     <TableHead>Lokasi</TableHead>
                   </TableRow>
@@ -208,14 +278,29 @@ export default function Dashboard() {
                 <TableBody data-testid="dashboard-stock-body">
                   {stockList.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={showMoney ? 6 : 5} className="py-10 text-center text-sm text-muted-foreground">
+                      <TableCell colSpan={showMoney ? 7 : 6} className="py-10 text-center text-sm text-muted-foreground">
                         Belum ada produk terdaftar. Tambah produk atau import data SKU.
                       </TableCell>
                     </TableRow>
                   )}
                   {stockList.map((p) => (
-                    <TableRow key={p.id} data-testid={`dashboard-stock-row-${p.sku}`}>
-                      <TableCell className="font-medium">{p.name}</TableCell>
+                    <TableRow
+                      key={p.id}
+                      data-testid={`dashboard-stock-row-${p.sku}`}
+                      className={isLow(p) ? "bg-amber-500/5" : undefined}
+                    >
+                      <TableCell className="font-medium">
+                        {p.name}
+                        {isLow(p) && (
+                          <Badge
+                            variant="secondary"
+                            className="ml-2 border-amber-500/40 text-amber-300"
+                            data-testid={`low-stock-badge-${p.sku}`}
+                          >
+                            Stok Rendah
+                          </Badge>
+                        )}
+                      </TableCell>
                       <TableCell className="font-mono text-xs">{p.sku}</TableCell>
                       <TableCell>
                         <Badge variant="secondary">{p.category}</Badge>
@@ -225,6 +310,19 @@ export default function Dashboard() {
                         data-testid={`dashboard-stock-value-${p.sku}`}
                       >
                         {angka(p.current_stock)} {p.unit}
+                        {p.min_stock > 0 && (
+                          <span className="block text-[10px] font-normal text-muted-foreground">
+                            min {angka(p.min_stock)}
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs text-muted-foreground">
+                        {(p.current_stock / (p.units_per_secondary || 1)).toFixed(2)}{" "}
+                        {p.secondary_unit}
+                        <span className="block text-[10px]">
+                          {p.units_per_secondary} {p.unit} · {p.weight_per_unit} {p.weight_unit}/
+                          {p.unit}
+                        </span>
                       </TableCell>
                       {showMoney && (
                         <TableCell className="text-right font-mono text-xs text-muted-foreground">

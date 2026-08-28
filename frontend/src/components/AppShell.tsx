@@ -25,14 +25,14 @@ import { cn } from "@/lib/utils";
 
 const NAV = [
   { name: "Dashboard", path: "/", icon: LayoutDashboard, testid: "nav-dashboard-link", action: "stock:read" },
-  { name: "Daftar Produk", path: "/products", icon: Boxes, testid: "nav-products-link", action: "inventory:write" },
-  { name: "Import Data", path: "/import", icon: Upload, testid: "nav-import-link", action: "inventory:write" },
-  { name: "Catat Stok", path: "/stock-movement", icon: ArrowLeftRight, testid: "nav-stock-movement-link", action: "inventory:write" },
-  { name: "Pengeluaran", path: "/shipments", icon: Send, testid: "nav-shipments-link", action: "inventory:read" },
+  { name: "Daftar Produk", path: "/products", icon: Boxes, testid: "nav-products-link", action: "procurement:write" },
+  { name: "Import Data", path: "/import", icon: Upload, testid: "nav-import-link", action: "procurement:write" },
+  { name: "Catat Stok", path: "/stock-movement", icon: ArrowLeftRight, testid: "nav-stock-movement-link", action: "sales:write|procurement:write" },
+  { name: "Pengeluaran", path: "/shipments", icon: Send, testid: "nav-shipments-link", action: "sales:read" },
   { name: "Riwayat", path: "/transactions", icon: History, testid: "nav-transactions-link", action: "inventory:read" },
-  { name: "Purchase Order", path: "/purchase-orders", icon: ClipboardList, testid: "nav-purchase-orders-link", action: "inventory:write" },
-  { name: "Supplier", path: "/suppliers", icon: Truck, testid: "nav-suppliers-link", action: "inventory:write" },
-  { name: "Layar Antrian", path: "/antrian", icon: Monitor, testid: "nav-queue-link", action: "inventory:read" },
+  { name: "Purchase Order", path: "/purchase-orders", icon: ClipboardList, testid: "nav-purchase-orders-link", action: "procurement:write" },
+  { name: "Supplier", path: "/suppliers", icon: Truck, testid: "nav-suppliers-link", action: "procurement:write" },
+  { name: "Layar Antrian", path: "/antrian", icon: Monitor, testid: "nav-queue-link", action: "sales:read" },
   { name: "Pengguna", path: "/users", icon: UsersIcon, testid: "nav-users-link", action: "users:manage" },
   { name: "Pengaturan", path: "/settings", icon: SettingsIcon, testid: "nav-settings-link", action: "settings:write" },
 ];
@@ -126,7 +126,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 <span className="hidden sm:inline">Muat Data Contoh</span>
               </Button>
             )}
-            {can(role, "inventory:write") && (
+            {can(role, "sales:write|procurement:write") && (
               <Link
                 to="/stock-movement"
                 data-testid="btn-quick-movement"

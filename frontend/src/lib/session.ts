@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPost } from "@/lib/api";
 
-export type Role = "admin" | "operator" | "viewer";
+export type Role = "admin" | "penjualan" | "pengadaan" | "viewer";
 
 export interface CurrentUser {
   id: string;
@@ -13,27 +13,45 @@ export interface CurrentUser {
 
 export const ROLE_LABELS: Record<Role, string> = {
   admin: "Administrator",
-  operator: "Operator Gudang",
+  penjualan: "Penjualan",
+  pengadaan: "Pengadaan",
   viewer: "Pemantau Stok",
+};
+
+export const ROLE_HINTS: Record<Role, string> = {
+  admin: "Akses penuh: semua data, pengaturan & pengguna",
+  penjualan: "Hanya pengeluaran barang & surat jalan",
+  pengadaan: "Hanya pengadaan: PO, stok masuk, produk & supplier",
+  viewer: "Hanya melihat sisa stok & penjualan (tanpa harga)",
 };
 
 const PERMISSIONS: Record<Role, string[]> = {
   admin: [
     "stock:read",
+    "sales:read",
+    "sales:write",
+    "procurement:read",
+    "procurement:write",
     "inventory:read",
-    "inventory:write",
     "reports:read",
     "settings:write",
     "users:manage",
     "data:reset",
   ],
-  operator: ["stock:read", "inventory:read", "inventory:write", "reports:read"],
-  viewer: ["stock:read"],
+  penjualan: ["stock:read", "sales:read", "sales:write", "inventory:read", "reports:read"],
+  pengadaan: [
+    "stock:read",
+    "procurement:read",
+    "procurement:write",
+    "inventory:read",
+    "reports:read",
+  ],
+  viewer: ["stock:read", "sales:read"],
 };
 
-/** Server is the source of truth; this only shapes the UI. */
+/** Server is the source of truth; this only shapes the UI. `a|b` means "either action". */
 export const can = (role: Role | undefined, action: string): boolean =>
-  !!role && PERMISSIONS[role].includes(action);
+  !!role && action.split("|").some((a) => PERMISSIONS[role].includes(a.trim()));
 
 export function useAuth() {
   const query = useQuery({

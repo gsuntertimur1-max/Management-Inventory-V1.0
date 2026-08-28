@@ -61,8 +61,9 @@ function NoteCopy({
             <th className="w-8 border border-black px-1 py-0.5 text-left">No</th>
             <th className="border border-black px-1 py-0.5 text-left">Nama Barang</th>
             <th className="border border-black px-1 py-0.5 text-left">Kode SKU</th>
-            <th className="border border-black px-1 py-0.5 text-right">Jumlah</th>
-            <th className="border border-black px-1 py-0.5 text-left">Satuan</th>
+            <th className="border border-black px-1 py-0.5 text-right">Kuantum</th>
+            <th className="border border-black px-1 py-0.5 text-right">Satuan Barang</th>
+            <th className="border border-black px-1 py-0.5 text-right">Kemasan Sekunder</th>
           </tr>
         </thead>
         <tbody>
@@ -71,13 +72,24 @@ function NoteCopy({
               <td className="border border-black px-1 py-0.5">{idx + 1}</td>
               <td className="border border-black px-1 py-0.5">{item.product_name}</td>
               <td className="border border-black px-1 py-0.5">{item.product_sku}</td>
-              <td className="border border-black px-1 py-0.5 text-right">{angka(item.quantity)}</td>
-              <td className="border border-black px-1 py-0.5">{item.unit}</td>
+              <td className="border border-black px-1 py-0.5 text-right">
+                {item.weight} {item.weight_unit}
+              </td>
+              <td className="border border-black px-1 py-0.5 text-right">
+                {angka(item.quantity)} {item.unit}
+              </td>
+              <td className="border border-black px-1 py-0.5 text-right">
+                {item.secondary_qty} {item.secondary_unit}
+                <span className="text-[6.5pt]"> @{item.units_per_secondary}</span>
+              </td>
             </tr>
           ))}
           <tr>
             <td className="border border-black px-1 py-0.5 font-semibold" colSpan={3}>
               Total ({shipment.items.length} jenis barang)
+            </td>
+            <td className="border border-black px-1 py-0.5 text-right font-semibold">
+              {shipment.total_weight}
             </td>
             <td className="border border-black px-1 py-0.5 text-right font-semibold">
               {angka(shipment.total_quantity)}

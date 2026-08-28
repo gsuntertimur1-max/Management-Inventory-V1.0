@@ -18,7 +18,9 @@ ShipmentStatus = Literal["MENUNGGU", "DIMUAT", "SELESAI"]
 
 class ShipmentItemInput(BaseModel):
     product_id: str
-    quantity: int = Field(gt=0)
+    # Outbound is driven by weight only; primary + secondary quantities are derived server-side.
+    weight: Optional[float] = Field(default=None, gt=0)
+    quantity: Optional[int] = Field(default=None, gt=0)
 
 
 class ShipmentItem(BaseModel):
@@ -27,6 +29,12 @@ class ShipmentItem(BaseModel):
     product_sku: str
     unit: str = "Pcs"
     quantity: int
+    weight: float = 0
+    weight_unit: str = "Kg"
+    weight_per_unit: float = 1
+    secondary_qty: float = 0
+    secondary_unit: str = "Dus"
+    units_per_secondary: int = 1
     stock_after: int = 0
 
 
@@ -48,6 +56,7 @@ class Shipment(BaseModel):
     date: str
     items: List[ShipmentItem] = []
     total_quantity: int = 0
+    total_weight: float = 0
     status: ShipmentStatus = "MENUNGGU"
     created_by: Optional[str] = None
     created_by_name: str = ""

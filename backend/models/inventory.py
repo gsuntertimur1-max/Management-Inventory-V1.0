@@ -32,6 +32,13 @@ class ProductCreate(BaseModel):
     sku: str
     category: str = "Lainnya"
     unit: str = "Pcs"
+    # Packaging: 1 primary unit (unit, e.g. Pcs/Pack) weighs weight_per_unit weight_unit (Kg/Liter),
+    # and units_per_secondary of them are repacked into 1 secondary_unit (Dus/Karung).
+    weight_per_unit: float = 1
+    weight_unit: str = "Kg"
+    secondary_unit: str = "Dus"
+    units_per_secondary: int = 1
+    min_stock: int = 0
     purchase_price: float = 0
     selling_price: float = 0
     current_stock: int = 0

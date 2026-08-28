@@ -3,6 +3,13 @@
 Inventory/warehouse stock app (Bahasa Indonesia UI). **Login required** (username + password).
 
 ## Auth & roles (RBAC only — single shared warehouse, no tenancy)
+Roles: **admin** (everything), **penjualan** (outbound only: sales:read/write + inventory:read +
+reports), **pengadaan** (procurement only: procurement:read/write + inventory:read + reports),
+**viewer** (stock:read + sales:read, read-only, money masked). Legacy `operator` accounts are
+auto-migrated to `penjualan` at startup (`migrate_legacy_roles`).
+
+Actions: stock:read, sales:read, sales:write, procurement:read, procurement:write, inventory:read,
+reports:read, settings:write, users:manage, data:reset. Frontend `can()` supports `"a|b"` = either.
 - Sessions are httpOnly cookies (`gp_session`, 7 days) stored in `db.sessions`; role is re-read
   from `db.users` on every request, never trusted from the cookie.
 - `api_router` carries a single `Depends(enforce)` gate (`lib/auth.py`) driven by a
