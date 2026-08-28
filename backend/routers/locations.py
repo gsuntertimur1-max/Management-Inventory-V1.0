@@ -21,6 +21,7 @@ router = APIRouter()
 
 async def ensure_locations() -> None:
     """Seed katalog tumpukan sekali; tumpukan tambahan buatan admin tidak disentuh."""
+    await _normalise_stack_names()
     existing = {doc["code"] async for doc in db.locations.find({}, {"code": 1})}
     fresh: List[Dict[str, Any]] = []
     for unit_name, complex_name, stacks in WAREHOUSE_UNITS:
@@ -38,6 +39,23 @@ async def ensure_locations() -> None:
 def _clean(doc: Dict[str, Any]) -> Dict[str, Any]:
     doc.pop("_id", None)
     return doc
+
+
+async def _normalise_stack_names() -> None:
+    """Nama tumpukan lama dengan segmen ekstra (A02.1.1.1) dirapikan jadi A02.1.1."""
+    async for loc in db.locations.find({"stack": {"$regex": r"\.1\.1\.1$"}}):
+        new_stack = loc["stack"].replace(".1.1.1", ".1.1")
+        new_code = f"{loc['unit_name']}/{new_stack}"
+        if await db.locations.find_one({"code": new_code}):
+            await db.locations.delete_one({"id": loc["id"]})
+        else:
+            await db.locations.update_one(
+                {"id": loc["id"]}, {"$set": {"stack": new_stack, "code": new_code}}
+            )
+        await db.placements.update_many(
+            {"location_code": loc["code"]},
+            {"$set": {"stack": new_stack, "location_code": new_code}},
+        )
 
 
 def _sort_key(code: str) -> tuple:

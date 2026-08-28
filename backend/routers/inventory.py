@@ -273,10 +273,15 @@ async def create_transaction(payload: TransactionCreate, caller=Depends(principa
         raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
 
     stock = int(product.get("current_stock", 0))
-    if payload.type == "KELUAR" and payload.quantity > stock:
-        raise HTTPException(status_code=400, detail=f"Stok tidak cukup. Tersedia {stock} unit")
+    damaged = int(product.get("damaged_stock", 0))
+    is_damaged = payload.condition == "RUSAK"
+    pool = damaged if is_damaged else stock
+    if payload.type == "KELUAR" and payload.quantity > pool:
+        label = "rusak" if is_damaged else "baik"
+        raise HTTPException(status_code=400, detail=f"Stok kondisi {label} tidak cukup. Tersedia {pool} unit")
 
-    after = stock + payload.quantity if payload.type == "MASUK" else stock - payload.quantity
+    after_pool = pool + payload.quantity if payload.type == "MASUK" else pool - payload.quantity
+    after = after_pool if not is_damaged else stock
     today = payload.date or datetime.now(timezone.utc).date().isoformat()
 
     # Outbound movements get a daily queue number (A-001, A-002, ...) for the bon muat.
@@ -292,9 +297,11 @@ async def create_transaction(payload: TransactionCreate, caller=Depends(principa
         category=product.get("category", "Lainnya"),
         type=payload.type,
         quantity=payload.quantity,
-        stock_after=after,
+        stock_after=after_pool,
+        condition=payload.condition,
         party=payload.party or (product.get("supplier_name", "") if payload.type == "MASUK" else ""),
         reference_no=payload.reference_no,
+        vehicle_plate=payload.vehicle_plate.strip().upper(),
         queue_no=queue_no,
         created_by=caller.id if caller else None,
         created_by_name=(caller.full_name or caller.username) if caller else "",
@@ -302,7 +309,8 @@ async def create_transaction(payload: TransactionCreate, caller=Depends(principa
         date=today,
     )
     await db.transactions.insert_one(tx.model_dump())
-    await db.products.update_one({"id": product["id"]}, {"$set": {"current_stock": after}})
+    field = "damaged_stock" if is_damaged else "current_stock"
+    await db.products.update_one({"id": product["id"]}, {"$set": {field: after_pool}})
     return tx
 
 
@@ -311,6 +319,7 @@ async def create_transaction(payload: TransactionCreate, caller=Depends(principa
 async def get_stats(caller=Depends(principal)):
     products = await db.products.find().to_list(1000)
     total_units = sum(int(p.get("current_stock", 0)) for p in products)
+    total_damaged = sum(int(p.get("damaged_stock", 0)) for p in products)
     valuation = sum(float(p.get("purchase_price", 0)) * int(p.get("current_stock", 0)) for p in products)
     if caller and caller.role == "viewer":
         valuation = 0.0
@@ -341,6 +350,7 @@ async def get_stats(caller=Depends(principal)):
     return Stats(
         total_products=len(products),
         total_units=total_units,
+        total_damaged=total_damaged,
         total_valuation=valuation,
         recent_movements=recent,
         by_category=[CategoryStat(category=k, units=v) for k, v in sorted(per_cat.items())],

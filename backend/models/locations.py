@@ -22,23 +22,13 @@ COMPLEX_II = "Gudang Sunter Timur II"
 
 
 def _gbb_stacks() -> List[str]:
-    """12 tumpukan per unit GBB: A/B/C × 01..04 (pola 02 memakai segmen ekstra)."""
-    stacks: List[str] = []
-    for letter in ("A", "B", "C"):
-        for n in (1, 2, 3, 4):
-            suffix = "1.1.1" if n == 2 else "1.1"
-            stacks.append(f"{letter}{n:02d}.{suffix}")
-    return stacks
+    """12 tumpukan per unit GBB: A/B/C × 01..04, pola nomor .1.1."""
+    return [f"{letter}{n:02d}.1.1" for letter in ("A", "B", "C") for n in (1, 2, 3, 4)]
 
 
 def _mp_stacks() -> List[str]:
-    """16 tumpukan di MP 1: A/B × 01..08 (pola 02 & 06 memakai segmen ekstra)."""
-    stacks: List[str] = []
-    for letter in ("A", "B"):
-        for n in range(1, 9):
-            suffix = "1.1.1" if n in (2, 6) else "1.1"
-            stacks.append(f"{letter}{n:02d}.{suffix}")
-    return stacks
+    """16 tumpukan di MP 1: A/B × 01..08, pola nomor .1.1."""
+    return [f"{letter}{n:02d}.1.1" for letter in ("A", "B") for n in range(1, 9)]
 
 
 # unit gudang -> (kompleks, daftar tumpukan)

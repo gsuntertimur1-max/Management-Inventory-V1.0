@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { Eye, EyeOff, LogIn, Warehouse } from "lucide-react";
+import { Eye, EyeOff, LogIn } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -60,9 +60,11 @@ export default function Login() {
       />
       <div className="relative w-full max-w-md">
         <div className="mb-8 flex items-center gap-3">
-          <span className="grid size-11 place-items-center rounded-xl bg-primary text-primary-foreground shadow-lg shadow-primary/25">
-            <Warehouse className="size-6" />
-          </span>
+          <img
+            src="/logo-bulog.png"
+            alt="Logo Bulog Gudang Sunter Timur I & II"
+            className="h-12 w-auto rounded-xl bg-white/95 p-1.5 object-contain"
+          />
           <div>
             <p className="text-lg font-bold tracking-tight">Bulog Gudang Sunter Timur I &amp; II</p>
             <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">

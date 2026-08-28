@@ -42,6 +42,8 @@ class ProductCreate(BaseModel):
     purchase_price: float = 0
     selling_price: float = 0
     current_stock: int = 0
+    damaged_stock: int = 0          # stok kondisi RUSAK (current_stock = kondisi BAIK)
+    expiry_date: Optional[str] = None   # tanggal kedaluwarsa (EXP) format YYYY-MM-DD
     supplier_id: Optional[str] = None
     location: str = ""
 
@@ -53,14 +55,17 @@ class Product(ProductCreate):
 
 
 MovementType = Literal["MASUK", "KELUAR"]
+StockCondition = Literal["BAIK", "RUSAK"]
 
 
 class TransactionCreate(BaseModel):
     product_id: str
     type: MovementType
     quantity: int = Field(gt=0)
+    condition: StockCondition = "BAIK"
     party: str = ""
     reference_no: str = ""
+    vehicle_plate: str = ""
     notes: str = ""
     date: Optional[str] = None
 
@@ -74,8 +79,10 @@ class Transaction(BaseModel):
     type: MovementType
     quantity: int
     stock_after: int
+    condition: StockCondition = "BAIK"
     party: str = ""
     reference_no: str = ""
+    vehicle_plate: str = ""
     queue_no: str = ""
     shipment_id: Optional[str] = None
     created_by: Optional[str] = None
@@ -99,6 +106,7 @@ class TimelinePoint(BaseModel):
 class Stats(BaseModel):
     total_products: int
     total_units: int
+    total_damaged: int = 0
     total_valuation: float
     recent_movements: int
     by_category: List[CategoryStat]

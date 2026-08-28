@@ -67,12 +67,13 @@ async def export_products():
     rows: List[List[Any]] = []
     for p in docs:
         stock = int(p.get("current_stock", 0))
+        damaged = int(p.get("damaged_stock", 0))
         buy = float(p.get("purchase_price", 0))
         min_stock = int(p.get("min_stock", 0))
         ups = int(p.get("units_per_secondary", 1)) or 1
         rows.append([
             p.get("name", ""), p.get("sku", ""), p.get("category", ""), p.get("unit", ""),
-            stock, min_stock,
+            stock, damaged, p.get("expiry_date") or "", min_stock,
             "PERLU RESTOCK" if min_stock > 0 and stock <= min_stock else "AMAN",
             f"{p.get('weight_per_unit', 1)} {p.get('weight_unit', 'Kg')}",
             f"{ups} {p.get('unit', 'Pcs')}/{p.get('secondary_unit', 'Dus')}",
@@ -81,14 +82,16 @@ async def export_products():
             buy, float(p.get("selling_price", 0)), buy * stock,
             p.get("supplier_name", ""), p.get("location", ""),
         ])
-    total_value = sum(r[13] for r in rows)
-    rows.append(["TOTAL", "", "", "", sum(int(r[4]) for r in rows), "", "", "", "", "", "",
-                 "", "", total_value, "", ""])
+    total_value = sum(r[15] for r in rows)
+    rows.append(["TOTAL", "", "", "",
+                 sum(int(r[4]) for r in rows), sum(int(r[5]) for r in rows),
+                 "", "", "", "", "", "", "", "", "", total_value, "", ""])
 
     wb = Workbook()
     _write_sheet(
         wb, "Daftar Produk", "Laporan Daftar Produk & Nilai Stok",
-        ["Nama Produk", "SKU", "Kategori", "Satuan", "Stok", "Stok Minimum", "Status Stok",
+        ["Nama Produk", "SKU", "Kategori", "Satuan", "Stok Baik", "Stok Rusak", "Tanggal EXP",
+         "Stok Minimum", "Status Stok",
          "Berat/Satuan", "Isi Kemasan Sekunder", "Total Berat", "Total Kemasan Sekunder",
          "Harga Modal (Rp)", "Harga Jual (Rp)", "Nilai Total (Rp)", "Supplier", "Lokasi"],
         rows,
@@ -158,22 +161,24 @@ async def export_transactions(month: Optional[str] = Query(None, description="Fi
         rows.append([
             stamp, t.get("reference_no", ""), t.get("queue_no", ""), t.get("type", ""),
             t.get("product_name", ""), t.get("product_sku", ""), t.get("category", ""),
-            int(t.get("quantity", 0)), int(t.get("stock_after", 0)),
-            t.get("party", ""), t.get("created_by_name", ""), t.get("notes", ""),
+            int(t.get("quantity", 0)), t.get("condition", "BAIK"), int(t.get("stock_after", 0)),
+            t.get("party", ""), t.get("vehicle_plate", ""),
+            t.get("created_by_name", ""), t.get("notes", ""),
         ])
 
     masuk = sum(r[7] for r in rows if r[3] == "MASUK")
     keluar = sum(r[7] for r in rows if r[3] == "KELUAR")
     rows.append([])
-    rows.append(["RINGKASAN", "", "", "MASUK", "", "", "", masuk, "", "", "", ""])
-    rows.append(["RINGKASAN", "", "", "KELUAR", "", "", "", keluar, "", "", "", ""])
+    rows.append(["RINGKASAN", "", "", "MASUK", "", "", "", masuk, "", "", "", "", "", ""])
+    rows.append(["RINGKASAN", "", "", "KELUAR", "", "", "", keluar, "", "", "", "", "", ""])
 
     label = f"Bulan {month}" if month else "Semua Periode"
     wb = Workbook()
     _write_sheet(
         wb, "Riwayat Transaksi", f"Laporan Riwayat Transaksi Stok — {label}",
         ["Waktu", "No. Referensi", "No. Antrian", "Tipe", "Nama Produk", "SKU", "Kategori",
-         "Jumlah", "Stok Akhir", "Pihak Terkait", "Dicatat Oleh", "Catatan"],
+         "Jumlah", "Kondisi Barang", "Stok Akhir", "Pihak Terkait", "No. Polisi Kendaraan",
+         "Dicatat Oleh", "Catatan"],
         rows,
     )
     suffix = month or "semua"

@@ -17,7 +17,7 @@ import {
   Truck,
   Upload,
   Users as UsersIcon,
-  Warehouse,
+  Warehouse as _Warehouse,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
@@ -82,9 +82,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur-md">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-4 px-4 py-3 sm:px-6">
           <Link to="/" className="flex items-center gap-2.5" data-testid="brand-link">
-            <span className="grid size-9 place-items-center rounded-lg bg-primary text-primary-foreground shadow-lg shadow-primary/25">
-              <Warehouse className="size-5" />
-            </span>
+            <img
+              src="/logo-bulog.png"
+              alt="Logo Bulog Gudang Sunter Timur I & II"
+              className="h-9 w-auto rounded-md bg-white/95 p-1 object-contain"
+            />
             <span className="leading-tight">
               <span className="block text-base font-bold tracking-tight">BULOG</span>
               <span className="block font-mono text-[10px] uppercase tracking-widest text-muted-foreground">

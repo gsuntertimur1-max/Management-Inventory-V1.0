@@ -24,6 +24,7 @@ import type {
   Product,
   Shipment,
   ShipmentCreate,
+  StockCondition,
   Supplier,
   Transaction,
   TransactionCreate,
@@ -48,6 +49,8 @@ export default function StockMovement() {
   const [lines, setLines] = useState<Line[]>([{ key: 1, product_id: "", quantity: "1" }]);
   const [party, setParty] = useState("");
   const [reference, setReference] = useState("");
+  const [vehiclePlate, setVehiclePlate] = useState("");
+  const [condition, setCondition] = useState<StockCondition>("BAIK");
   const [notes, setNotes] = useState("");
   const [lastShipment, setLastShipment] = useState<Shipment | null>(null);
 
@@ -73,16 +76,20 @@ export default function StockMovement() {
         const ups = product?.units_per_secondary && product.units_per_secondary > 0 ? product.units_per_secondary : 1;
         const qty = type === "KELUAR" ? Math.round(entered / wpu) : entered;
         const weight = type === "KELUAR" ? entered : entered * wpu;
+        const pool =
+          type === "MASUK" || condition === "BAIK"
+            ? (product?.current_stock ?? 0)
+            : (product?.damaged_stock ?? 0);
         return {
           line: l,
           product,
           qty,
           weight,
           secondary: qty / ups,
-          shortage: !!product && type === "KELUAR" && qty > product.current_stock,
+          shortage: !!product && type === "KELUAR" && qty > pool,
         };
       }),
-    [lines, products, type],
+    [lines, products, type, condition],
   );
 
   const totalUnits = detailed.reduce((s, d) => s + d.qty, 0);
@@ -100,6 +107,7 @@ export default function StockMovement() {
   const resetForm = () => {
     setLines([emptyLine()]);
     setReference("");
+    setVehiclePlate("");
     setNotes("");
     setParty("");
   };
@@ -158,6 +166,7 @@ export default function StockMovement() {
       saveOutbound.mutate({
         party,
         reference_no: reference,
+        vehicle_plate: vehiclePlate,
         notes,
         items: valid.map((d) => ({ product_id: d.line.product_id, weight: d.weight })),
       });
@@ -170,6 +179,8 @@ export default function StockMovement() {
         quantity: d.qty,
         party,
         reference_no: reference,
+        vehicle_plate: vehiclePlate,
+        condition,
         notes,
       })),
     );
@@ -361,6 +372,34 @@ export default function StockMovement() {
                     value={reference}
                     onChange={(e) => setReference(e.target.value)}
                   />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="m-plate">Nomor Plat Kendaraan</Label>
+                  <Input
+                    id="m-plate"
+                    placeholder="B 9021 XY"
+                    className="uppercase"
+                    data-testid="form-movement-vehicle-plate"
+                    value={vehiclePlate}
+                    onChange={(e) => setVehiclePlate(e.target.value.toUpperCase())}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Kondisi Barang</Label>
+                  <Select value={condition} onValueChange={(v: string) => setCondition(v as StockCondition)}>
+                    <SelectTrigger data-testid="form-movement-condition">
+                      <SelectValue>{condition === "BAIK" ? "Baik (Good)" : "Rusak (Damage)"}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="BAIK">Baik (Good)</SelectItem>
+                      <SelectItem value="RUSAK">Rusak (Damage)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {type === "KELUAR"
+                      ? "Pengeluaran surat jalan selalu memakai stok kondisi Baik."
+                      : "Stok rusak dicatat terpisah dari stok baik."}
+                  </p>
                 </div>
               </div>
 

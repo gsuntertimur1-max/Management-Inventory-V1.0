@@ -3,9 +3,10 @@
 ## Lokasi gudang & tumpukan (backend/models/locations.py, routers/locations.py)
 - 2 kompleks: **Gudang Sunter Timur I** (GBB 17–20) dan **Gudang Sunter Timur II**
   (GBB 21–24 + **MP 1**, hanya ada di kompleks II).
-- Tiap unit GBB = 12 tumpukan (A/B/C × 01..04, pola nomor 02 memakai segmen ekstra:
-  A01.1.1, A02.1.1.1, A03.1.1, A04.1.1, dst). **MP 1 = 16 tumpukan** (A/B × 01..08,
-  segmen ekstra pada 02 & 06). Total katalog 112 tumpukan, kode gabungan `GBB 23/A01.1.1`.
+- Tiap unit GBB = 12 tumpukan (A/B/C × 01..04: A01.1.1, A02.1.1, A03.1.1, A04.1.1, dst).
+  **MP 1 = 16 tumpukan** (A/B × 01..08). Total katalog 112 tumpukan, kode gabungan
+  `GBB 23/A01.1.1`. `_normalise_stack_names()` merapikan nama lama berakhiran `.1.1.1` → `.1.1`
+  (ikut memperbarui `location_code` di placements).
 - Katalog di-seed startup (`ensure_locations`) ke `db.locations`; admin/pengadaan bisa
   POST `/locations` (tambah tumpukan) & DELETE `/locations/{id}` (harus kosong).
 - **Placement** (`db.placements`): satu tumpukan boleh berisi banyak komoditas.
@@ -23,6 +24,29 @@
   tulis hanya untuk admin/pengadaan, viewer & penjualan read-only).
 
 Inventory/warehouse stock app (Bahasa Indonesia UI). **Login required** (username + password).
+
+## Kondisi barang, EXP date & logo
+- **Product** menyimpan `current_stock` (= stok kondisi BAIK), `damaged_stock` (kondisi RUSAK) dan
+  `expiry_date` (EXP, `YYYY-MM-DD`, opsional). Keduanya bisa diisi di dialog produk `/products`
+  dan tampil sebagai kolom "Stok Baik / Stok Rusak / Tanggal EXP" di halaman Produk + Dashboard.
+- **Transaction** punya `condition: BAIK|RUSAK`. POST `/transactions` menambah/mengurangi pool
+  yang sesuai (`current_stock` untuk BAIK, `damaged_stock` untuk RUSAK) dan menolak 400 bila
+  pool tidak cukup. Form `/stock-movement` punya pemilih "Kondisi Barang".
+- Pengeluaran surat jalan (`/shipments`) **selalu** dari stok BAIK; `ShipmentItem` membawa
+  `condition` + `expiry_date` (disalin dari produk saat pembuatan) untuk dicetak.
+- `Stats.total_damaged` → KPI "Stok Rusak (Damage)" di dashboard.
+- Excel: `products.xlsx` punya kolom Stok Baik, Stok Rusak, Tanggal EXP; `transactions.xlsx`
+  punya kolom Kondisi Barang + No. Polisi Kendaraan.
+- Logo: `frontend/public/logo-bulog.png` dipakai di header AppShell, halaman Login,
+  kop surat jalan A4, dan bon muat thermal.
+
+## Nomor plat kendaraan
+`vehicle_plate` (otomatis di-UPPERCASE server-side) ada pada **Transaction** (stok masuk &
+keluar), **ShipmentCreate/Shipment** (surat jalan), dan opsional pada body POST
+`/purchase-orders/{id}/receive`. Diisi di form `/stock-movement` ("Nomor Plat Kendaraan",
+berlaku untuk MASUK maupun KELUAR), lalu tampil di surat jalan A4, bon muat thermal
+("No. Pol"), kolom "No. Polisi" pada Riwayat & Pengeluaran, dan kolom
+"No. Polisi Kendaraan" di `reports/transactions.xlsx`.
 
 ## Auth & roles (RBAC only — single shared warehouse, no tenancy)
 Roles: **admin** (everything), **penjualan** (outbound only: sales:read/write + inventory:read +

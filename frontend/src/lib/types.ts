@@ -33,6 +33,8 @@ export interface Product {
   purchase_price: number;
   selling_price: number;
   current_stock: number;
+  damaged_stock: number;
+  expiry_date: string | null;
   supplier_id: string | null;
   supplier_name: string;
   location: string;
@@ -52,9 +54,13 @@ export interface ProductCreate {
   purchase_price: number;
   selling_price: number;
   current_stock: number;
+  damaged_stock: number;
+  expiry_date: string | null;
   supplier_id: string | null;
   location: string;
 }
+
+export type StockCondition = "BAIK" | "RUSAK";
 
 export type MovementType = "MASUK" | "KELUAR";
 
@@ -67,8 +73,10 @@ export interface Transaction {
   type: MovementType;
   quantity: number;
   stock_after: number;
+  condition: StockCondition;
   party: string;
   reference_no: string;
+  vehicle_plate: string;
   queue_no: string;
   shipment_id: string | null;
   created_by: string | null;
@@ -86,6 +94,8 @@ export interface ShipmentItem {
   product_sku: string;
   unit: string;
   quantity: number;
+  condition: string;
+  expiry_date: string | null;
   weight: number;
   weight_unit: string;
   weight_per_unit: number;
@@ -106,6 +116,7 @@ export interface Shipment {
   queue_no: string;
   party: string;
   reference_no: string;
+  vehicle_plate: string;
   notes: string;
   date: string;
   items: ShipmentItem[];
@@ -120,6 +131,7 @@ export interface Shipment {
 export interface ShipmentCreate {
   party: string;
   reference_no: string;
+  vehicle_plate: string;
   notes: string;
   date?: string | null;
   items: ShipmentItemInput[];
@@ -177,8 +189,10 @@ export interface TransactionCreate {
   product_id: string;
   type: MovementType;
   quantity: number;
+  condition: StockCondition;
   party: string;
   reference_no: string;
+  vehicle_plate: string;
   notes: string;
   date?: string | null;
 }
@@ -197,6 +211,7 @@ export interface TimelinePoint {
 export interface Stats {
   total_products: number;
   total_units: number;
+  total_damaged: number;
   total_valuation: number;
   recent_movements: number;
   by_category: CategoryStat[];

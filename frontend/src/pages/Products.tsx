@@ -32,7 +32,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { ApiError, apiDelete, apiGet, apiPost, apiPut } from "@/lib/api";
-import { angka, rupiah } from "@/lib/format";
+import { angka, rupiah, tanggal } from "@/lib/format";
 import { CATEGORIES, SECONDARY_UNITS, UNITS, WEIGHT_UNITS } from "@/lib/types";
 import type { Product, ProductCreate, Supplier } from "@/lib/types";
 
@@ -49,6 +49,8 @@ const EMPTY: ProductCreate = {
   purchase_price: 0,
   selling_price: 0,
   current_stock: 0,
+  damaged_stock: 0,
+  expiry_date: null,
   supplier_id: null,
   location: "",
 };
@@ -129,6 +131,8 @@ export default function Products() {
       purchase_price: p.purchase_price,
       selling_price: p.selling_price,
       current_stock: p.current_stock,
+      damaged_stock: p.damaged_stock,
+      expiry_date: p.expiry_date,
       supplier_id: p.supplier_id,
       location: p.location,
     });
@@ -209,7 +213,9 @@ export default function Products() {
                   <TableHead>Nama Produk</TableHead>
                   <TableHead>SKU</TableHead>
                   <TableHead>Kategori</TableHead>
-                  <TableHead className="text-right">Stok</TableHead>
+                  <TableHead className="text-right">Stok Baik</TableHead>
+                  <TableHead className="text-right">Stok Rusak</TableHead>
+                  <TableHead>Tanggal EXP</TableHead>
                   <TableHead className="text-right">Harga Modal</TableHead>
                   <TableHead className="text-right">Nilai Total</TableHead>
                   <TableHead>Supplier / Lokasi</TableHead>
@@ -219,7 +225,7 @@ export default function Products() {
               <TableBody data-testid="table-products-body">
                 {filtered.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={8} className="py-10 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={11} className="py-10 text-center text-sm text-muted-foreground">
                       Belum ada produk. Tambah produk baru atau muat data contoh.
                     </TableCell>
                   </TableRow>
@@ -233,6 +239,16 @@ export default function Products() {
                     </TableCell>
                     <TableCell className="text-right font-mono" data-testid={`product-stock-${p.sku}`}>
                       {angka(p.current_stock)} {p.unit}
+                    </TableCell>
+                    <TableCell className="text-right font-mono" data-testid={`product-damaged-${p.sku}`}>
+                      {p.damaged_stock > 0 ? (
+                        <span className="text-red-400">{angka(p.damaged_stock)} {p.unit}</span>
+                      ) : (
+                        <span className="text-muted-foreground">0</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-xs" data-testid={`product-expiry-${p.sku}`}>
+                      {p.expiry_date ? tanggal(p.expiry_date) : <span className="text-muted-foreground">—</span>}
                     </TableCell>
                     <TableCell className="text-right font-mono text-xs">{rupiah(p.purchase_price)}</TableCell>
                     <TableCell className="text-right font-mono text-xs">
@@ -330,13 +346,33 @@ export default function Products() {
               </Select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="p-stock">Jumlah Stok</Label>
+              <Label htmlFor="p-stock">Jumlah Stok Baik (Good)</Label>
               <Input
                 id="p-stock"
                 type="number"
                 data-testid="form-product-stock"
                 value={String(form.current_stock)}
                 onChange={(e) => setForm({ ...form, current_stock: Number(e.target.value) })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="p-damaged">Jumlah Stok Rusak (Damage)</Label>
+              <Input
+                id="p-damaged"
+                type="number"
+                data-testid="form-product-damaged-stock"
+                value={String(form.damaged_stock)}
+                onChange={(e) => setForm({ ...form, damaged_stock: Number(e.target.value) })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="p-exp">Tanggal Kedaluwarsa (EXP)</Label>
+              <Input
+                id="p-exp"
+                type="date"
+                data-testid="form-product-expiry-date"
+                value={form.expiry_date ?? ""}
+                onChange={(e) => setForm({ ...form, expiry_date: e.target.value || null })}
               />
             </div>
             <div className="space-y-2">

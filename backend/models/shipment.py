@@ -29,6 +29,8 @@ class ShipmentItem(BaseModel):
     product_sku: str
     unit: str = "Pcs"
     quantity: int
+    condition: str = "BAIK"
+    expiry_date: Optional[str] = None
     weight: float = 0
     weight_unit: str = "Kg"
     weight_per_unit: float = 1
@@ -41,6 +43,7 @@ class ShipmentItem(BaseModel):
 class ShipmentCreate(BaseModel):
     party: str = ""
     reference_no: str = ""
+    vehicle_plate: str = ""
     notes: str = ""
     date: Optional[str] = None
     items: List[ShipmentItemInput]
@@ -52,6 +55,7 @@ class Shipment(BaseModel):
     queue_no: str
     party: str = ""
     reference_no: str = ""
+    vehicle_plate: str = ""
     notes: str = ""
     date: str
     items: List[ShipmentItem] = []

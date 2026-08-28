@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from lib.auth import principal
 from lib.db import db
@@ -91,8 +92,12 @@ async def create_purchase_order(payload: PurchaseOrderCreate):
     return po
 
 
+class ReceiveRequest(BaseModel):
+    vehicle_plate: str = ""
+
+
 @router.post("/purchase-orders/{po_id}/receive", response_model=PurchaseOrder)
-async def receive_purchase_order(po_id: str, caller=Depends(principal)):
+async def receive_purchase_order(po_id: str, payload: Optional[ReceiveRequest] = None, caller=Depends(principal)):
     doc = await db.purchase_orders.find_one({"id": po_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Purchase Order tidak ditemukan")
@@ -100,6 +105,7 @@ async def receive_purchase_order(po_id: str, caller=Depends(principal)):
     if po.status != "MENUNGGU":
         raise HTTPException(status_code=400, detail=f"PO sudah berstatus {po.status}")
 
+    plate = (payload.vehicle_plate.strip().upper() if payload else "")
     today = datetime.now(timezone.utc).date().isoformat()
     for item in po.items:
         product = await db.products.find_one({"id": item.product_id})
@@ -116,6 +122,7 @@ async def receive_purchase_order(po_id: str, caller=Depends(principal)):
             stock_after=after,
             party=po.supplier_name,
             reference_no=po.po_number,
+            vehicle_plate=plate,
             created_by=caller.id if caller else None,
             created_by_name=(caller.full_name or caller.username) if caller else "",
             notes=f"Penerimaan barang dari {po.po_number}",

@@ -177,6 +177,7 @@ export default function Shipments() {
                   <TableHead>Antrian</TableHead>
                   <TableHead>Waktu</TableHead>
                   <TableHead>Penerima</TableHead>
+                  <TableHead>No. Polisi</TableHead>
                   <TableHead>Dicatat Oleh</TableHead>
                   <TableHead>Barang</TableHead>
                   <TableHead className="text-right">Total Berat</TableHead>
@@ -209,6 +210,9 @@ export default function Shipments() {
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs">{waktu(s.created_at)}</TableCell>
                     <TableCell className="text-sm">{s.party || "—"}</TableCell>
+                    <TableCell className="font-mono text-xs" data-testid="shipment-vehicle-plate">
+                      {s.vehicle_plate || "—"}
+                    </TableCell>
                     <TableCell className="text-xs" data-testid={`shipment-recorded-by-${s.doc_no}`}>
                       {s.created_by_name || <span className="text-muted-foreground">Sistem</span>}
                     </TableCell>

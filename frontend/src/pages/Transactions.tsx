@@ -184,10 +184,12 @@ export default function Transactions() {
                   <TableHead>No. Referensi</TableHead>
                   <TableHead>No. Antrian</TableHead>
                   <TableHead>Tipe</TableHead>
+                  <TableHead>Kondisi</TableHead>
                   <TableHead>Produk</TableHead>
                   <TableHead className="text-right">Perubahan</TableHead>
                   <TableHead className="text-right">Stok Akhir</TableHead>
                   <TableHead>Pihak Terkait</TableHead>
+                  <TableHead>No. Polisi</TableHead>
                   <TableHead>Dicatat Oleh</TableHead>
                   <TableHead className="text-right">Cetak</TableHead>
                 </TableRow>
@@ -195,7 +197,7 @@ export default function Transactions() {
               <TableBody data-testid="table-transactions-body">
                 {filtered.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={12} className="py-10 text-center text-sm text-muted-foreground">
                       Belum ada transaksi yang cocok dengan filter.
                     </TableCell>
                   </TableRow>
@@ -207,6 +209,15 @@ export default function Transactions() {
                     <TableCell className="font-mono text-xs">{t.queue_no || "—"}</TableCell>
                     <TableCell>
                       <Badge variant={t.type === "MASUK" ? "secondary" : "destructive"}>{t.type}</Badge>
+                    </TableCell>
+                    <TableCell data-testid="transaction-condition">
+                      <span
+                        className={`font-mono text-xs ${
+                          t.condition === "RUSAK" ? "text-red-400" : "text-emerald-400"
+                        }`}
+                      >
+                        {t.condition === "RUSAK" ? "RUSAK" : "BAIK"}
+                      </span>
                     </TableCell>
                     <TableCell>
                       <span className="block text-sm font-medium">{t.product_name}</span>
@@ -222,6 +233,9 @@ export default function Transactions() {
                     </TableCell>
                     <TableCell className="text-right font-mono">{angka(t.stock_after)}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">{t.party || "—"}</TableCell>
+                    <TableCell className="font-mono text-xs" data-testid="transaction-vehicle-plate">
+                      {t.vehicle_plate || "—"}
+                    </TableCell>
                     <TableCell className="text-xs" data-testid={`tx-recorded-by-${t.id}`}>
                       {t.created_by_name || <span className="text-muted-foreground">Sistem</span>}
                     </TableCell>

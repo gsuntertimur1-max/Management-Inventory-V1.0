@@ -4,8 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { apiGet } from "@/lib/api";
-import { angka, tanggal } from "@/lib/format";
-import type { AppSettings, Shipment } from "@/lib/types";
+import { angka, tanggal } from "@/lib/format";import type { AppSettings, Shipment } from "@/lib/types";
 
 const A4_STYLE = `@page { size: A4 portrait; margin: 0; }`;
 
@@ -24,12 +23,15 @@ function NoteCopy({
   return (
     <div className="print-half flex flex-col border-b border-dashed border-black px-[10mm] py-[6mm] text-[9.5pt] text-black">
       <div className="flex items-start justify-between border-b-2 border-black pb-1.5">
-        <div>
-          <p className="text-[12.5pt] font-bold uppercase leading-tight">{settings.company_name}</p>
-          <p className="max-w-[95mm] text-[7.5pt] leading-snug">{settings.address}</p>
-          <p className="text-[7.5pt]">
-            Telp: {settings.phone} · {settings.email}
-          </p>
+        <div className="flex items-start gap-2">
+          <img src="/logo-bulog.png" alt="Logo Bulog" className="h-[11mm] w-auto object-contain" />
+          <div>
+            <p className="text-[12.5pt] font-bold uppercase leading-tight">{settings.company_name}</p>
+            <p className="max-w-[85mm] text-[7.5pt] leading-snug">{settings.address}</p>
+            <p className="text-[7.5pt]">
+              Telp: {settings.phone} · {settings.email}
+            </p>
+          </div>
         </div>
         <div className="text-right">
           <p className="text-[12pt] font-bold uppercase">Surat Jalan</p>
@@ -45,6 +47,10 @@ function NoteCopy({
         <div>
           <p className="font-semibold">Dikirim Kepada:</p>
           <p>{shipment.party || "-"}</p>
+          <p className="mt-0.5 font-semibold">
+            No. Polisi Kendaraan:{" "}
+            <span className="font-mono text-[9pt]">{shipment.vehicle_plate || "-"}</span>
+          </p>
         </div>
         <div>
           <p className="font-semibold">No. Referensi / Keterangan:</p>
@@ -61,6 +67,7 @@ function NoteCopy({
             <th className="w-8 border border-black px-1 py-0.5 text-left">No</th>
             <th className="border border-black px-1 py-0.5 text-left">Nama Barang</th>
             <th className="border border-black px-1 py-0.5 text-left">Kode SKU</th>
+            <th className="border border-black px-1 py-0.5 text-left">EXP</th>
             <th className="border border-black px-1 py-0.5 text-right">Kuantum</th>
             <th className="border border-black px-1 py-0.5 text-right">Satuan Barang</th>
             <th className="border border-black px-1 py-0.5 text-right">Kemasan Sekunder</th>
@@ -72,6 +79,9 @@ function NoteCopy({
               <td className="border border-black px-1 py-0.5">{idx + 1}</td>
               <td className="border border-black px-1 py-0.5">{item.product_name}</td>
               <td className="border border-black px-1 py-0.5">{item.product_sku}</td>
+              <td className="border border-black px-1 py-0.5">
+                {item.expiry_date ? tanggal(item.expiry_date) : "-"}
+              </td>
               <td className="border border-black px-1 py-0.5 text-right">
                 {item.weight} {item.weight_unit}
               </td>
@@ -85,8 +95,8 @@ function NoteCopy({
             </tr>
           ))}
           <tr>
-            <td className="border border-black px-1 py-0.5 font-semibold" colSpan={3}>
-              Total ({shipment.items.length} jenis barang)
+            <td className="border border-black px-1 py-0.5 font-semibold" colSpan={4}>
+              Total ({shipment.items.length} jenis barang) · Kondisi: BAIK
             </td>
             <td className="border border-black px-1 py-0.5 text-right font-semibold">
               {shipment.total_weight}

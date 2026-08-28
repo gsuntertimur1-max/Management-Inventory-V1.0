@@ -105,6 +105,14 @@ export default function Dashboard() {
       icon: Layers,
       tone: "text-indigo-400 bg-indigo-500/10",
     },
+    {
+      id: "stat-total-damaged",
+      title: "Stok Rusak (Damage)",
+      subtitle: "Unit kondisi rusak",
+      value: stats ? angka(stats.total_damaged) : "—",
+      icon: AlertTriangle,
+      tone: "text-red-400 bg-red-500/10",
+    },
     ...(showMoney
       ? [
           {
@@ -270,6 +278,8 @@ export default function Dashboard() {
                     <TableHead>SKU</TableHead>
                     <TableHead>Kategori</TableHead>
                     <TableHead className="text-right">Sisa Stok</TableHead>
+                    <TableHead className="text-right">Rusak</TableHead>
+                    <TableHead>EXP</TableHead>
                     <TableHead className="text-right">Kemasan Sekunder</TableHead>
                     {showMoney && <TableHead className="text-right">Nilai Stok</TableHead>}
                     <TableHead>Lokasi</TableHead>
@@ -278,7 +288,7 @@ export default function Dashboard() {
                 <TableBody data-testid="dashboard-stock-body">
                   {stockList.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={showMoney ? 7 : 6} className="py-10 text-center text-sm text-muted-foreground">
+                      <TableCell colSpan={showMoney ? 9 : 8} className="py-10 text-center text-sm text-muted-foreground">
                         Belum ada produk terdaftar. Tambah produk atau import data SKU.
                       </TableCell>
                     </TableRow>
@@ -315,6 +325,16 @@ export default function Dashboard() {
                             min {angka(p.min_stock)}
                           </span>
                         )}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs" data-testid={`dashboard-damaged-${p.sku}`}>
+                        {p.damaged_stock > 0 ? (
+                          <span className="text-red-400">{angka(p.damaged_stock)}</span>
+                        ) : (
+                          <span className="text-muted-foreground">0</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground" data-testid={`dashboard-exp-${p.sku}`}>
+                        {p.expiry_date ? tanggal(p.expiry_date) : "—"}
                       </TableCell>
                       <TableCell className="text-right font-mono text-xs text-muted-foreground">
                         {(p.current_stock / (p.units_per_secondary || 1)).toFixed(2)}{" "}

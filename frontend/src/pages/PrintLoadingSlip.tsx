@@ -61,6 +61,7 @@ export default function PrintLoadingSlip() {
           data-testid="loading-slip"
         >
           <div className="text-center">
+            <img src="/logo-bulog.png" alt="Logo Bulog" className="mx-auto mb-1 h-[12mm] w-auto object-contain" />
             <p className="text-[11pt] font-bold uppercase">{settings.company_name}</p>
             <p className="text-[7pt] leading-snug">{settings.address}</p>
             <p className="text-[7pt]">Telp: {settings.phone}</p>
@@ -82,6 +83,7 @@ export default function PrintLoadingSlip() {
             <p>No. SJ: {s.doc_no}</p>
             <p>Ref   : {s.reference_no || "-"}</p>
             <p>Tujuan: {s.party || "-"}</p>
+            <p className="font-bold">No. Pol: {s.vehicle_plate || "-"}</p>
             <p>Status: {s.status}</p>
           </div>
 
@@ -97,6 +99,10 @@ export default function PrintLoadingSlip() {
                   <span className="font-bold">
                     {item.weight} {item.weight_unit}
                   </span>
+                </div>
+                <div className="flex justify-between text-[7.5pt]">
+                  <span>EXP: {item.expiry_date ? item.expiry_date : "-"}</span>
+                  <span>Kondisi: {item.condition || "BAIK"}</span>
                 </div>
                 <div className="flex justify-between text-[7.5pt]">
                   <span>
