@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, APIRouter
+from fastapi import FastAPI, APIRouter, Depends
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 import os
@@ -21,6 +21,7 @@ from lib.db import client, db
 # Startup runs before the yield, shutdown after it. Add your own setup/teardown here.
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await ensure_default_admin()
     yield
     client.close()
 
@@ -28,8 +29,10 @@ async def lifespan(app: FastAPI):
 # Create the main app without a prefix
 app = FastAPI(lifespan=lifespan)
 
-# Create a router with the /api prefix
-api_router = APIRouter(prefix="/api")
+# Create a router with the /api prefix — `enforce` gates every route on it (deny-by-default).
+from lib.auth import enforce, ensure_default_admin
+
+api_router = APIRouter(prefix="/api", dependencies=[Depends(enforce)])
 
 
 # Define Models
@@ -58,13 +61,17 @@ async def get_status_checks():
     status_checks = await db.status_checks.find().to_list(1000)
     return [StatusCheck(**status_check) for status_check in status_checks]
 
+from routers.auth import router as auth_router
 from routers.inventory import router as inventory_router
 from routers.purchasing import router as purchasing_router
 from routers.reports import router as reports_router
+from routers.shipments import router as shipments_router
 
+api_router.include_router(auth_router)
 api_router.include_router(inventory_router)
 api_router.include_router(purchasing_router)
 api_router.include_router(reports_router)
+api_router.include_router(shipments_router)
 
 # Include the router in the main app
 app.include_router(api_router)

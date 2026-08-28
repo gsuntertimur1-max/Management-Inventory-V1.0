@@ -1,11 +1,17 @@
 import { Routes, Route } from "react-router-dom";
+import RequireAuth from "@/components/RequireAuth";
+import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
 import Products from "@/pages/Products";
+import ImportProducts from "@/pages/ImportProducts";
 import StockMovement from "@/pages/StockMovement";
 import Transactions from "@/pages/Transactions";
 import Suppliers from "@/pages/Suppliers";
 import PurchaseOrders from "@/pages/PurchaseOrders";
+import Shipments from "@/pages/Shipments";
+import QueueDisplay from "@/pages/QueueDisplay";
 import SettingsPage from "@/pages/Settings";
+import Users from "@/pages/Users";
 import PrintDeliveryNote from "@/pages/PrintDeliveryNote";
 import PrintLoadingSlip from "@/pages/PrintLoadingSlip";
 
@@ -13,15 +19,112 @@ import PrintLoadingSlip from "@/pages/PrintLoadingSlip";
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<Dashboard />} />
-      <Route path="/products" element={<Products />} />
-      <Route path="/stock-movement" element={<StockMovement />} />
-      <Route path="/transactions" element={<Transactions />} />
-      <Route path="/suppliers" element={<Suppliers />} />
-      <Route path="/purchase-orders" element={<PurchaseOrders />} />
-      <Route path="/settings" element={<SettingsPage />} />
-      <Route path="/print/surat-jalan" element={<PrintDeliveryNote />} />
-      <Route path="/print/bon-muat/:id" element={<PrintLoadingSlip />} />
+      <Route path="/login" element={<Login />} />
+
+      <Route
+        path="/"
+        element={
+          <RequireAuth action="stock:read">
+            <Dashboard />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/products"
+        element={
+          <RequireAuth action="inventory:write">
+            <Products />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/import"
+        element={
+          <RequireAuth action="inventory:write">
+            <ImportProducts />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/stock-movement"
+        element={
+          <RequireAuth action="inventory:write">
+            <StockMovement />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/transactions"
+        element={
+          <RequireAuth action="inventory:read">
+            <Transactions />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/suppliers"
+        element={
+          <RequireAuth action="inventory:write">
+            <Suppliers />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/purchase-orders"
+        element={
+          <RequireAuth action="inventory:write">
+            <PurchaseOrders />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/shipments"
+        element={
+          <RequireAuth action="inventory:read">
+            <Shipments />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/antrian"
+        element={
+          <RequireAuth action="inventory:read">
+            <QueueDisplay />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/settings"
+        element={
+          <RequireAuth action="settings:write">
+            <SettingsPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/users"
+        element={
+          <RequireAuth action="users:manage">
+            <Users />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/print/surat-jalan"
+        element={
+          <RequireAuth action="inventory:read">
+            <PrintDeliveryNote />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/print/bon-muat/:id"
+        element={
+          <RequireAuth action="inventory:read">
+            <PrintLoadingSlip />
+          </RequireAuth>
+        }
+      />
     </Routes>
   );
 }

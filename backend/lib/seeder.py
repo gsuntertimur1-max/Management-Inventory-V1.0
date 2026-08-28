@@ -1,9 +1,10 @@
-"""Idempotent-by-reset sample data for GudangPro."""
+"""Sample data for GudangPro. Reload with POST /api/seed or `python seed.py`."""
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
 from lib.db import db
 from models.inventory import Product, Supplier, Transaction
+from models.shipment import Shipment, ShipmentItem
 
 SUPPLIERS: List[Dict[str, str]] = [
     {"name": "PT Mega Nusantara Distribusi", "contact_person": "Budi Santoso", "phone": "0812-3456-7890",
@@ -39,39 +40,54 @@ PRODUCTS: List[tuple] = [
     ("Kunci Set Tool Kit 108pcs", "HRD-TLK-108", "Hardware & Perkakas", "Set", 415000, 549000, 27, 2, "Rak E-02"),
 ]
 
-# (product_idx, type, qty, party, ref, notes, days_ago)
-MOVEMENTS: List[tuple] = [
-    (0, "MASUK", 30, None, "PO-2026-001", "Penerimaan batch awal kuartal", 26),
-    (0, "KELUAR", 6, "PT Bank Sinar Mas", "SJ-2026-018", "Pengiriman unit kantor cabang", 20),
-    (1, "MASUK", 60, None, "PO-2026-002", "Restock monitor", 24),
-    (1, "KELUAR", 14, "CV Digital Kreatif", "SJ-2026-019", "Penjualan grosir", 12),
-    (2, "MASUK", 200, None, "PO-2026-003", "Pembelian volume besar", 22),
-    (2, "KELUAR", 20, "Toko Komputer Jaya", "SJ-2026-020", "Penjualan retail", 9),
-    (4, "MASUK", 400, None, "PO-2026-004", "Stok kertas semester ini", 18),
-    (4, "KELUAR", 80, "Sekolah Tunas Bangsa", "SJ-2026-021", "Order pendidikan", 7),
-    (5, "MASUK", 600, None, "PO-2026-005", "Pengadaan alat tulis", 17),
-    (5, "KELUAR", 60, "Kantor Notaris Amanah", "SJ-2026-022", "Order rutin bulanan", 5),
-    (7, "MASUK", 1500, None, "PO-2026-006", "Panen mitra tani Semarang", 15),
-    (7, "KELUAR", 250, "Warung Sembako Berkah", "SJ-2026-023", "Distribusi harian", 4),
-    (8, "MASUK", 500, None, "PO-2026-007", "Batch minyak goreng", 13),
-    (8, "KELUAR", 90, "Rumah Makan Selera", "SJ-2026-024", "Pesanan katering", 3),
-    (10, "MASUK", 300, None, "PO-2026-008", "Produksi konveksi mitra", 11),
-    (10, "KELUAR", 40, "Distro Anak Muda", "SJ-2026-025", "Penjualan konsinyasi", 2),
-    (12, "MASUK", 40, None, "PO-2026-009", "Perkakas baru", 8),
-    (12, "KELUAR", 6, "CV Bangun Kokoh", "SJ-2026-026", "Proyek renovasi", 1),
-    (13, "MASUK", 600, None, "PO-2026-010", "Semen proyek besar", 6),
-    (13, "KELUAR", 80, "PT Karya Griya", "SJ-2026-027", "Pengiriman proyek perumahan", 1),
-    (14, "MASUK", 30, None, "PO-2026-011", "Tool kit tambahan", 5),
-    (14, "KELUAR", 3, "Bengkel Motor Rapi", "SJ-2026-028", "Penjualan langsung", 0),
+# Inbound only: (product_idx, qty, reference, notes, days_ago)
+INBOUND: List[tuple] = [
+    (0, 30, "PO-2026-001", "Penerimaan batch awal kuartal", 26),
+    (1, 60, "PO-2026-002", "Restock monitor", 24),
+    (2, 200, "PO-2026-003", "Pembelian volume besar", 22),
+    (4, 400, "PO-2026-004", "Stok kertas semester ini", 18),
+    (5, 600, "PO-2026-005", "Pengadaan alat tulis", 17),
+    (7, 1500, "PO-2026-006", "Panen mitra tani Semarang", 15),
+    (8, 500, "PO-2026-007", "Batch minyak goreng", 13),
+    (10, 300, "PO-2026-008", "Produksi konveksi mitra", 11),
+    (12, 40, "PO-2026-009", "Perkakas baru", 8),
+    (13, 600, "PO-2026-010", "Semen proyek besar", 6),
+    (14, 30, "PO-2026-011", "Tool kit tambahan", 5),
+]
+
+# Outbound documents (surat jalan) — each may carry several product lines.
+# (days_ago, party, external_ref, notes, status, [(product_idx, qty), ...])
+OUTBOUND: List[tuple] = [
+    (20, "PT Bank Sinar Mas", "REF-018", "Pengiriman perangkat kantor cabang", "SELESAI",
+     [(0, 6), (1, 8), (2, 20)]),
+    (12, "CV Digital Kreatif", "REF-019", "Penjualan grosir studio desain", "SELESAI",
+     [(1, 6), (2, 10)]),
+    (9, "Sekolah Tunas Bangsa", "REF-021", "Order pendidikan awal tahun", "SELESAI",
+     [(4, 80), (5, 60)]),
+    (6, "Warung Sembako Berkah", "REF-023", "Distribusi harian sembako", "SELESAI",
+     [(7, 250), (8, 90), (9, 120)]),
+    (4, "Distro Anak Muda", "REF-025", "Penjualan konsinyasi", "SELESAI",
+     [(10, 40), (11, 2)]),
+    (2, "PT Karya Griya", "REF-027", "Pengiriman proyek perumahan", "SELESAI",
+     [(13, 80), (12, 4)]),
+    (0, "Rumah Makan Selera", "REF-030", "Pesanan katering mingguan", "SELESAI",
+     [(7, 60), (8, 24)]),
+    (0, "Toko Bangunan Jaya Abadi", "REF-031", "Muat pagi — truk B 9021 XX", "DIMUAT",
+     [(13, 120), (14, 3), (12, 2)]),
+    (0, "Bengkel Motor Rapi", "REF-032", "Menunggu antrian dermaga 2", "MENUNGGU",
+     [(14, 4), (12, 1)]),
+    (0, "Kantor Notaris Amanah", "REF-033", "Alat tulis rutin bulanan", "MENUNGGU",
+     [(5, 40), (4, 15)]),
 ]
 
 
 async def run_seed() -> Dict[str, int]:
-    """Wipe and reload the demo dataset."""
+    """Wipe and reload the demo dataset (settings are preserved)."""
     await db.products.delete_many({})
     await db.suppliers.delete_many({})
     await db.transactions.delete_many({})
     await db.purchase_orders.delete_many({})
+    await db.shipments.delete_many({})
 
     suppliers = [Supplier(**s) for s in SUPPLIERS]
     await db.suppliers.insert_many([s.model_dump() for s in suppliers])
@@ -86,29 +102,68 @@ async def run_seed() -> Dict[str, int]:
     await db.products.insert_many([p.model_dump() for p in products])
 
     now = datetime.now(timezone.utc)
-    running: Dict[str, int] = {}
-    queue_per_day: Dict[str, int] = {}
+    stock: Dict[str, int] = {p.id: p.current_stock for p in products}
     txs: List[Dict[str, Any]] = []
-    for pidx, mtype, qty, party, ref, notes, days_ago in MOVEMENTS:
+
+    # --- inbound
+    for pidx, qty, ref, notes, days_ago in INBOUND:
         p = products[pidx]
-        base = running.get(p.id, p.current_stock)
-        after = base + qty if mtype == "MASUK" else max(base - qty, 0)
-        running[p.id] = after
+        stock[p.id] += qty
         moment = now - timedelta(days=days_ago)
-        day = moment.date().isoformat()
-        queue_no = ""
-        if mtype == "KELUAR":
-            queue_per_day[day] = queue_per_day.get(day, 0) + 1
-            queue_no = f"A-{queue_per_day[day]:03d}"
         txs.append(Transaction(
             product_id=p.id, product_name=p.name, product_sku=p.sku, category=p.category,
-            type=mtype, quantity=qty, stock_after=after,
-            party=party or (p.supplier_name if mtype == "MASUK" else ""),
-            reference_no=ref, queue_no=queue_no, notes=notes, date=day, created_at=moment,
+            type="MASUK", quantity=qty, stock_after=stock[p.id], party=p.supplier_name,
+            reference_no=ref, notes=notes, date=moment.date().isoformat(), created_at=moment,
         ).model_dump())
+
+    # --- outbound documents (oldest first so numbering reads naturally)
+    shipments: List[Dict[str, Any]] = []
+    per_month: Dict[str, int] = {}
+    per_day: Dict[str, int] = {}
+    for days_ago, party, ref, notes, status, lines in sorted(OUTBOUND, key=lambda r: -r[0]):
+        moment = now - timedelta(days=days_ago)
+        day = moment.date().isoformat()
+        month = moment.strftime("%Y%m")
+        per_month[month] = per_month.get(month, 0) + 1
+        per_day[day] = per_day.get(day, 0) + 1
+        doc_no = f"SJ-{month}-{per_month[month]:03d}"
+        queue_no = f"A-{per_day[day]:03d}"
+
+        items: List[ShipmentItem] = []
+        for pidx, qty in lines:
+            p = products[pidx]
+            stock[p.id] = max(stock[p.id] - qty, 0)
+            items.append(ShipmentItem(
+                product_id=p.id, product_name=p.name, product_sku=p.sku,
+                unit=p.unit, quantity=qty, stock_after=stock[p.id],
+            ))
+
+        shipment = Shipment(
+            doc_no=doc_no, queue_no=queue_no, party=party, reference_no=ref, notes=notes,
+            date=day, items=items, total_quantity=sum(i.quantity for i in items),
+            status=status, created_at=moment,
+        )
+        shipments.append(shipment.model_dump())
+
+        for item in items:
+            product = next(p for p in products if p.id == item.product_id)
+            txs.append(Transaction(
+                product_id=item.product_id, product_name=item.product_name,
+                product_sku=item.product_sku, category=product.category,
+                type="KELUAR", quantity=item.quantity, stock_after=item.stock_after,
+                party=party, reference_no=ref, queue_no=queue_no, shipment_id=shipment.id,
+                notes=notes, date=day, created_at=moment,
+            ).model_dump())
+
     await db.transactions.insert_many(txs)
+    await db.shipments.insert_many(shipments)
 
-    for pid, stock in running.items():
-        await db.products.update_one({"id": pid}, {"$set": {"current_stock": stock}})
+    for pid, qty in stock.items():
+        await db.products.update_one({"id": pid}, {"$set": {"current_stock": qty}})
 
-    return {"suppliers": len(suppliers), "products": len(products), "transactions": len(txs)}
+    return {
+        "suppliers": len(suppliers),
+        "products": len(products),
+        "shipments": len(shipments),
+        "transactions": len(txs),
+    }

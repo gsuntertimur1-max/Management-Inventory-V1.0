@@ -1,3 +1,4 @@
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import {
@@ -8,6 +9,7 @@ import {
   Layers,
   Package,
   Plus,
+  Search,
 } from "lucide-react";
 import {
   Area,
@@ -23,9 +25,19 @@ import {
 import AppShell from "@/components/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { apiGet } from "@/lib/api";
+import { can, useAuth } from "@/lib/session";
 import { angka, compactRupiah, rupiah, tanggal, waktu } from "@/lib/format";
-import type { Stats, Transaction } from "@/lib/types";
+import type { Product, Stats, Transaction } from "@/lib/types";
 
 interface Kpi {
   id: string;
@@ -37,14 +49,33 @@ interface Kpi {
 }
 
 export default function Dashboard() {
+  const [stockSearch, setStockSearch] = useState("");
+  const { role } = useAuth();
+  const showMoney = can(role, "inventory:read");
+  const canWrite = can(role, "inventory:write");
+
   const statsQ = useQuery({ queryKey: ["stats"], queryFn: () => apiGet<Stats>("/stats") });
+  // Viewers may not read transaction history, so never fire the request for them.
   const txQ = useQuery({
     queryKey: ["transactions"],
     queryFn: () => apiGet<Transaction[]>("/transactions"),
+    enabled: showMoney,
   });
+  const productsQ = useQuery({ queryKey: ["products"], queryFn: () => apiGet<Product[]>("/products") });
 
   const stats = statsQ.isError ? undefined : statsQ.data;
   const recent = (txQ.isError ? [] : txQ.data ?? []).slice(0, 8);
+  const products = productsQ.isError ? [] : productsQ.data ?? [];
+
+  // Remaining stock per product, sorted A→Z by product name.
+  const stockList = useMemo(() => {
+    const q = stockSearch.trim().toLowerCase();
+    return [...products]
+      .filter(
+        (p) => q === "" || p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q),
+      )
+      .sort((a, b) => a.name.localeCompare(b.name, "id"));
+  }, [products, stockSearch]);
 
   const kpis: Kpi[] = [
     {
@@ -63,14 +94,18 @@ export default function Dashboard() {
       icon: Layers,
       tone: "text-indigo-400 bg-indigo-500/10",
     },
-    {
-      id: "stat-total-valuation",
-      title: "Total Nilai Inventori",
-      subtitle: "Harga modal × jumlah stok",
-      value: stats ? compactRupiah(stats.total_valuation) : "—",
-      icon: Coins,
-      tone: "text-emerald-400 bg-emerald-500/10",
-    },
+    ...(showMoney
+      ? [
+          {
+            id: "stat-total-valuation",
+            title: "Total Nilai Inventori",
+            subtitle: "Harga modal × jumlah stok",
+            value: stats ? compactRupiah(stats.total_valuation) : "—",
+            icon: Coins,
+            tone: "text-emerald-400 bg-emerald-500/10",
+          },
+        ]
+      : []),
     {
       id: "stat-recent-movements",
       title: "Aktivitas 30 Hari",
@@ -97,13 +132,24 @@ export default function Dashboard() {
             </p>
           </div>
           <div className="flex gap-2">
-            <Link
-              to="/products"
-              data-testid="dashboard-add-product-link"
-              className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium transition-colors duration-150 hover:bg-secondary"
-            >
-              <Plus className="size-4" /> Tambah Produk
-            </Link>
+            {canWrite && (
+              <>
+                <Link
+                  to="/import"
+                  data-testid="dashboard-import-link"
+                  className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium transition-colors duration-150 hover:bg-secondary"
+                >
+                  <Plus className="size-4" /> Import Data SKU
+                </Link>
+                <Link
+                  to="/products"
+                  data-testid="dashboard-add-product-link"
+                  className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium transition-colors duration-150 hover:bg-secondary"
+                >
+                  <Plus className="size-4" /> Tambah Produk
+                </Link>
+              </>
+            )}
           </div>
         </div>
 
@@ -131,6 +177,70 @@ export default function Dashboard() {
             </Card>
           ))}
         </div>
+
+        <Card data-testid="stock-per-product-card">
+          <CardHeader>
+            <CardTitle className="text-lg">Sisa Stok per Barang (A → Z)</CardTitle>
+            <div className="relative mt-3 max-w-sm">
+              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                className="pl-9"
+                placeholder="Cari nama barang atau SKU..."
+                value={stockSearch}
+                onChange={(e) => setStockSearch(e.target.value)}
+                data-testid="dashboard-stock-search"
+              />
+            </div>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="max-h-[28rem] overflow-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Nama Barang</TableHead>
+                    <TableHead>SKU</TableHead>
+                    <TableHead>Kategori</TableHead>
+                    <TableHead className="text-right">Sisa Stok</TableHead>
+                    {showMoney && <TableHead className="text-right">Nilai Stok</TableHead>}
+                    <TableHead>Lokasi</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody data-testid="dashboard-stock-body">
+                  {stockList.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={showMoney ? 6 : 5} className="py-10 text-center text-sm text-muted-foreground">
+                        Belum ada produk terdaftar. Tambah produk atau import data SKU.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {stockList.map((p) => (
+                    <TableRow key={p.id} data-testid={`dashboard-stock-row-${p.sku}`}>
+                      <TableCell className="font-medium">{p.name}</TableCell>
+                      <TableCell className="font-mono text-xs">{p.sku}</TableCell>
+                      <TableCell>
+                        <Badge variant="secondary">{p.category}</Badge>
+                      </TableCell>
+                      <TableCell
+                        className="text-right font-mono font-semibold"
+                        data-testid={`dashboard-stock-value-${p.sku}`}
+                      >
+                        {angka(p.current_stock)} {p.unit}
+                      </TableCell>
+                      {showMoney && (
+                        <TableCell className="text-right font-mono text-xs text-muted-foreground">
+                          {rupiah(p.purchase_price * p.current_stock)}
+                        </TableCell>
+                      )}
+                      <TableCell className="text-xs text-muted-foreground">
+                        {p.location || "—"}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </CardContent>
+        </Card>
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
           <Card className="lg:col-span-7" data-testid="chart-timeline-card">
@@ -198,6 +308,7 @@ export default function Dashboard() {
           </Card>
         </div>
 
+        {showMoney && (
         <Card data-testid="recent-activity-card">
           <CardHeader>
             <CardTitle className="text-lg">Aktivitas Terakhir</CardTitle>
@@ -243,10 +354,7 @@ export default function Dashboard() {
             ))}
           </CardContent>
         </Card>
-
-        <p className="text-center text-xs text-muted-foreground">
-          Estimasi nilai aset dihitung dari harga modal · {stats ? rupiah(stats.total_valuation) : "menunggu data"}
-        </p>
+        )}
       </div>
     </AppShell>
   );

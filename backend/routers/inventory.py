@@ -1,10 +1,13 @@
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from lib.auth import principal
 from lib.db import db
 from lib.seeder import run_seed
+from models.importing import ProductImportRequest, ProductImportResult
 from models.inventory import (
     CategoryStat,
     Product,
@@ -63,18 +66,27 @@ async def _supplier_name(supplier_id: Optional[str]) -> str:
     return doc["name"] if doc else ""
 
 
+def _mask_prices(product: Product, role: Optional[str]) -> Product:
+    """Viewers see quantities only — money fields are stripped server-side."""
+    if role == "viewer":
+        product.purchase_price = 0
+        product.selling_price = 0
+    return product
+
+
 @router.get("/products", response_model=List[Product])
-async def list_products():
+async def list_products(caller=Depends(principal)):
     docs = await db.products.find().sort("name", 1).to_list(1000)
-    return [Product(**d) for d in docs]
+    role = caller.role if caller else None
+    return [_mask_prices(Product(**d), role) for d in docs]
 
 
 @router.get("/products/{product_id}", response_model=Product)
-async def get_product(product_id: str):
+async def get_product(product_id: str, caller=Depends(principal)):
     doc = await db.products.find_one({"id": product_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
-    return Product(**doc)
+    return _mask_prices(Product(**doc), caller.role if caller else None)
 
 
 @router.post("/products", response_model=Product)
@@ -106,6 +118,129 @@ async def delete_product(product_id: str):
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
     return {"ok": True}
+
+
+@router.post("/products/import", response_model=ProductImportResult)
+async def import_products(payload: ProductImportRequest):
+    """Bulk create/update products by SKU. One supplier may supply many products."""
+    if not payload.items:
+        raise HTTPException(status_code=400, detail="Tidak ada baris data untuk diimpor")
+
+    result = ProductImportResult()
+    today = datetime.now(timezone.utc).date().isoformat()
+
+    default_supplier_name = ""
+    if payload.supplier_id:
+        doc = await db.suppliers.find_one({"id": payload.supplier_id})
+        if not doc:
+            raise HTTPException(status_code=404, detail="Supplier default tidak ditemukan")
+        default_supplier_name = doc["name"]
+
+    for index, row in enumerate(payload.items, start=1):
+        sku = row.sku.strip()
+        if not sku:
+            result.errors.append(f"Baris {index}: kode SKU wajib diisi")
+            continue
+        if row.quantity < 0:
+            result.errors.append(f"Baris {index} ({sku}): jumlah tidak boleh negatif")
+            continue
+
+        # Resolve the supplier: explicit name on the row wins, else the form default.
+        supplier_id = payload.supplier_id
+        supplier_name = default_supplier_name
+        if row.supplier_name and row.supplier_name.strip():
+            wanted = row.supplier_name.strip()
+            found = await db.suppliers.find_one({"name": {"$regex": f"^{re.escape(wanted)}$", "$options": "i"}})
+            if not found:
+                created_supplier = Supplier(name=wanted, phone="")
+                await db.suppliers.insert_one(created_supplier.model_dump())
+                result.suppliers_created += 1
+                supplier_id, supplier_name = created_supplier.id, created_supplier.name
+            else:
+                supplier_id, supplier_name = found["id"], found["name"]
+
+        existing = await db.products.find_one({"sku": sku})
+
+        if existing:
+            current = int(existing.get("current_stock", 0))
+            new_stock = current + row.quantity if payload.mode == "add" else row.quantity
+            update: Dict[str, object] = {"current_stock": new_stock}
+            if row.name.strip():
+                update["name"] = row.name.strip()
+            for field, value in (
+                ("category", row.category),
+                ("unit", row.unit),
+                ("location", row.location),
+            ):
+                if value is not None and str(value).strip():
+                    update[field] = str(value).strip()
+            for field, value in (("purchase_price", row.purchase_price), ("selling_price", row.selling_price)):
+                if value is not None:
+                    update[field] = float(value)
+            if supplier_id:
+                update["supplier_id"] = supplier_id
+                update["supplier_name"] = supplier_name
+
+            await db.products.update_one({"id": existing["id"]}, {"$set": update})
+            result.updated += 1
+
+            delta = new_stock - current
+            if delta != 0:
+                tx = Transaction(
+                    product_id=existing["id"],
+                    product_name=str(update.get("name", existing.get("name", ""))),
+                    product_sku=sku,
+                    category=str(update.get("category", existing.get("category", "Lainnya"))),
+                    type="MASUK" if delta > 0 else "KELUAR",
+                    quantity=abs(delta),
+                    stock_after=new_stock,
+                    party=supplier_name,
+                    reference_no="IMPORT-DATA",
+                    notes="Penyesuaian stok dari import data",
+                    date=today,
+                )
+                await db.transactions.insert_one(tx.model_dump())
+                if delta > 0:
+                    result.units_added += delta
+            continue
+
+        if not row.name.strip():
+            result.errors.append(f"Baris {index} ({sku}): nama produk wajib untuk SKU baru")
+            continue
+
+        product = Product(
+            name=row.name.strip(),
+            sku=sku,
+            category=(row.category or "Lainnya").strip() or "Lainnya",
+            unit=(row.unit or "Pcs").strip() or "Pcs",
+            purchase_price=float(row.purchase_price or 0),
+            selling_price=float(row.selling_price or 0),
+            current_stock=row.quantity,
+            supplier_id=supplier_id,
+            supplier_name=supplier_name,
+            location=(row.location or "").strip(),
+        )
+        await db.products.insert_one(product.model_dump())
+        result.created += 1
+
+        if row.quantity > 0:
+            tx = Transaction(
+                product_id=product.id,
+                product_name=product.name,
+                product_sku=product.sku,
+                category=product.category,
+                type="MASUK",
+                quantity=row.quantity,
+                stock_after=row.quantity,
+                party=supplier_name,
+                reference_no="IMPORT-DATA",
+                notes="Stok awal dari import data",
+                date=today,
+            )
+            await db.transactions.insert_one(tx.model_dump())
+            result.units_added += row.quantity
+
+    return result
 
 
 # ---------- Transactions ----------
@@ -164,10 +299,12 @@ async def create_transaction(payload: TransactionCreate):
 
 # ---------- Stats ----------
 @router.get("/stats", response_model=Stats)
-async def get_stats():
+async def get_stats(caller=Depends(principal)):
     products = await db.products.find().to_list(1000)
     total_units = sum(int(p.get("current_stock", 0)) for p in products)
     valuation = sum(float(p.get("purchase_price", 0)) * int(p.get("current_stock", 0)) for p in products)
+    if caller and caller.role == "viewer":
+        valuation = 0.0
 
     per_cat: Dict[str, int] = {}
     for p in products:

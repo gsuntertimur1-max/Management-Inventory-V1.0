@@ -1,0 +1,183 @@
+"""RBAC for a single shared warehouse: roles only — no tenancy, no per-record ownership.
+
+One decision function (`authorize`) drives every route via the `enforce` dependency that is
+attached to `api_router`, so an un-annotated path is denied by default (fail-closed).
+"""
+import hashlib
+import os
+import re
+import secrets
+from datetime import datetime, timedelta, timezone
+from typing import Dict, List, Optional, Tuple
+
+from fastapi import Cookie, HTTPException, Request
+
+from lib.db import db
+from models.auth import Role, User, UserPublic
+
+SESSION_COOKIE = "gp_session"
+SESSION_DAYS = 7
+
+# --- password hashing (stdlib pbkdf2; no extra dependency) ---
+_ITERATIONS = 200_000
+
+
+def hash_password(password: str, salt: Optional[str] = None) -> Tuple[str, str]:
+    use_salt = salt or secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), use_salt.encode(), _ITERATIONS)
+    return digest.hex(), use_salt
+
+
+def verify_password(password: str, password_hash: str, salt: str) -> bool:
+    candidate, _ = hash_password(password, salt)
+    return secrets.compare_digest(candidate, password_hash)
+
+
+# --- permissions: what each role may do ---
+PERMISSIONS: Dict[Role, List[str]] = {
+    "admin": [
+        "stock:read", "inventory:read", "inventory:write",
+        "reports:read", "settings:write", "users:manage", "data:reset",
+    ],
+    "operator": ["stock:read", "inventory:read", "inventory:write", "reports:read"],
+    "viewer": ["stock:read"],
+}
+
+ROLE_LABELS: Dict[str, str] = {
+    "admin": "Administrator",
+    "operator": "Operator Gudang",
+    "viewer": "Pemantau (lihat stok)",
+}
+
+# --- route -> required action table (method, path regex) ---
+# Anything not matched here is denied, so a new endpoint fails closed until listed.
+_RULES: List[Tuple[str, str, Optional[str]]] = [
+    # public
+    ("POST", r"^/api/auth/login$", None),
+    ("POST", r"^/api/auth/logout$", None),
+    ("GET", r"^/api/auth/me$", None),
+    ("GET", r"^/api/$", None),
+    # user administration
+    ("*", r"^/api/auth/users(/.*)?$", "users:manage"),
+    # stock visibility (viewer included)
+    ("GET", r"^/api/products$", "stock:read"),
+    ("GET", r"^/api/products/[^/]+$", "stock:read"),
+    ("GET", r"^/api/stats$", "stock:read"),
+    # reads for staff
+    ("GET", r"^/api/suppliers$", "inventory:read"),
+    ("GET", r"^/api/transactions(/.*)?$", "inventory:read"),
+    ("GET", r"^/api/shipments(/.*)?$", "inventory:read"),
+    ("GET", r"^/api/purchase-orders(/.*)?$", "inventory:read"),
+    ("GET", r"^/api/settings$", "inventory:read"),
+    ("GET", r"^/api/reports/.*$", "reports:read"),
+    # writes
+    ("POST", r"^/api/products/import$", "inventory:write"),
+    ("POST", r"^/api/seed$", "data:reset"),
+    ("PUT", r"^/api/settings$", "settings:write"),
+    ("*", r"^/api/products(/.*)?$", "inventory:write"),
+    ("*", r"^/api/suppliers(/.*)?$", "inventory:write"),
+    ("*", r"^/api/transactions(/.*)?$", "inventory:write"),
+    ("*", r"^/api/shipments(/.*)?$", "inventory:write"),
+    ("*", r"^/api/purchase-orders(/.*)?$", "inventory:write"),
+]
+
+
+def action_for(method: str, path: str) -> Tuple[bool, Optional[str]]:
+    """Return (matched, action). action None on a matched public route."""
+    for rule_method, pattern, action in _RULES:
+        if (rule_method == "*" or rule_method == method) and re.match(pattern, path):
+            return True, action
+    return False, None
+
+
+def authorize(role: Optional[Role], action: str) -> bool:
+    if role is None:
+        return False
+    return action in PERMISSIONS.get(role, [])
+
+
+# --- sessions ---
+async def create_session(user_id: str) -> str:
+    token = secrets.token_urlsafe(32)
+    await db.sessions.insert_one({
+        "token": token,
+        "user_id": user_id,
+        "expires_at": datetime.now(timezone.utc) + timedelta(days=SESSION_DAYS),
+    })
+    return token
+
+
+async def destroy_session(token: Optional[str]) -> None:
+    if token:
+        await db.sessions.delete_one({"token": token})
+
+
+async def current_user(token: Optional[str]) -> Optional[User]:
+    """Role is re-read from the users collection on every request, never from the cookie."""
+    if not token:
+        return None
+    session = await db.sessions.find_one({"token": token})
+    if not session:
+        return None
+    expires = session.get("expires_at")
+    if isinstance(expires, datetime):
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        if expires < datetime.now(timezone.utc):
+            await db.sessions.delete_one({"token": token})
+            return None
+    doc = await db.users.find_one({"id": session["user_id"]})
+    if not doc:
+        return None
+    doc.pop("_id", None)
+    return User(**doc)
+
+
+async def enforce(request: Request, gp_session: Optional[str] = Cookie(default=None)) -> None:
+    """Router-wide gate: deny-by-default on both authentication and authorization."""
+    if request.method == "OPTIONS":
+        return
+
+    matched, action = action_for(request.method, request.url.path)
+    if not matched:
+        raise HTTPException(status_code=403, detail="Endpoint tidak diizinkan")
+    if action is None:
+        return
+
+    user = await current_user(gp_session)
+    if not user:
+        raise HTTPException(status_code=401, detail="Silakan login terlebih dahulu")
+    if not authorize(user.role, action):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Peran {ROLE_LABELS.get(user.role, user.role)} tidak berhak melakukan aksi ini",
+        )
+    request.state.user = user
+
+
+async def principal(request: Request) -> Optional[User]:
+    """Handler-side access to the caller resolved by `enforce` (used for field masking)."""
+    return getattr(request.state, "user", None)
+
+
+def to_public(user: User) -> UserPublic:
+    return UserPublic(
+        id=user.id,
+        username=user.username,
+        full_name=user.full_name,
+        role=user.role,
+        created_at=user.created_at,
+    )
+
+
+async def ensure_default_admin() -> None:
+    """Bootstrap one admin so the app is never locked out."""
+    if await db.users.count_documents({}) > 0:
+        return
+    username = os.environ.get("DEFAULT_ADMIN_USER", "admin")
+    password = os.environ.get("DEFAULT_ADMIN_PASSWORD", "admin123")
+    password_hash, salt = hash_password(password)
+    await db.users.insert_one(User(
+        username=username, full_name="Administrator Gudang", role="admin",
+        password_hash=password_hash, salt=salt,
+    ).model_dump())

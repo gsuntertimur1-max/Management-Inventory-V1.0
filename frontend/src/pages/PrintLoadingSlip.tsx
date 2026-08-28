@@ -5,7 +5,7 @@ import { ArrowLeft, Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { apiGet } from "@/lib/api";
 import { angka, waktu } from "@/lib/format";
-import type { AppSettings, Transaction } from "@/lib/types";
+import type { AppSettings, Shipment } from "@/lib/types";
 
 const THERMAL_STYLE = `@page { size: 80mm auto; margin: 0; }`;
 
@@ -17,14 +17,14 @@ export default function PrintLoadingSlip() {
     return () => document.body.classList.remove("print-thermal-mode");
   }, []);
 
-  const txQ = useQuery({
-    queryKey: ["tx-by-ids", id],
-    queryFn: () => apiGet<Transaction[]>(`/transactions/by-ids?ids=${encodeURIComponent(id)}`),
+  const shipmentQ = useQuery({
+    queryKey: ["shipment", id],
+    queryFn: () => apiGet<Shipment>(`/shipments/${id}`),
     enabled: id.length > 0,
   });
   const settingsQ = useQuery({ queryKey: ["settings"], queryFn: () => apiGet<AppSettings>("/settings") });
 
-  const tx = (txQ.isError ? [] : txQ.data ?? [])[0];
+  const s = shipmentQ.isError ? undefined : shipmentQ.data;
   const settings: AppSettings =
     (settingsQ.isError ? undefined : settingsQ.data) ?? {
       company_name: "GudangPro",
@@ -40,7 +40,7 @@ export default function PrintLoadingSlip() {
 
       <div className="no-print mx-auto mb-6 flex max-w-md items-center justify-between gap-3 px-4">
         <Link
-          to="/transactions"
+          to="/shipments"
           className="inline-flex items-center gap-2 text-sm font-medium text-neutral-800"
           data-testid="print-back-link"
         >
@@ -51,9 +51,9 @@ export default function PrintLoadingSlip() {
         </Button>
       </div>
 
-      {!tx ? (
+      {!s ? (
         <p className="no-print text-center text-sm text-neutral-700" data-testid="print-empty">
-          Data transaksi tidak ditemukan.
+          Data pengeluaran tidak ditemukan.
         </p>
       ) : (
         <div
@@ -72,32 +72,46 @@ export default function PrintLoadingSlip() {
 
           <div className="my-2 border border-black py-1 text-center">
             <p className="text-[7pt] uppercase tracking-widest">Nomor Antrian</p>
-            <p className="text-[22pt] font-bold leading-none" data-testid="slip-queue-no">
-              {tx.queue_no || "-"}
+            <p className="text-[24pt] font-bold leading-none" data-testid="slip-queue-no">
+              {s.queue_no || "-"}
             </p>
           </div>
 
           <div className="space-y-0.5 text-[8pt]">
-            <p>Waktu : {waktu(tx.created_at)}</p>
-            <p>No. SJ: {tx.reference_no || "-"}</p>
-            <p>Tujuan: {tx.party || "-"}</p>
+            <p>Waktu : {waktu(s.created_at)}</p>
+            <p>No. SJ: {s.doc_no}</p>
+            <p>Ref   : {s.reference_no || "-"}</p>
+            <p>Tujuan: {s.party || "-"}</p>
+            <p>Status: {s.status}</p>
           </div>
 
           <div className="my-1 border-t border-dashed border-black pt-1 text-[8.5pt]">
-            <p className="font-bold">{tx.product_name}</p>
-            <p>SKU: {tx.product_sku}</p>
-            <div className="mt-1 flex justify-between text-[10pt] font-bold">
-              <span>JUMLAH MUAT</span>
-              <span data-testid="slip-quantity">{angka(tx.quantity)}</span>
+            <p className="mb-1 font-bold uppercase">Daftar Muat</p>
+            {s.items.map((item, idx) => (
+              <div key={item.product_id} className="mb-1" data-testid="slip-item">
+                <p className="font-bold">
+                  {idx + 1}. {item.product_name}
+                </p>
+                <div className="flex justify-between">
+                  <span>{item.product_sku}</span>
+                  <span className="font-bold">
+                    {angka(item.quantity)} {item.unit}
+                  </span>
+                </div>
+              </div>
+            ))}
+            <div className="mt-1 flex justify-between border-t border-dashed border-black pt-1 text-[10pt] font-bold">
+              <span>TOTAL MUAT</span>
+              <span data-testid="slip-total-quantity">{angka(s.total_quantity)}</span>
             </div>
             <div className="flex justify-between text-[8pt]">
-              <span>Sisa stok gudang</span>
-              <span>{angka(tx.stock_after)}</span>
+              <span>Jumlah jenis barang</span>
+              <span>{s.items.length}</span>
             </div>
           </div>
 
-          {tx.notes && (
-            <p className="border-t border-dashed border-black pt-1 text-[7.5pt]">Cat: {tx.notes}</p>
+          {s.notes && (
+            <p className="border-t border-dashed border-black pt-1 text-[7.5pt]">Cat: {s.notes}</p>
           )}
 
           <div className="mt-3 grid grid-cols-2 gap-2 text-center text-[7pt]">

@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileSpreadsheet, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { FileSpreadsheet, Pencil, Plus, Search, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
+import { Link } from "react-router-dom";
 import AppShell from "@/components/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -144,6 +145,13 @@ export default function Products() {
             </p>
           </div>
           <div className="flex gap-2">
+            <Link
+              to="/import"
+              data-testid="btn-goto-import"
+              className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium transition-colors duration-150 hover:bg-secondary"
+            >
+              <Upload className="size-4" /> Import Data
+            </Link>
             <a
               href="/api/reports/products.xlsx"
               data-testid="btn-export-products"

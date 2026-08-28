@@ -60,9 +60,48 @@ export interface Transaction {
   party: string;
   reference_no: string;
   queue_no: string;
+  shipment_id: string | null;
   notes: string;
   date: string;
   created_at: string;
+}
+
+export type ShipmentStatus = "MENUNGGU" | "DIMUAT" | "SELESAI";
+
+export interface ShipmentItem {
+  product_id: string;
+  product_name: string;
+  product_sku: string;
+  unit: string;
+  quantity: number;
+  stock_after: number;
+}
+
+export interface ShipmentItemInput {
+  product_id: string;
+  quantity: number;
+}
+
+export interface Shipment {
+  id: string;
+  doc_no: string;
+  queue_no: string;
+  party: string;
+  reference_no: string;
+  notes: string;
+  date: string;
+  items: ShipmentItem[];
+  total_quantity: number;
+  status: ShipmentStatus;
+  created_at: string;
+}
+
+export interface ShipmentCreate {
+  party: string;
+  reference_no: string;
+  notes: string;
+  date?: string | null;
+  items: ShipmentItemInput[];
 }
 
 export type POStatus = "MENUNGGU" | "DITERIMA" | "DIBATALKAN";
@@ -141,6 +180,34 @@ export interface Stats {
   recent_movements: number;
   by_category: CategoryStat[];
   timeline: TimelinePoint[];
+}
+
+export type ImportMode = "add" | "replace";
+
+export interface ProductImportRow {
+  sku: string;
+  name: string;
+  quantity: number;
+  category?: string | null;
+  unit?: string | null;
+  purchase_price?: number | null;
+  selling_price?: number | null;
+  supplier_name?: string | null;
+  location?: string | null;
+}
+
+export interface ProductImportRequest {
+  mode: ImportMode;
+  supplier_id: string | null;
+  items: ProductImportRow[];
+}
+
+export interface ProductImportResult {
+  created: number;
+  updated: number;
+  units_added: number;
+  suppliers_created: number;
+  errors: string[];
 }
 
 export const CATEGORIES = [

@@ -2,12 +2,9 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { FileSpreadsheet, Printer, Receipt, Search } from "lucide-react";
-import { toast } from "sonner";
 import AppShell from "@/components/AppShell";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -40,7 +37,6 @@ export default function Transactions() {
   const [type, setType] = useState("SEMUA");
   const [range, setRange] = useState("SEMUA");
   const [category, setCategory] = useState("SEMUA");
-  const [selected, setSelected] = useState<string[]>([]);
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
 
   const txQ = useQuery({
@@ -73,22 +69,7 @@ export default function Transactions() {
   const totalIn = filtered.filter((t) => t.type === "MASUK").reduce((s, t) => s + t.quantity, 0);
   const totalOut = filtered.filter((t) => t.type === "KELUAR").reduce((s, t) => s + t.quantity, 0);
 
-  const outboundVisible = filtered.filter((t) => t.type === "KELUAR");
-  const selectedOutbound = selected.filter((id) => outboundVisible.some((t) => t.id === id));
 
-  const toggle = (id: string, on: boolean) =>
-    setSelected((prev) => (on ? [...new Set([...prev, id])] : prev.filter((x) => x !== id)));
-
-  const toggleAll = (on: boolean) =>
-    setSelected(on ? outboundVisible.map((t) => t.id) : []);
-
-  const printSelected = () => {
-    if (selectedOutbound.length === 0) {
-      toast.error("Pilih minimal satu transaksi KELUAR untuk dicetak");
-      return;
-    }
-    window.open(`/print/surat-jalan?ids=${selectedOutbound.join(",")}`, "_blank");
-  };
 
   return (
     <AppShell>
@@ -164,15 +145,8 @@ export default function Transactions() {
         </div>
 
         <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card p-3">
-          <Button
-            size="sm"
-            onClick={printSelected}
-            data-testid="btn-print-selected-delivery-notes"
-          >
-            <Printer className="size-4" /> Cetak Surat Jalan ({selectedOutbound.length})
-          </Button>
           <span className="text-xs text-muted-foreground">
-            A4 — 2 surat jalan per lembar
+            Cetak surat jalan & bon muat ada di halaman <strong>Pengeluaran</strong>
           </span>
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <Input
@@ -205,16 +179,6 @@ export default function Transactions() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-10">
-                    <Checkbox
-                      aria-label="Pilih semua transaksi keluar"
-                      data-testid="select-all-outbound"
-                      checked={
-                        outboundVisible.length > 0 && selectedOutbound.length === outboundVisible.length
-                      }
-                      onCheckedChange={(v) => toggleAll(Boolean(v))}
-                    />
-                  </TableHead>
                   <TableHead>Waktu</TableHead>
                   <TableHead>No. Referensi</TableHead>
                   <TableHead>No. Antrian</TableHead>
@@ -229,23 +193,13 @@ export default function Transactions() {
               <TableBody data-testid="table-transactions-body">
                 {filtered.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">
                       Belum ada transaksi yang cocok dengan filter.
                     </TableCell>
                   </TableRow>
                 )}
                 {filtered.map((t) => (
                   <TableRow key={t.id} data-testid="transaction-row">
-                    <TableCell>
-                      {t.type === "KELUAR" && (
-                        <Checkbox
-                          aria-label={`Pilih transaksi ${t.reference_no || t.id}`}
-                          data-testid={`select-tx-${t.id}`}
-                          checked={selected.includes(t.id)}
-                          onCheckedChange={(v) => toggle(t.id, Boolean(v))}
-                        />
-                      )}
-                    </TableCell>
                     <TableCell className="whitespace-nowrap text-xs">{waktu(t.created_at)}</TableCell>
                     <TableCell className="font-mono text-xs">{t.reference_no || "—"}</TableCell>
                     <TableCell className="font-mono text-xs">{t.queue_no || "—"}</TableCell>
@@ -267,10 +221,10 @@ export default function Transactions() {
                     <TableCell className="text-right font-mono">{angka(t.stock_after)}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">{t.party || "—"}</TableCell>
                     <TableCell className="text-right">
-                      {t.type === "KELUAR" ? (
+                      {t.type === "KELUAR" && t.shipment_id ? (
                         <div className="flex justify-end gap-1">
                           <Link
-                            to={`/print/surat-jalan?ids=${t.id}`}
+                            to={`/print/surat-jalan?ids=${t.shipment_id}`}
                             target="_blank"
                             aria-label="Cetak surat jalan"
                             data-testid={`btn-print-note-${t.id}`}
@@ -279,7 +233,7 @@ export default function Transactions() {
                             <Printer className="size-4" />
                           </Link>
                           <Link
-                            to={`/print/bon-muat/${t.id}`}
+                            to={`/print/bon-muat/${t.shipment_id}`}
                             target="_blank"
                             aria-label="Cetak bon muat thermal"
                             data-testid={`btn-print-slip-${t.id}`}
