@@ -61,6 +61,7 @@ export default function Transactions() {
         t.product_name.toLowerCase().includes(q) ||
         t.product_sku.toLowerCase().includes(q) ||
         t.reference_no.toLowerCase().includes(q) ||
+        t.created_by_name.toLowerCase().includes(q) ||
         t.party.toLowerCase().includes(q)
       );
     });
@@ -103,7 +104,7 @@ export default function Transactions() {
             <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               className="pl-9"
-              placeholder="Cari No. Ref, produk, SKU, atau pihak terkait..."
+              placeholder="Cari No. Ref, produk, SKU, pihak terkait, atau petugas..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               data-testid="transaction-search-input"
@@ -187,13 +188,14 @@ export default function Transactions() {
                   <TableHead className="text-right">Perubahan</TableHead>
                   <TableHead className="text-right">Stok Akhir</TableHead>
                   <TableHead>Pihak Terkait</TableHead>
+                  <TableHead>Dicatat Oleh</TableHead>
                   <TableHead className="text-right">Cetak</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody data-testid="table-transactions-body">
                 {filtered.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">
                       Belum ada transaksi yang cocok dengan filter.
                     </TableCell>
                   </TableRow>
@@ -220,6 +222,9 @@ export default function Transactions() {
                     </TableCell>
                     <TableCell className="text-right font-mono">{angka(t.stock_after)}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">{t.party || "—"}</TableCell>
+                    <TableCell className="text-xs" data-testid={`tx-recorded-by-${t.id}`}>
+                      {t.created_by_name || <span className="text-muted-foreground">Sistem</span>}
+                    </TableCell>
                     <TableCell className="text-right">
                       {t.type === "KELUAR" && t.shipment_id ? (
                         <div className="flex justify-end gap-1">

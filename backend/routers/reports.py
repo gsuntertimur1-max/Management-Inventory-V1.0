@@ -101,21 +101,21 @@ async def export_transactions(month: Optional[str] = Query(None, description="Fi
             stamp, t.get("reference_no", ""), t.get("queue_no", ""), t.get("type", ""),
             t.get("product_name", ""), t.get("product_sku", ""), t.get("category", ""),
             int(t.get("quantity", 0)), int(t.get("stock_after", 0)),
-            t.get("party", ""), t.get("notes", ""),
+            t.get("party", ""), t.get("created_by_name", ""), t.get("notes", ""),
         ])
 
     masuk = sum(r[7] for r in rows if r[3] == "MASUK")
     keluar = sum(r[7] for r in rows if r[3] == "KELUAR")
     rows.append([])
-    rows.append(["RINGKASAN", "", "", "MASUK", "", "", "", masuk, "", "", ""])
-    rows.append(["RINGKASAN", "", "", "KELUAR", "", "", "", keluar, "", "", ""])
+    rows.append(["RINGKASAN", "", "", "MASUK", "", "", "", masuk, "", "", "", ""])
+    rows.append(["RINGKASAN", "", "", "KELUAR", "", "", "", keluar, "", "", "", ""])
 
     label = f"Bulan {month}" if month else "Semua Periode"
     wb = Workbook()
     _write_sheet(
         wb, "Riwayat Transaksi", f"Laporan Riwayat Transaksi Stok — {label}",
         ["Waktu", "No. Referensi", "No. Antrian", "Tipe", "Nama Produk", "SKU", "Kategori",
-         "Jumlah", "Stok Akhir", "Pihak Terkait", "Catatan"],
+         "Jumlah", "Stok Akhir", "Pihak Terkait", "Dicatat Oleh", "Catatan"],
         rows,
     )
     suffix = month or "semua"

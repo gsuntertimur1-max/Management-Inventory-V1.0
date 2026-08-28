@@ -1,8 +1,9 @@
 from datetime import datetime, timezone
 from typing import List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from lib.auth import principal
 from lib.db import db
 from models.inventory import Transaction
 from models.purchasing import PurchaseOrder, PurchaseOrderCreate, POItem, Settings
@@ -91,7 +92,7 @@ async def create_purchase_order(payload: PurchaseOrderCreate):
 
 
 @router.post("/purchase-orders/{po_id}/receive", response_model=PurchaseOrder)
-async def receive_purchase_order(po_id: str):
+async def receive_purchase_order(po_id: str, caller=Depends(principal)):
     doc = await db.purchase_orders.find_one({"id": po_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Purchase Order tidak ditemukan")
@@ -115,6 +116,8 @@ async def receive_purchase_order(po_id: str):
             stock_after=after,
             party=po.supplier_name,
             reference_no=po.po_number,
+            created_by=caller.id if caller else None,
+            created_by_name=(caller.full_name or caller.username) if caller else "",
             notes=f"Penerimaan barang dari {po.po_number}",
             date=today,
         )

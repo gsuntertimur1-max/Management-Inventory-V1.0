@@ -71,6 +71,8 @@ class Transaction(BaseModel):
     reference_no: str = ""
     queue_no: str = ""
     shipment_id: Optional[str] = None
+    created_by: Optional[str] = None
+    created_by_name: str = ""
     notes: str = ""
     date: str
     created_at: datetime = Field(default_factory=_now)

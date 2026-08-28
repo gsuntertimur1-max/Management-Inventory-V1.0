@@ -49,6 +49,8 @@ class Shipment(BaseModel):
     items: List[ShipmentItem] = []
     total_quantity: int = 0
     status: ShipmentStatus = "MENUNGGU"
+    created_by: Optional[str] = None
+    created_by_name: str = ""
     created_at: datetime = Field(default_factory=_now)
 
 

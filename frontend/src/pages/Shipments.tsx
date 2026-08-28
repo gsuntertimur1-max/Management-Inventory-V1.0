@@ -63,6 +63,7 @@ export default function Shipments() {
         s.queue_no.toLowerCase().includes(q) ||
         s.party.toLowerCase().includes(q) ||
         s.reference_no.toLowerCase().includes(q) ||
+        s.created_by_name.toLowerCase().includes(q) ||
         s.items.some(
           (i) => i.product_name.toLowerCase().includes(q) || i.product_sku.toLowerCase().includes(q),
         )
@@ -171,6 +172,7 @@ export default function Shipments() {
                   <TableHead>Antrian</TableHead>
                   <TableHead>Waktu</TableHead>
                   <TableHead>Penerima</TableHead>
+                  <TableHead>Dicatat Oleh</TableHead>
                   <TableHead>Barang</TableHead>
                   <TableHead className="text-right">Total Unit</TableHead>
                   <TableHead>Status</TableHead>
@@ -180,7 +182,7 @@ export default function Shipments() {
               <TableBody data-testid="table-shipments-body">
                 {filtered.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">
                       Belum ada pengeluaran barang.
                     </TableCell>
                   </TableRow>
@@ -201,6 +203,9 @@ export default function Shipments() {
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs">{waktu(s.created_at)}</TableCell>
                     <TableCell className="text-sm">{s.party || "—"}</TableCell>
+                    <TableCell className="text-xs" data-testid={`shipment-recorded-by-${s.doc_no}`}>
+                      {s.created_by_name || <span className="text-muted-foreground">Sistem</span>}
+                    </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
                       {s.items.map((i) => (
                         <span key={i.product_id} className="block">

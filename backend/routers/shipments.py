@@ -1,8 +1,9 @@
 from datetime import datetime, timezone
 from typing import Dict, List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from lib.auth import principal
 from lib.db import db
 from models.inventory import Transaction
 from models.shipment import (
@@ -56,7 +57,7 @@ async def get_shipment(shipment_id: str):
 
 
 @router.post("/shipments", response_model=Shipment)
-async def create_shipment(payload: ShipmentCreate):
+async def create_shipment(payload: ShipmentCreate, caller=Depends(principal)):
     """One outbound document with many product lines; stock drops per line atomically."""
     if not payload.items:
         raise HTTPException(status_code=400, detail="Minimal satu item barang harus ditambahkan")
@@ -104,6 +105,8 @@ async def create_shipment(payload: ShipmentCreate):
         date=day,
         items=items,
         total_quantity=sum(i.quantity for i in items),
+        created_by=caller.id if caller else None,
+        created_by_name=(caller.full_name or caller.username) if caller else "",
     )
     await db.shipments.insert_one(shipment.model_dump())
 
@@ -122,6 +125,8 @@ async def create_shipment(payload: ShipmentCreate):
             reference_no=shipment.reference_no,
             queue_no=queue_no,
             shipment_id=shipment.id,
+            created_by=shipment.created_by,
+            created_by_name=shipment.created_by_name,
             notes=shipment.notes,
             date=day,
         )

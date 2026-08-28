@@ -61,6 +61,8 @@ export interface Transaction {
   reference_no: string;
   queue_no: string;
   shipment_id: string | null;
+  created_by: string | null;
+  created_by_name: string;
   notes: string;
   date: string;
   created_at: string;
@@ -93,6 +95,8 @@ export interface Shipment {
   items: ShipmentItem[];
   total_quantity: number;
   status: ShipmentStatus;
+  created_by: string | null;
+  created_by_name: string;
   created_at: string;
 }
 

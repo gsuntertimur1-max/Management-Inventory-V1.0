@@ -121,10 +121,13 @@ async def delete_product(product_id: str):
 
 
 @router.post("/products/import", response_model=ProductImportResult)
-async def import_products(payload: ProductImportRequest):
+async def import_products(payload: ProductImportRequest, caller=Depends(principal)):
     """Bulk create/update products by SKU. One supplier may supply many products."""
     if not payload.items:
         raise HTTPException(status_code=400, detail="Tidak ada baris data untuk diimpor")
+
+    actor_id = caller.id if caller else None
+    actor_name = (caller.full_name or caller.username) if caller else ""
 
     result = ProductImportResult()
     today = datetime.now(timezone.utc).date().isoformat()
@@ -196,6 +199,8 @@ async def import_products(payload: ProductImportRequest):
                     stock_after=new_stock,
                     party=supplier_name,
                     reference_no="IMPORT-DATA",
+                    created_by=actor_id,
+                    created_by_name=actor_name,
                     notes="Penyesuaian stok dari import data",
                     date=today,
                 )
@@ -234,6 +239,8 @@ async def import_products(payload: ProductImportRequest):
                 stock_after=row.quantity,
                 party=supplier_name,
                 reference_no="IMPORT-DATA",
+                created_by=actor_id,
+                created_by_name=actor_name,
                 notes="Stok awal dari import data",
                 date=today,
             )
@@ -260,7 +267,7 @@ async def transactions_by_ids(ids: str):
 
 
 @router.post("/transactions", response_model=Transaction)
-async def create_transaction(payload: TransactionCreate):
+async def create_transaction(payload: TransactionCreate, caller=Depends(principal)):
     product = await db.products.find_one({"id": payload.product_id})
     if not product:
         raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
@@ -289,6 +296,8 @@ async def create_transaction(payload: TransactionCreate):
         party=payload.party or (product.get("supplier_name", "") if payload.type == "MASUK" else ""),
         reference_no=payload.reference_no,
         queue_no=queue_no,
+        created_by=caller.id if caller else None,
+        created_by_name=(caller.full_name or caller.username) if caller else "",
         notes=payload.notes,
         date=today,
     )

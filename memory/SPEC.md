@@ -29,7 +29,12 @@ Dark-by-default theme, Plus Jakarta Sans + JetBrains Mono.
 - **Product**: id, name, sku (unique), category, unit, purchase_price, selling_price,
   current_stock, supplier_id, supplier_name, location, created_at
 - **Transaction**: id, product_id, product_name, product_sku, category, type (MASUK|KELUAR),
-  quantity, stock_after, party, reference_no, queue_no, shipment_id, notes, date, created_at
+  quantity, stock_after, party, reference_no, queue_no, shipment_id, created_by,
+  created_by_name, notes, date, created_at
+  - `created_by`/`created_by_name` = the logged-in user who recorded it (stamped server-side from
+    the session, never from the request body); seeded rows show "Administrator Gudang" /
+    "Operator Gudang Siang". Shown as the "Dicatat Oleh" column in Riwayat, Pengeluaran, and the
+    transactions Excel export.
   - outbound transactions are always children of a Shipment (`shipment_id` set)
 - **Shipment** (models/shipment.py) = one outbound document / surat jalan, MULTI-ITEM:
   id, doc_no (SJ-YYYYMM-###), queue_no (A-001, reset per date), party, reference_no, notes,

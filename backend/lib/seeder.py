@@ -81,6 +81,10 @@ OUTBOUND: List[tuple] = [
 ]
 
 
+ADMIN_NAME = "Administrator Gudang"
+OPERATOR_NAME = "Operator Gudang Siang"
+
+
 async def run_seed() -> Dict[str, int]:
     """Wipe and reload the demo dataset (settings are preserved)."""
     await db.products.delete_many({})
@@ -114,6 +118,7 @@ async def run_seed() -> Dict[str, int]:
             product_id=p.id, product_name=p.name, product_sku=p.sku, category=p.category,
             type="MASUK", quantity=qty, stock_after=stock[p.id], party=p.supplier_name,
             reference_no=ref, notes=notes, date=moment.date().isoformat(), created_at=moment,
+            created_by_name=ADMIN_NAME,
         ).model_dump())
 
     # --- outbound documents (oldest first so numbering reads naturally)
@@ -141,7 +146,7 @@ async def run_seed() -> Dict[str, int]:
         shipment = Shipment(
             doc_no=doc_no, queue_no=queue_no, party=party, reference_no=ref, notes=notes,
             date=day, items=items, total_quantity=sum(i.quantity for i in items),
-            status=status, created_at=moment,
+            status=status, created_at=moment, created_by_name=OPERATOR_NAME,
         )
         shipments.append(shipment.model_dump())
 
@@ -152,7 +157,7 @@ async def run_seed() -> Dict[str, int]:
                 product_sku=item.product_sku, category=product.category,
                 type="KELUAR", quantity=item.quantity, stock_after=item.stock_after,
                 party=party, reference_no=ref, queue_no=queue_no, shipment_id=shipment.id,
-                notes=notes, date=day, created_at=moment,
+                notes=notes, date=day, created_at=moment, created_by_name=OPERATOR_NAME,
             ).model_dump())
 
     await db.transactions.insert_many(txs)
