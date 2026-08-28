@@ -69,6 +69,7 @@ class Transaction(BaseModel):
     stock_after: int
     party: str = ""
     reference_no: str = ""
+    queue_no: str = ""
     notes: str = ""
     date: str
     created_at: datetime = Field(default_factory=_now)

@@ -115,6 +115,15 @@ async def list_transactions():
     return [Transaction(**d) for d in docs]
 
 
+@router.get("/transactions/by-ids", response_model=List[Transaction])
+async def transactions_by_ids(ids: str):
+    """Batch lookup used by the print surfaces (surat jalan / bon muat)."""
+    wanted = [i for i in ids.split(",") if i]
+    docs = await db.transactions.find({"id": {"$in": wanted}}).to_list(200)
+    by_id = {d["id"]: d for d in docs}
+    return [Transaction(**by_id[i]) for i in wanted if i in by_id]
+
+
 @router.post("/transactions", response_model=Transaction)
 async def create_transaction(payload: TransactionCreate):
     product = await db.products.find_one({"id": payload.product_id})
@@ -126,6 +135,14 @@ async def create_transaction(payload: TransactionCreate):
         raise HTTPException(status_code=400, detail=f"Stok tidak cukup. Tersedia {stock} unit")
 
     after = stock + payload.quantity if payload.type == "MASUK" else stock - payload.quantity
+    today = payload.date or datetime.now(timezone.utc).date().isoformat()
+
+    # Outbound movements get a daily queue number (A-001, A-002, ...) for the bon muat.
+    queue_no = ""
+    if payload.type == "KELUAR":
+        same_day = await db.transactions.count_documents({"type": "KELUAR", "date": today})
+        queue_no = f"A-{same_day + 1:03d}"
+
     tx = Transaction(
         product_id=product["id"],
         product_name=product["name"],
@@ -136,8 +153,9 @@ async def create_transaction(payload: TransactionCreate):
         stock_after=after,
         party=payload.party or (product.get("supplier_name", "") if payload.type == "MASUK" else ""),
         reference_no=payload.reference_no,
+        queue_no=queue_no,
         notes=payload.notes,
-        date=payload.date or datetime.now(timezone.utc).date().isoformat(),
+        date=today,
     )
     await db.transactions.insert_one(tx.model_dump())
     await db.products.update_one({"id": product["id"]}, {"$set": {"current_stock": after}})

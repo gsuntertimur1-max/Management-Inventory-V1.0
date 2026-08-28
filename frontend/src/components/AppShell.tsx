@@ -4,9 +4,11 @@ import { toast } from "sonner";
 import {
   ArrowLeftRight,
   Boxes,
+  ClipboardList,
   History,
   LayoutDashboard,
   RefreshCw,
+  Settings as SettingsIcon,
   Truck,
   Warehouse,
 } from "lucide-react";
@@ -20,7 +22,9 @@ const NAV = [
   { name: "Daftar Produk", path: "/products", icon: Boxes, testid: "nav-products-link" },
   { name: "Catat Stok", path: "/stock-movement", icon: ArrowLeftRight, testid: "nav-stock-movement-link" },
   { name: "Riwayat", path: "/transactions", icon: History, testid: "nav-transactions-link" },
+  { name: "Purchase Order", path: "/purchase-orders", icon: ClipboardList, testid: "nav-purchase-orders-link" },
   { name: "Supplier", path: "/suppliers", icon: Truck, testid: "nav-suppliers-link" },
+  { name: "Pengaturan", path: "/settings", icon: SettingsIcon, testid: "nav-settings-link" },
 ];
 
 interface SeedResult {

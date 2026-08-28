@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDownLeft, ArrowUpRight, Save } from "lucide-react";
+import { Link } from "react-router-dom";
+import { ArrowDownLeft, ArrowUpRight, Printer, Receipt, Save } from "lucide-react";
 import { toast } from "sonner";
 import AppShell from "@/components/AppShell";
 import { Badge } from "@/components/ui/badge";
@@ -29,6 +30,7 @@ export default function StockMovement() {
   const [party, setParty] = useState("");
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
+  const [lastOut, setLastOut] = useState<Transaction | null>(null);
 
   const productsQ = useQuery({ queryKey: ["products"], queryFn: () => apiGet<Product[]>("/products") });
   const suppliersQ = useQuery({ queryKey: ["suppliers"], queryFn: () => apiGet<Supplier[]>("/suppliers") });
@@ -46,6 +48,7 @@ export default function StockMovement() {
       toast.success(
         `Stok ${tx.type} ${angka(tx.quantity)} unit dicatat. Sisa stok ${angka(tx.stock_after)}`,
       );
+      setLastOut(tx.type === "KELUAR" ? tx : null);
       setQuantity("1");
       setReference("");
       setNotes("");
@@ -212,6 +215,36 @@ export default function StockMovement() {
                 <Save className="size-4" />
                 {submitMovement.isPending ? "Menyimpan..." : "Simpan Transaksi"}
               </Button>
+
+              {lastOut && (
+                <div
+                  className="space-y-2 rounded-xl border border-border bg-secondary/40 p-3"
+                  data-testid="last-outbound-print"
+                >
+                  <p className="text-xs text-muted-foreground">
+                    Transaksi keluar tersimpan — No. Antrian{" "}
+                    <span className="font-mono font-semibold text-foreground">{lastOut.queue_no}</span>
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <Link
+                      to={`/print/surat-jalan?ids=${lastOut.id}`}
+                      target="_blank"
+                      data-testid="btn-print-note-after-save"
+                      className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium transition-colors duration-150 hover:bg-secondary"
+                    >
+                      <Printer className="size-4" /> Cetak Surat Jalan (A4)
+                    </Link>
+                    <Link
+                      to={`/print/bon-muat/${lastOut.id}`}
+                      target="_blank"
+                      data-testid="btn-print-slip-after-save"
+                      className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium transition-colors duration-150 hover:bg-secondary"
+                    >
+                      <Receipt className="size-4" /> Cetak Bon Muat (80mm)
+                    </Link>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
 

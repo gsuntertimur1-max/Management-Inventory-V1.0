@@ -125,6 +125,27 @@
     --sidebar-ring: #3B82F6;
 }
 
+/* ---------- Print surfaces ---------- */
+/* Surat jalan: A4 portrait, dua surat jalan per lembar (masing-masing setengah halaman). */
+.print-a4 { width: 210mm; }
+.print-half { height: 148.5mm; box-sizing: border-box; overflow: hidden; }
+/* Bon muat: kertas thermal 80mm. */
+.print-thermal { width: 76mm; }
+
+@media print {
+  @page { margin: 0; }
+  html, body { background: #fff !important; color: #000 !important; }
+  .no-print { display: none !important; }
+  .print-root { position: absolute; inset: 0; margin: 0; padding: 0; }
+  .print-sheet { page-break-after: always; break-after: page; }
+  .print-sheet:last-child { page-break-after: auto; break-after: auto; }
+}
+
+@media print {
+  body.print-a4-mode { width: 210mm; }
+  body.print-thermal-mode { width: 76mm; }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

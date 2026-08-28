@@ -59,9 +59,58 @@ export interface Transaction {
   stock_after: number;
   party: string;
   reference_no: string;
+  queue_no: string;
   notes: string;
   date: string;
   created_at: string;
+}
+
+export type POStatus = "MENUNGGU" | "DITERIMA" | "DIBATALKAN";
+
+export interface POItem {
+  product_id: string;
+  product_name: string;
+  product_sku: string;
+  unit: string;
+  quantity: number;
+  unit_price: number;
+  subtotal: number;
+}
+
+export interface POItemInput {
+  product_id: string;
+  quantity: number;
+  unit_price: number;
+}
+
+export interface PurchaseOrder {
+  id: string;
+  po_number: string;
+  supplier_id: string;
+  supplier_name: string;
+  status: POStatus;
+  items: POItem[];
+  total: number;
+  notes: string;
+  order_date: string;
+  expected_date: string | null;
+  received_at: string | null;
+  created_at: string;
+}
+
+export interface PurchaseOrderCreate {
+  supplier_id: string;
+  items: POItemInput[];
+  notes: string;
+  expected_date?: string | null;
+}
+
+export interface AppSettings {
+  company_name: string;
+  address: string;
+  phone: string;
+  email: string;
+  footer_note: string;
 }
 
 export interface TransactionCreate {

@@ -59,8 +59,12 @@ async def get_status_checks():
     return [StatusCheck(**status_check) for status_check in status_checks]
 
 from routers.inventory import router as inventory_router
+from routers.purchasing import router as purchasing_router
+from routers.reports import router as reports_router
 
 api_router.include_router(inventory_router)
+api_router.include_router(purchasing_router)
+api_router.include_router(reports_router)
 
 # Include the router in the main app
 app.include_router(api_router)

@@ -1,9 +1,13 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Search } from "lucide-react";
+import { Link } from "react-router-dom";
+import { FileSpreadsheet, Printer, Receipt, Search } from "lucide-react";
+import { toast } from "sonner";
 import AppShell from "@/components/AppShell";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -36,6 +40,8 @@ export default function Transactions() {
   const [type, setType] = useState("SEMUA");
   const [range, setRange] = useState("SEMUA");
   const [category, setCategory] = useState("SEMUA");
+  const [selected, setSelected] = useState<string[]>([]);
+  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
 
   const txQ = useQuery({
     queryKey: ["transactions"],
@@ -66,6 +72,23 @@ export default function Transactions() {
 
   const totalIn = filtered.filter((t) => t.type === "MASUK").reduce((s, t) => s + t.quantity, 0);
   const totalOut = filtered.filter((t) => t.type === "KELUAR").reduce((s, t) => s + t.quantity, 0);
+
+  const outboundVisible = filtered.filter((t) => t.type === "KELUAR");
+  const selectedOutbound = selected.filter((id) => outboundVisible.some((t) => t.id === id));
+
+  const toggle = (id: string, on: boolean) =>
+    setSelected((prev) => (on ? [...new Set([...prev, id])] : prev.filter((x) => x !== id)));
+
+  const toggleAll = (on: boolean) =>
+    setSelected(on ? outboundVisible.map((t) => t.id) : []);
+
+  const printSelected = () => {
+    if (selectedOutbound.length === 0) {
+      toast.error("Pilih minimal satu transaksi KELUAR untuk dicetak");
+      return;
+    }
+    window.open(`/print/surat-jalan?ids=${selectedOutbound.join(",")}`, "_blank");
+  };
 
   return (
     <AppShell>
@@ -140,33 +163,92 @@ export default function Transactions() {
           </Select>
         </div>
 
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card p-3">
+          <Button
+            size="sm"
+            onClick={printSelected}
+            data-testid="btn-print-selected-delivery-notes"
+          >
+            <Printer className="size-4" /> Cetak Surat Jalan ({selectedOutbound.length})
+          </Button>
+          <span className="text-xs text-muted-foreground">
+            A4 — 2 surat jalan per lembar
+          </span>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <Input
+              type="month"
+              className="w-40"
+              aria-label="Bulan laporan"
+              data-testid="report-month-input"
+              value={month}
+              onChange={(e) => setMonth(e.target.value)}
+            />
+            <a
+              href={`/api/reports/transactions.xlsx?month=${month}`}
+              data-testid="btn-export-transactions-month"
+              className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium transition-colors duration-150 hover:bg-secondary"
+            >
+              <FileSpreadsheet className="size-4" /> Unduh Excel Bulan Ini
+            </a>
+            <a
+              href="/api/reports/transactions.xlsx"
+              data-testid="btn-export-transactions-all"
+              className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium transition-colors duration-150 hover:bg-secondary"
+            >
+              <FileSpreadsheet className="size-4" /> Semua Periode
+            </a>
+          </div>
+        </div>
+
         <Card className="overflow-hidden p-0">
           <CardContent className="p-0">
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10">
+                    <Checkbox
+                      aria-label="Pilih semua transaksi keluar"
+                      data-testid="select-all-outbound"
+                      checked={
+                        outboundVisible.length > 0 && selectedOutbound.length === outboundVisible.length
+                      }
+                      onCheckedChange={(v) => toggleAll(Boolean(v))}
+                    />
+                  </TableHead>
                   <TableHead>Waktu</TableHead>
                   <TableHead>No. Referensi</TableHead>
+                  <TableHead>No. Antrian</TableHead>
                   <TableHead>Tipe</TableHead>
                   <TableHead>Produk</TableHead>
                   <TableHead className="text-right">Perubahan</TableHead>
                   <TableHead className="text-right">Stok Akhir</TableHead>
                   <TableHead>Pihak Terkait</TableHead>
-                  <TableHead>Catatan</TableHead>
+                  <TableHead className="text-right">Cetak</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody data-testid="table-transactions-body">
                 {filtered.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={8} className="py-10 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">
                       Belum ada transaksi yang cocok dengan filter.
                     </TableCell>
                   </TableRow>
                 )}
                 {filtered.map((t) => (
                   <TableRow key={t.id} data-testid="transaction-row">
+                    <TableCell>
+                      {t.type === "KELUAR" && (
+                        <Checkbox
+                          aria-label={`Pilih transaksi ${t.reference_no || t.id}`}
+                          data-testid={`select-tx-${t.id}`}
+                          checked={selected.includes(t.id)}
+                          onCheckedChange={(v) => toggle(t.id, Boolean(v))}
+                        />
+                      )}
+                    </TableCell>
                     <TableCell className="whitespace-nowrap text-xs">{waktu(t.created_at)}</TableCell>
                     <TableCell className="font-mono text-xs">{t.reference_no || "—"}</TableCell>
+                    <TableCell className="font-mono text-xs">{t.queue_no || "—"}</TableCell>
                     <TableCell>
                       <Badge variant={t.type === "MASUK" ? "secondary" : "destructive"}>{t.type}</Badge>
                     </TableCell>
@@ -184,8 +266,31 @@ export default function Transactions() {
                     </TableCell>
                     <TableCell className="text-right font-mono">{angka(t.stock_after)}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">{t.party || "—"}</TableCell>
-                    <TableCell className="max-w-56 truncate text-xs text-muted-foreground">
-                      {t.notes || "—"}
+                    <TableCell className="text-right">
+                      {t.type === "KELUAR" ? (
+                        <div className="flex justify-end gap-1">
+                          <Link
+                            to={`/print/surat-jalan?ids=${t.id}`}
+                            target="_blank"
+                            aria-label="Cetak surat jalan"
+                            data-testid={`btn-print-note-${t.id}`}
+                            className="inline-flex size-8 items-center justify-center rounded-md hover:bg-secondary"
+                          >
+                            <Printer className="size-4" />
+                          </Link>
+                          <Link
+                            to={`/print/bon-muat/${t.id}`}
+                            target="_blank"
+                            aria-label="Cetak bon muat thermal"
+                            data-testid={`btn-print-slip-${t.id}`}
+                            className="inline-flex size-8 items-center justify-center rounded-md hover:bg-secondary"
+                          >
+                            <Receipt className="size-4" />
+                          </Link>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

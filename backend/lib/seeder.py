@@ -71,6 +71,7 @@ async def run_seed() -> Dict[str, int]:
     await db.products.delete_many({})
     await db.suppliers.delete_many({})
     await db.transactions.delete_many({})
+    await db.purchase_orders.delete_many({})
 
     suppliers = [Supplier(**s) for s in SUPPLIERS]
     await db.suppliers.insert_many([s.model_dump() for s in suppliers])
@@ -86,6 +87,7 @@ async def run_seed() -> Dict[str, int]:
 
     now = datetime.now(timezone.utc)
     running: Dict[str, int] = {}
+    queue_per_day: Dict[str, int] = {}
     txs: List[Dict[str, Any]] = []
     for pidx, mtype, qty, party, ref, notes, days_ago in MOVEMENTS:
         p = products[pidx]
@@ -93,11 +95,16 @@ async def run_seed() -> Dict[str, int]:
         after = base + qty if mtype == "MASUK" else max(base - qty, 0)
         running[p.id] = after
         moment = now - timedelta(days=days_ago)
+        day = moment.date().isoformat()
+        queue_no = ""
+        if mtype == "KELUAR":
+            queue_per_day[day] = queue_per_day.get(day, 0) + 1
+            queue_no = f"A-{queue_per_day[day]:03d}"
         txs.append(Transaction(
             product_id=p.id, product_name=p.name, product_sku=p.sku, category=p.category,
             type=mtype, quantity=qty, stock_after=after,
             party=party or (p.supplier_name if mtype == "MASUK" else ""),
-            reference_no=ref, notes=notes, date=moment.date().isoformat(), created_at=moment,
+            reference_no=ref, queue_no=queue_no, notes=notes, date=day, created_at=moment,
         ).model_dump())
     await db.transactions.insert_many(txs)
 

@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { FileSpreadsheet, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import AppShell from "@/components/AppShell";
 import { Badge } from "@/components/ui/badge";
@@ -143,9 +143,18 @@ export default function Products() {
               {angka(filtered.length)} dari {angka(products.length)} produk ditampilkan
             </p>
           </div>
-          <Button onClick={openCreate} data-testid="btn-create-product">
-            <Plus className="size-4" /> Tambah Produk
-          </Button>
+          <div className="flex gap-2">
+            <a
+              href="/api/reports/products.xlsx"
+              data-testid="btn-export-products"
+              className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium transition-colors duration-150 hover:bg-secondary"
+            >
+              <FileSpreadsheet className="size-4" /> Unduh Excel
+            </a>
+            <Button onClick={openCreate} data-testid="btn-create-product">
+              <Plus className="size-4" /> Tambah Produk
+            </Button>
+          </div>
         </div>
 
         <div className="flex flex-wrap gap-3">
