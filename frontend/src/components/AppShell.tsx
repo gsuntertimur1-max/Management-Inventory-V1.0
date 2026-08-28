@@ -8,6 +8,7 @@ import {
   ClipboardList,
   History,
   LayoutDashboard,
+  Layers,
   LogOut,
   Monitor,
   RefreshCw,
@@ -27,6 +28,7 @@ const NAV = [
   { name: "Dashboard", path: "/", icon: LayoutDashboard, testid: "nav-dashboard-link", action: "stock:read" },
   { name: "Daftar Produk", path: "/products", icon: Boxes, testid: "nav-products-link", action: "procurement:write" },
   { name: "Import Data", path: "/import", icon: Upload, testid: "nav-import-link", action: "procurement:write" },
+  { name: "Tumpukan Stok", path: "/lokasi", icon: Layers, testid: "nav-locations-link", action: "stock:read" },
   { name: "Catat Stok", path: "/stock-movement", icon: ArrowLeftRight, testid: "nav-stock-movement-link", action: "sales:write|procurement:write" },
   { name: "Pengeluaran", path: "/shipments", icon: Send, testid: "nav-shipments-link", action: "sales:read" },
   { name: "Riwayat", path: "/transactions", icon: History, testid: "nav-transactions-link", action: "inventory:read" },
@@ -84,9 +86,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               <Warehouse className="size-5" />
             </span>
             <span className="leading-tight">
-              <span className="block text-base font-bold tracking-tight">GudangPro</span>
+              <span className="block text-base font-bold tracking-tight">BULOG</span>
               <span className="block font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
-                Manajemen Stok
+                Gudang Sunter Timur I &amp; II
               </span>
             </span>
           </Link>

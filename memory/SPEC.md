@@ -1,4 +1,26 @@
-# GudangPro — Aplikasi Penyimpanan Stok
+# Bulog Gudang Sunter Timur I & II — Aplikasi Penyimpanan Stok
+
+## Lokasi gudang & tumpukan (backend/models/locations.py, routers/locations.py)
+- 2 kompleks: **Gudang Sunter Timur I** (GBB 17–20) dan **Gudang Sunter Timur II**
+  (GBB 21–24 + **MP 1**, hanya ada di kompleks II).
+- Tiap unit GBB = 12 tumpukan (A/B/C × 01..04, pola nomor 02 memakai segmen ekstra:
+  A01.1.1, A02.1.1.1, A03.1.1, A04.1.1, dst). **MP 1 = 16 tumpukan** (A/B × 01..08,
+  segmen ekstra pada 02 & 06). Total katalog 112 tumpukan, kode gabungan `GBB 23/A01.1.1`.
+- Katalog di-seed startup (`ensure_locations`) ke `db.locations`; admin/pengadaan bisa
+  POST `/locations` (tambah tumpukan) & DELETE `/locations/{id}` (harus kosong).
+- **Placement** (`db.placements`): satu tumpukan boleh berisi banyak komoditas.
+  Field: location_code, product_id, length(P)/width(L)/height(T), notes + turunan
+  server-side: complex_name, unit_name, stack, product_name/sku, unit, secondary_unit,
+  units_per_secondary, weight_per_unit/weight_unit, secondary_count = P×L×T,
+  weight_per_secondary = weight_per_unit × units_per_secondary,
+  total_units = P×L×T × units_per_secondary, total_weight, created_by_name.
+- API: GET `/locations`, GET `/locations/summary`, GET `/placements` (stock:read);
+  POST/PUT/DELETE `/placements` + POST `/placements/distribute` (procurement:write —
+  menyebar seluruh stok produk saat ini ke tumpukan, memfaktorkan jumlah kemasan jadi P×L×T).
+- Excel: GET `/reports/stock-locations.xlsx` — rekap per tumpukan + kolom P, L, T dan
+  perkalian tumpukan (P×L×T), total satuan, total berat.
+- Halaman `/lokasi` (`pages/StockLocations.tsx`, nav "Tumpukan Stok", stock:read; tombol
+  tulis hanya untuk admin/pengadaan, viewer & penjualan read-only).
 
 Inventory/warehouse stock app (Bahasa Indonesia UI). **Login required** (username + password).
 

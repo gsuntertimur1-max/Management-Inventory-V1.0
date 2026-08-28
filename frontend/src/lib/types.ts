@@ -245,3 +245,74 @@ export const UNITS = ["Pcs", "Box", "Unit", "Kg", "Liter", "Pack", "Roll", "Set"
 export const WEIGHT_UNITS = ["Kg", "Liter", "Gram", "Ton", "mL"];
 
 export const SECONDARY_UNITS = ["Dus", "Karung", "Krat", "Pallet", "Bal", "Peti"];
+
+// --- Lokasi gudang & penempatan stok per tumpukan (backend/models/locations.py) ---
+export interface Location {
+  id: string;
+  code: string;
+  complex_name: string;
+  unit_name: string;
+  stack: string;
+  created_at: string;
+}
+
+export interface LocationCreate {
+  complex_name: string;
+  unit_name: string;
+  stack: string;
+}
+
+export interface Placement {
+  id: string;
+  location_code: string;
+  product_id: string;
+  length: number;
+  width: number;
+  height: number;
+  notes: string;
+  complex_name: string;
+  unit_name: string;
+  stack: string;
+  product_name: string;
+  product_sku: string;
+  unit: string;
+  secondary_unit: string;
+  units_per_secondary: number;
+  weight_per_unit: number;
+  weight_unit: string;
+  secondary_count: number;
+  weight_per_secondary: number;
+  total_units: number;
+  total_weight: number;
+  created_by_name: string;
+  created_at: string;
+}
+
+export interface PlacementCreate {
+  location_code: string;
+  product_id: string;
+  length: number;
+  width: number;
+  height: number;
+  notes: string;
+}
+
+export interface LocationStackSummary {
+  code: string;
+  complex_name: string;
+  unit_name: string;
+  stack: string;
+  product_count: number;
+  total_secondary: number;
+  total_weight: number;
+}
+
+export interface DistributeResult {
+  ok: boolean;
+  placements: number;
+  products: number;
+  total_weight: number;
+  skipped: string[];
+}
+
+export const COMPLEXES = ["Gudang Sunter Timur I", "Gudang Sunter Timur II"];

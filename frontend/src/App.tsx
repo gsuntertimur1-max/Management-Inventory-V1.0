@@ -12,6 +12,7 @@ import Shipments from "@/pages/Shipments";
 import QueueDisplay from "@/pages/QueueDisplay";
 import SettingsPage from "@/pages/Settings";
 import Users from "@/pages/Users";
+import StockLocations from "@/pages/StockLocations";
 import PrintDeliveryNote from "@/pages/PrintDeliveryNote";
 import PrintLoadingSlip from "@/pages/PrintLoadingSlip";
 
@@ -50,6 +51,14 @@ export default function App() {
         element={
           <RequireAuth action="sales:write|procurement:write">
             <StockMovement />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/lokasi"
+        element={
+          <RequireAuth action="stock:read">
+            <StockLocations />
           </RequireAuth>
         }
       />

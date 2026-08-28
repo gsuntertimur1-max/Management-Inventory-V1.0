@@ -55,7 +55,7 @@ class PurchaseOrder(BaseModel):
 
 
 class Settings(BaseModel):
-    company_name: str = "GudangPro"
+    company_name: str = "Bulog Gudang Sunter Timur I & II"
     address: str = "Jl. Industri Raya No. 12, Kawasan Pergudangan, Jakarta Barat 11710"
     phone: str = "021-5566789"
     email: str = "operasional@gudangpro.co.id"

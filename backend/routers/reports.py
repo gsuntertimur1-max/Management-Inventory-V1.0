@@ -96,6 +96,54 @@ async def export_products():
     return _stream(wb, f"laporan-produk-{datetime.now(timezone.utc).date().isoformat()}.xlsx")
 
 
+@router.get("/reports/stock-locations.xlsx")
+async def export_stock_locations():
+    """Rekap stok per tumpukan + perkalian tumpukan P × L × T."""
+    docs = await db.placements.find().to_list(5000)
+
+    def sort_key(d: Dict[str, Any]) -> Any:
+        unit = str(d.get("unit_name", ""))
+        digits = "".join(ch for ch in unit if ch.isdigit())
+        return ("".join(ch for ch in unit if ch.isalpha()), int(digits or 0), str(d.get("stack", "")))
+
+    docs.sort(key=sort_key)
+
+    rows: List[List[Any]] = []
+    for p in docs:
+        rows.append([
+            p.get("complex_name", ""), p.get("unit_name", ""), p.get("stack", ""),
+            p.get("location_code", ""),
+            p.get("product_name", ""), p.get("product_sku", ""),
+            f"{p.get('units_per_secondary', 1)} {p.get('unit', 'Pcs')}/{p.get('secondary_unit', 'Karung')}",
+            f"{p.get('weight_per_secondary', 0)} {p.get('weight_unit', 'Kg')}",
+            int(p.get("length", 1)), int(p.get("width", 1)), int(p.get("height", 1)),
+            int(p.get("secondary_count", 0)),
+            int(p.get("total_units", 0)),
+            round(float(p.get("total_weight", 0)), 3),
+            p.get("created_by_name", ""), p.get("notes", ""),
+        ])
+
+    rows.append([])
+    rows.append([
+        "TOTAL", "", "", "", "", "", "", "", "", "", "",
+        sum(int(r[11]) for r in rows if len(r) > 11 and isinstance(r[11], int)),
+        sum(int(r[12]) for r in rows if len(r) > 12 and isinstance(r[12], int)),
+        round(sum(float(r[13]) for r in rows if len(r) > 13 and isinstance(r[13], (int, float))), 3),
+        "", "",
+    ])
+
+    wb = Workbook()
+    _write_sheet(
+        wb, "Stok per Tumpukan", "Rekap Stok per Tumpukan — Bulog Gudang Sunter Timur I & II",
+        ["Kompleks Gudang", "Unit Gudang", "Tumpukan", "Kode Tumpukan", "Komoditas", "SKU",
+         "Isi Kemasan Sekunder", "Berat per Kemasan", "P (Panjang)", "L (Lebar)", "T (Tinggi)",
+         "Perkalian Tumpukan (P×L×T)", "Total Satuan Primer", "Total Berat (Kg)",
+         "Dicatat Oleh", "Catatan"],
+        rows,
+    )
+    return _stream(wb, f"rekap-tumpukan-{datetime.now(timezone.utc).date().isoformat()}.xlsx")
+
+
 @router.get("/reports/transactions.xlsx")
 async def export_transactions(month: Optional[str] = Query(None, description="Filter bulan YYYY-MM")):
     query: Dict[str, Any] = {}

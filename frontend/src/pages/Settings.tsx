@@ -12,7 +12,7 @@ import { apiGet, apiPut } from "@/lib/api";
 import type { AppSettings } from "@/lib/types";
 
 const FALLBACK: AppSettings = {
-  company_name: "GudangPro",
+  company_name: "Bulog Gudang Sunter Timur I & II",
   address: "",
   phone: "",
   email: "",

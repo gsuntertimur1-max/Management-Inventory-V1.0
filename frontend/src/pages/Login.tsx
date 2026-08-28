@@ -64,7 +64,7 @@ export default function Login() {
             <Warehouse className="size-6" />
           </span>
           <div>
-            <p className="text-lg font-bold tracking-tight">GudangPro</p>
+            <p className="text-lg font-bold tracking-tight">Bulog Gudang Sunter Timur I &amp; II</p>
             <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
               Sistem Manajemen Stok
             </p>

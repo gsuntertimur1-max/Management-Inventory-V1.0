@@ -134,7 +134,7 @@ export default function PrintDeliveryNote() {
   const shipments = shipmentsQ.isError ? [] : shipmentsQ.data ?? [];
   const settings: AppSettings =
     (settingsQ.isError ? undefined : settingsQ.data) ?? {
-      company_name: "GudangPro",
+      company_name: "Bulog Gudang Sunter Timur I & II",
       address: "-",
       phone: "-",
       email: "-",

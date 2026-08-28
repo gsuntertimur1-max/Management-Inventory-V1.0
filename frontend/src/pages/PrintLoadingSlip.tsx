@@ -27,7 +27,7 @@ export default function PrintLoadingSlip() {
   const s = shipmentQ.isError ? undefined : shipmentQ.data;
   const settings: AppSettings =
     (settingsQ.isError ? undefined : settingsQ.data) ?? {
-      company_name: "GudangPro",
+      company_name: "Bulog Gudang Sunter Timur I & II",
       address: "-",
       phone: "-",
       email: "-",

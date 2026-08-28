@@ -71,6 +71,11 @@ _RULES: List[Tuple[str, str, Optional[str]]] = [
     ("GET", r"^/api/products$", "stock:read"),
     ("GET", r"^/api/products/[^/]+$", "stock:read"),
     ("GET", r"^/api/stats$", "stock:read"),
+    # lokasi & tumpukan stok
+    ("GET", r"^/api/locations(/.*)?$", "stock:read"),
+    ("GET", r"^/api/placements(/.*)?$", "stock:read"),
+    ("*", r"^/api/locations(/.*)?$", "procurement:write"),
+    ("*", r"^/api/placements(/.*)?$", "procurement:write"),
     # sales / outbound
     ("GET", r"^/api/shipments(/.*)?$", "sales:read"),
     ("*", r"^/api/shipments(/.*)?$", "sales:write"),
