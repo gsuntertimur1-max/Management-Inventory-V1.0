@@ -171,10 +171,20 @@ def to_public(user: User) -> UserPublic:
 
 
 async def ensure_default_admin() -> None:
-    """Bootstrap one admin so the app is never locked out."""
-    if await db.users.count_documents({}) > 0:
+    """Guarantee the documented default admin exists, so the app can never lock you out.
+
+    Checks for the account by USERNAME (not "are there any users at all"): once other accounts
+    exist — or the default admin was deleted — the old emptiness check silently stopped
+    recreating it, leaving no working way in.
+    """
+    username = os.environ.get("DEFAULT_ADMIN_USER", "admin").strip().lower()
+    existing = await db.users.find_one({"username": username})
+    if existing:
+        # Never silently reset a password, but do keep the recovery account privileged.
+        if existing.get("role") != "admin":
+            await db.users.update_one({"id": existing["id"]}, {"$set": {"role": "admin"}})
         return
-    username = os.environ.get("DEFAULT_ADMIN_USER", "admin")
+
     password = os.environ.get("DEFAULT_ADMIN_PASSWORD", "admin123")
     password_hash, salt = hash_password(password)
     await db.users.insert_one(User(

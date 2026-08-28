@@ -1,7 +1,7 @@
 import os
 from typing import List, Optional
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Cookie, HTTPException, Request, Response
 
 from lib.auth import (
     SESSION_COOKIE,
@@ -23,7 +23,7 @@ IS_HTTPS = os.environ.get("APP_URL", "").startswith("https")
 
 
 @router.post("/login", response_model=UserPublic)
-async def login(payload: LoginRequest, response: Response):
+async def login(payload: LoginRequest, request: Request, response: Response):
     doc = await db.users.find_one({"username": payload.username.strip().lower()})
     if not doc:
         raise HTTPException(status_code=401, detail="Username atau password salah")
@@ -33,12 +33,16 @@ async def login(payload: LoginRequest, response: Response):
         raise HTTPException(status_code=401, detail="Username atau password salah")
 
     token = await create_session(user.id)
+    # Derive Secure from the ACTUAL request scheme: a Secure cookie is silently dropped when the
+    # app is opened over plain http, which would bounce the user straight back to /login.
+    forwarded = request.headers.get("x-forwarded-proto", "").split(",")[0].strip()
+    is_https = (forwarded or request.url.scheme) == "https"
     response.set_cookie(
         SESSION_COOKIE,
         token,
         httponly=True,
         samesite="lax",
-        secure=IS_HTTPS,
+        secure=is_https,
         max_age=SESSION_DAYS * 24 * 3600,
         path="/",
     )

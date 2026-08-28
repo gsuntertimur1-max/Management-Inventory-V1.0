@@ -16,7 +16,10 @@ Inventory/warehouse stock app (Bahasa Indonesia UI). **Login required** (usernam
   GET/POST `/auth/users`, PATCH/DELETE `/auth/users/{id}` (admin only). Guards: at least one
   admin must remain; no self-demote/self-delete; password change kills that user's sessions.
 - Credentials live in `memory/test_credentials.md` (admin/admin123, operator1/operator123,
-  viewer1/viewer123). Default admin bootstrapped at startup only when no users exist.
+  viewer1/viewer123). `ensure_default_admin()` runs on every startup and recreates the `admin`
+  account **whenever that username is missing** (checked by username, NOT by "collection is
+  empty" — the old emptiness check caused a real lockout once the user added their own admin and
+  deleted the default one). Pod-side recovery: `python reset_password.py <username> <new_password>`.
 - Frontend: `lib/session.ts` (`useAuth`, `useSession`, `can`), `components/RequireAuth.tsx`
   gates every route by action; `/login` is the only public page.
 

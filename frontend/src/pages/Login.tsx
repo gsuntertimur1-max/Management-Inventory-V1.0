@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { LogIn, Warehouse } from "lucide-react";
+import { Eye, EyeOff, LogIn, Warehouse } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -18,6 +18,7 @@ export default function Login() {
   const { user, isLoading } = useAuth();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
     if (!isLoading && user) navigate("/", { replace: true });
@@ -88,9 +89,13 @@ export default function Login() {
             >
               <div className="space-y-2">
                 <Label htmlFor="username">Username</Label>
+                {/* Mobile keyboards auto-capitalise by default, which silently breaks login. */}
                 <Input
                   id="username"
                   autoComplete="username"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
                   placeholder="admin"
                   data-testid="login-username-input"
                   value={username}
@@ -99,15 +104,33 @@ export default function Login() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="password">Password</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  autoComplete="current-password"
-                  placeholder="••••••••"
-                  data-testid="login-password-input"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
+                <div className="relative">
+                  <Input
+                    id="password"
+                    type={showPassword ? "text" : "password"}
+                    autoComplete="current-password"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    className="pr-10"
+                    placeholder="••••••••"
+                    data-testid="login-password-input"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    aria-label={showPassword ? "Sembunyikan password" : "Tampilkan password"}
+                    data-testid="login-toggle-password"
+                    onClick={() => setShowPassword((v) => !v)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1.5 text-muted-foreground transition-colors duration-150 hover:text-foreground"
+                  >
+                    {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                  </button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Password peka huruf besar/kecil. Ketuk ikon mata untuk memeriksa ketikan Anda.
+                </p>
               </div>
               <Button
                 type="submit"
