@@ -16,7 +16,9 @@ from lib.db import db
 from models.auth import Role, User, UserPublic
 
 SESSION_COOKIE = "gp_session"
+GOOGLE_COOKIE = "session_token"     # Emergent-managed Google Auth session cookie
 SESSION_DAYS = 7
+OWNER_EMAIL = "gsuntertimur1@gmail.com"   # pemilik aplikasi → selalu administrator
 
 # --- password hashing (stdlib pbkdf2; no extra dependency) ---
 _ITERATIONS = 200_000
@@ -62,6 +64,7 @@ ROLE_LABELS: Dict[str, str] = {
 _RULES: List[Tuple[str, str, Optional[str]]] = [
     # public
     ("POST", r"^/api/auth/login$", None),
+    ("POST", r"^/api/auth/google/session$", None),
     ("POST", r"^/api/auth/logout$", None),
     ("GET", r"^/api/auth/me$", None),
     ("GET", r"^/api/$", None),
@@ -112,14 +115,14 @@ def authorize(role: Optional[Role], action: str) -> bool:
 
 
 # --- sessions ---
-async def create_session(user_id: str) -> str:
-    token = secrets.token_urlsafe(32)
+async def create_session(user_id: str, token: Optional[str] = None) -> str:
+    session_token = token or secrets.token_urlsafe(32)
     await db.sessions.insert_one({
-        "token": token,
+        "token": session_token,
         "user_id": user_id,
         "expires_at": datetime.now(timezone.utc) + timedelta(days=SESSION_DAYS),
     })
-    return token
+    return session_token
 
 
 async def destroy_session(token: Optional[str]) -> None:
@@ -148,6 +151,19 @@ async def current_user(token: Optional[str]) -> Optional[User]:
     return User(**doc)
 
 
+def token_from_request(request: Request, gp_session: Optional[str] = None) -> Optional[str]:
+    """Both auth paths share one sessions collection: app cookie, Google cookie, then Bearer."""
+    if gp_session:
+        return gp_session
+    cookie = request.cookies.get(SESSION_COOKIE) or request.cookies.get(GOOGLE_COOKIE)
+    if cookie:
+        return cookie
+    header = request.headers.get("authorization", "")
+    if header.lower().startswith("bearer "):
+        return header.split(" ", 1)[1].strip() or None
+    return None
+
+
 async def enforce(request: Request, gp_session: Optional[str] = Cookie(default=None)) -> None:
     """Router-wide gate: deny-by-default on both authentication and authorization."""
     if request.method == "OPTIONS":
@@ -159,7 +175,7 @@ async def enforce(request: Request, gp_session: Optional[str] = Cookie(default=N
     if action is None:
         return
 
-    user = await current_user(gp_session)
+    user = await current_user(token_from_request(request, gp_session))
     if not user:
         raise HTTPException(status_code=401, detail="Silakan login terlebih dahulu")
     if not authorize(user.role, action):
@@ -181,6 +197,9 @@ def to_public(user: User) -> UserPublic:
         username=user.username,
         full_name=user.full_name,
         role=user.role,
+        email=user.email,
+        picture=user.picture,
+        auth_provider=user.auth_provider,
         created_at=user.created_at,
     )
 

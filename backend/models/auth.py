@@ -38,11 +38,18 @@ class UserPublic(BaseModel):
     username: str
     full_name: str = ""
     role: Role
+    email: str = ""
+    picture: str = ""
+    auth_provider: Literal["password", "google"] = "password"
     created_at: datetime
 
 
 class User(UserPublic):
     id: str = Field(default_factory=_uid)
-    password_hash: str
-    salt: str
+    password_hash: str = ""
+    salt: str = ""
     created_at: datetime = Field(default_factory=_now)
+
+
+class GoogleSessionRequest(BaseModel):
+    session_id: str

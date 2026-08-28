@@ -48,6 +48,21 @@ berlaku untuk MASUK maupun KELUAR), lalu tampil di surat jalan A4, bon muat ther
 ("No. Pol"), kolom "No. Polisi" pada Riwayat & Pengeluaran, dan kolom
 "No. Polisi Kendaraan" di `reports/transactions.xlsx`.
 
+## Google sign-in (Emergent-managed)
+- Tombol "Masuk dengan Google" di `/login` → `auth.emergentagent.com` dengan redirect
+  `window.location.origin + "/"` (JANGAN di-hardcode). Kembali ke `/#session_id=...`;
+  `App.tsx` mendeteksi `useLocation().hash` dan merender `pages/AuthCallback.tsx` sebelum route lain.
+- `POST /api/auth/google/session` (public) menukar session_id via
+  `https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data`, meng-upsert user
+  berdasarkan `email`, membuat sesi 7 hari di `db.sessions` (token = session_token dari Emergent),
+  lalu set cookie httpOnly `session_token` + `gp_session`.
+- `lib/auth.py:token_from_request()` menerima cookie `gp_session`, cookie `session_token`, atau
+  header `Authorization: Bearer`. Login password lama tetap berjalan.
+- Peran: `gsuntertimur1@gmail.com` (pemilik) selalu `admin`; akun Google lain dibuat sebagai
+  `viewer` dan dinaikkan admin lewat halaman Pengguna. User model kini punya `email`, `picture`,
+  `auth_provider` (password|google); `password_hash`/`salt` opsional.
+- Playbook uji: `/app/auth_testing.md`.
+
 ## Auth & roles (RBAC only — single shared warehouse, no tenancy)
 Roles: **admin** (everything), **penjualan** (outbound only: sales:read/write + inventory:read +
 reports), **pengadaan** (procurement only: procurement:read/write + inventory:read + reports),

@@ -8,6 +8,9 @@ export interface CurrentUser {
   username: string;
   full_name: string;
   role: Role;
+  email: string;
+  picture: string;
+  auth_provider: "password" | "google";
   created_at: string;
 }
 

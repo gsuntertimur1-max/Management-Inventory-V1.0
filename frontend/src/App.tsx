@@ -1,4 +1,4 @@
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, useLocation } from "react-router-dom";
 import RequireAuth from "@/components/RequireAuth";
 import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
@@ -15,9 +15,18 @@ import Users from "@/pages/Users";
 import StockLocations from "@/pages/StockLocations";
 import PrintDeliveryNote from "@/pages/PrintDeliveryNote";
 import PrintLoadingSlip from "@/pages/PrintLoadingSlip";
+import AuthCallback from "@/pages/AuthCallback";
 
 // One <Route> per page in src/pages; BrowserRouter already wraps this in main.tsx.
 export default function App() {
+  const location = useLocation();
+
+  // Emergent Google Auth returns to {origin}/#session_id=... — tukar sesi ini SEBELUM route
+  // manapun (termasuk RequireAuth) berjalan, agar tidak ada race dengan /auth/me.
+  if (location.hash?.includes("session_id=")) {
+    return <AuthCallback />;
+  }
+
   return (
     <Routes>
       <Route path="/login" element={<Login />} />

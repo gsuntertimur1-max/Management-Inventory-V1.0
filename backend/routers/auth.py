@@ -1,9 +1,13 @@
 import os
+import uuid
 from typing import List, Optional
 
-from fastapi import APIRouter, Cookie, HTTPException, Request, Response
+import httpx
+from fastapi import APIRouter, Cookie, Header, HTTPException, Request, Response
 
 from lib.auth import (
+    GOOGLE_COOKIE,
+    OWNER_EMAIL,
     SESSION_COOKIE,
     SESSION_DAYS,
     create_session,
@@ -12,14 +16,18 @@ from lib.auth import (
     hash_password,
     principal,
     to_public,
+    token_from_request,
     verify_password,
 )
 from lib.db import db
-from models.auth import LoginRequest, User, UserCreate, UserPublic, UserUpdate
+from models.auth import GoogleSessionRequest, LoginRequest, User, UserCreate, UserPublic, UserUpdate
 
 router = APIRouter(prefix="/auth")
 
 IS_HTTPS = os.environ.get("APP_URL", "").startswith("https")
+EMERGENT_SESSION_DATA_URL = (
+    "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
+)
 
 
 @router.post("/login", response_model=UserPublic)
@@ -49,16 +57,94 @@ async def login(payload: LoginRequest, request: Request, response: Response):
     return to_public(user)
 
 
+@router.post("/google/session", response_model=UserPublic)
+async def google_session(
+    request: Request,
+    response: Response,
+    payload: Optional[GoogleSessionRequest] = None,
+    x_session_id: Optional[str] = Header(default=None),
+):
+    """Tukar session_id Emergent Google Auth menjadi sesi aplikasi (peran RBAC tetap berlaku)."""
+    session_id = (payload.session_id if payload else None) or x_session_id
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id tidak ditemukan")
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        try:
+            res = await client.get(EMERGENT_SESSION_DATA_URL, headers={"X-Session-ID": session_id})
+        except httpx.HTTPError:
+            raise HTTPException(status_code=502, detail="Gagal menghubungi layanan autentikasi")
+    if res.status_code != 200:
+        raise HTTPException(status_code=401, detail="Sesi Google tidak valid atau kedaluwarsa")
+
+    data = res.json()
+    email = str(data.get("email", "")).strip().lower()
+    session_token = data.get("session_token")
+    if not email or not session_token:
+        raise HTTPException(status_code=502, detail="Data sesi Google tidak lengkap")
+
+    name = str(data.get("name") or email.split("@")[0])
+    picture = str(data.get("picture") or "")
+
+    existing = await db.users.find_one({"email": email}, {"_id": 0})
+    if existing:
+        await db.users.update_one(
+            {"id": existing["id"]},
+            {"$set": {
+                "full_name": existing.get("full_name") or name,
+                "picture": picture,
+                "auth_provider": "google",
+                **({"role": "admin"} if email == OWNER_EMAIL else {}),
+            }},
+        )
+        user = User(**{**existing, "full_name": existing.get("full_name") or name,
+                       "picture": picture, "auth_provider": "google",
+                       "role": "admin" if email == OWNER_EMAIL else existing.get("role", "viewer")})
+    else:
+        base = email.split("@")[0][:30] or "google"
+        username = base
+        while await db.users.find_one({"username": username}):
+            username = f"{base}-{uuid.uuid4().hex[:4]}"
+        user = User(
+            username=username,
+            full_name=name,
+            # Pemilik aplikasi langsung administrator; akun Google lain mulai sebagai pemantau
+            # dan bisa dinaikkan perannya oleh admin di halaman Pengguna.
+            role="admin" if email == OWNER_EMAIL else "viewer",
+            email=email,
+            picture=picture,
+            auth_provider="google",
+        )
+        await db.users.insert_one(user.model_dump())
+
+    await create_session(user.id, token=session_token)
+
+    forwarded = request.headers.get("x-forwarded-proto", "").split(",")[0].strip()
+    is_https = (forwarded or request.url.scheme) == "https"
+    for cookie_name in (GOOGLE_COOKIE, SESSION_COOKIE):
+        response.set_cookie(
+            cookie_name,
+            session_token,
+            httponly=True,
+            samesite="none" if is_https else "lax",
+            secure=is_https,
+            max_age=SESSION_DAYS * 24 * 3600,
+            path="/",
+        )
+    return to_public(user)
+
+
 @router.post("/logout")
-async def logout(response: Response, gp_session: Optional[str] = Cookie(default=None)):
-    await destroy_session(gp_session)
+async def logout(request: Request, response: Response, gp_session: Optional[str] = Cookie(default=None)):
+    await destroy_session(token_from_request(request, gp_session))
     response.delete_cookie(SESSION_COOKIE, path="/")
+    response.delete_cookie(GOOGLE_COOKIE, path="/")
     return {"ok": True}
 
 
 @router.get("/me", response_model=Optional[UserPublic])
-async def me(gp_session: Optional[str] = Cookie(default=None)):
-    user = await current_user(gp_session)
+async def me(request: Request, gp_session: Optional[str] = Cookie(default=None)):
+    user = await current_user(token_from_request(request, gp_session))
     return to_public(user) if user else None
 
 
