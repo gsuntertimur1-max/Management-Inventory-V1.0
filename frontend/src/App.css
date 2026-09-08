@@ -1,0 +1,6 @@
+.App { min-height: 100vh; }
+
+.stat-card { transition: transform .2s ease, border-color .2s ease; }
+.stat-card:hover { transform: translateY(-3px); border-color: rgba(37,99,235,0.4); }
+
+.bar { transition: height .5s cubic-bezier(.2,.8,.2,1); }
