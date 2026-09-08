@@ -70,6 +70,7 @@ from routers.purchasing import router as purchasing_router
 from routers.reports import router as reports_router
 from routers.shipments import router as shipments_router
 from routers.locations import router as locations_router
+from routers.invites import router as invites_router
 
 api_router.include_router(auth_router)
 api_router.include_router(inventory_router)
@@ -77,6 +78,7 @@ api_router.include_router(purchasing_router)
 api_router.include_router(reports_router)
 api_router.include_router(shipments_router)
 api_router.include_router(locations_router)
+api_router.include_router(invites_router)
 
 # Include the router in the main app
 app.include_router(api_router)

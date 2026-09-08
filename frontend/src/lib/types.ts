@@ -331,3 +331,32 @@ export interface DistributeResult {
 }
 
 export const COMPLEXES = ["Gudang Sunter Timur I", "Gudang Sunter Timur II"];
+
+// --- Undangan tim (backend/models/invites.py) ---
+export interface Invite {
+  id: string;
+  email: string;
+  full_name: string;
+  role: "admin" | "penjualan" | "pengadaan" | "viewer";
+  message: string;
+  status: string;
+  invite_link: string;
+  email_sent: boolean;
+  email_error: string;
+  invited_by: string;
+  accepted_at: string | null;
+  created_at: string;
+}
+
+export interface InviteCreate {
+  email: string;
+  full_name: string;
+  role: "admin" | "penjualan" | "pengadaan" | "viewer";
+  message: string;
+}
+
+export interface InviteSendResult {
+  invite: Invite;
+  email_sent: boolean;
+  detail: string;
+}

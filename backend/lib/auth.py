@@ -70,6 +70,7 @@ _RULES: List[Tuple[str, str, Optional[str]]] = [
     ("GET", r"^/api/$", None),
     # user administration
     ("*", r"^/api/auth/users(/.*)?$", "users:manage"),
+    ("*", r"^/api/invites(/.*)?$", "users:manage"),
     # stock visibility (every role, viewer included)
     ("GET", r"^/api/products$", "stock:read"),
     ("GET", r"^/api/products/[^/]+$", "stock:read"),

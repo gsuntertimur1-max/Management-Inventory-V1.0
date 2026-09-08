@@ -21,6 +21,7 @@ from lib.auth import (
 )
 from lib.db import db
 from models.auth import GoogleSessionRequest, LoginRequest, User, UserCreate, UserPublic, UserUpdate
+from routers.invites import claim_invite
 
 router = APIRouter(prefix="/auth")
 
@@ -87,19 +88,20 @@ async def google_session(
     picture = str(data.get("picture") or "")
 
     existing = await db.users.find_one({"email": email}, {"_id": 0})
+    invited_role = await claim_invite(email)
     if existing:
+        new_role = "admin" if email == OWNER_EMAIL else (invited_role or existing.get("role", "viewer"))
         await db.users.update_one(
             {"id": existing["id"]},
             {"$set": {
                 "full_name": existing.get("full_name") or name,
                 "picture": picture,
                 "auth_provider": "google",
-                **({"role": "admin"} if email == OWNER_EMAIL else {}),
+                "role": new_role,
             }},
         )
         user = User(**{**existing, "full_name": existing.get("full_name") or name,
-                       "picture": picture, "auth_provider": "google",
-                       "role": "admin" if email == OWNER_EMAIL else existing.get("role", "viewer")})
+                       "picture": picture, "auth_provider": "google", "role": new_role})
     else:
         base = email.split("@")[0][:30] or "google"
         username = base
@@ -108,9 +110,9 @@ async def google_session(
         user = User(
             username=username,
             full_name=name,
-            # Pemilik aplikasi langsung administrator; akun Google lain mulai sebagai pemantau
-            # dan bisa dinaikkan perannya oleh admin di halaman Pengguna.
-            role="admin" if email == OWNER_EMAIL else "viewer",
+            # Pemilik aplikasi langsung administrator; email yang diundang memakai peran dari
+            # undangan; sisanya mulai sebagai pemantau dan bisa dinaikkan admin di halaman Pengguna.
+            role="admin" if email == OWNER_EMAIL else (invited_role or "viewer"),
             email=email,
             picture=picture,
             auth_provider="google",

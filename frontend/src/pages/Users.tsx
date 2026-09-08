@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { KeyRound, Plus, Trash2, UserCog } from "lucide-react";
+import { KeyRound, Link2, Mail, Plus, Send, Trash2, UserCog } from "lucide-react";
 import { toast } from "sonner";
 import AppShell from "@/components/AppShell";
 import { Badge } from "@/components/ui/badge";
@@ -34,6 +34,7 @@ import { ApiError, apiDelete, apiGet, apiPatch, apiPost } from "@/lib/api";
 import { waktu } from "@/lib/format";
 import { ROLE_HINTS, ROLE_LABELS, useAuth } from "@/lib/session";
 import type { CurrentUser, Role } from "@/lib/session";
+import type { Invite, InviteSendResult } from "@/lib/types";
 
 const ROLE_VARIANT: Record<Role, "default" | "secondary" | "outline"> = {
   admin: "default",
@@ -54,6 +55,11 @@ export default function Users() {
   const [password, setPassword] = useState("");
   const [pwTarget, setPwTarget] = useState<CurrentUser | null>(null);
   const [newPassword, setNewPassword] = useState("");
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteName, setInviteName] = useState("");
+  const [inviteRole, setInviteRole] = useState<Role>("penjualan");
+  const [inviteMessage, setInviteMessage] = useState("");
 
   const usersQ = useQuery({ queryKey: ["users"], queryFn: () => apiGet<CurrentUser[]>("/auth/users") });
   const users = usersQ.isError ? [] : usersQ.data ?? [];
@@ -64,6 +70,45 @@ export default function Users() {
       : fallback;
 
   const invalidate = () => void qc.invalidateQueries({ queryKey: ["users"] });
+
+  const invitesQ = useQuery({ queryKey: ["invites"], queryFn: () => apiGet<Invite[]>("/invites") });
+  const invites = invitesQ.isError ? [] : invitesQ.data ?? [];
+  const invalidateInvites = () => void qc.invalidateQueries({ queryKey: ["invites"] });
+
+  const notifyInvite = (res: InviteSendResult) => {
+    invalidateInvites();
+    if (res.email_sent) toast.success(res.detail);
+    else toast.warning(res.detail, { duration: 8000 });
+  };
+
+  const invite = useMutation({
+    mutationFn: (body: { email: string; full_name: string; role: Role; message: string }) =>
+      apiPost<InviteSendResult>("/invites", body),
+    onSuccess: (res) => {
+      notifyInvite(res);
+      setInviteOpen(false);
+      setInviteEmail("");
+      setInviteName("");
+      setInviteMessage("");
+      setInviteRole("penjualan");
+    },
+    onError: (e) => toast.error(errMsg(e, "Gagal mengirim undangan")),
+  });
+
+  const resendInvite = useMutation({
+    mutationFn: (id: string) => apiPost<InviteSendResult>(`/invites/${id}/resend`),
+    onSuccess: notifyInvite,
+    onError: (e) => toast.error(errMsg(e, "Gagal mengirim ulang undangan")),
+  });
+
+  const removeInvite = useMutation({
+    mutationFn: (id: string) => apiDelete<{ ok: boolean }>(`/invites/${id}`),
+    onSuccess: () => {
+      invalidateInvites();
+      toast.success("Undangan dihapus");
+    },
+    onError: (e) => toast.error(errMsg(e, "Gagal menghapus undangan")),
+  });
 
   const create = useMutation({
     mutationFn: (body: { username: string; full_name: string; role: Role; password: string }) =>
@@ -137,9 +182,14 @@ export default function Users() {
               sisa stok.
             </p>
           </div>
-          <Button onClick={() => setOpen(true)} data-testid="btn-create-user">
-            <Plus className="size-4" /> Tambah Akun
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setInviteOpen(true)} data-testid="btn-invite-team">
+              <Mail className="size-4" /> Undang Tim
+            </Button>
+            <Button onClick={() => setOpen(true)} data-testid="btn-create-user">
+              <Plus className="size-4" /> Tambah Akun
+            </Button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -231,7 +281,186 @@ export default function Users() {
             </Table>
           </CardContent>
         </Card>
+
+        <Card className="overflow-hidden p-0">
+          <CardContent className="p-0">
+            <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+              <Mail className="size-4 text-primary" />
+              <p className="text-sm font-semibold">Undangan Tim</p>
+              <span className="font-mono text-xs text-muted-foreground">
+                ({invites.filter((i) => i.status === "MENUNGGU").length} menunggu)
+              </span>
+            </div>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Email</TableHead>
+                  <TableHead>Nama</TableHead>
+                  <TableHead>Peran</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Dikirim</TableHead>
+                  <TableHead className="text-right">Aksi</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody data-testid="table-invites-body">
+                {invites.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={6} className="py-8 text-center text-sm text-muted-foreground">
+                      Belum ada undangan. Tekan "Undang Tim" untuk mengundang staf gudang.
+                    </TableCell>
+                  </TableRow>
+                )}
+                {invites.map((i) => (
+                  <TableRow key={i.id} data-testid="invite-row">
+                    <TableCell className="font-mono text-xs" data-testid="invite-email">
+                      {i.email}
+                    </TableCell>
+                    <TableCell className="text-sm">{i.full_name || "—"}</TableCell>
+                    <TableCell>
+                      <Badge variant={ROLE_VARIANT[i.role]}>{ROLE_LABELS[i.role]}</Badge>
+                    </TableCell>
+                    <TableCell data-testid="invite-status">
+                      <span
+                        className={`font-mono text-xs ${
+                          i.status === "DITERIMA" ? "text-emerald-400" : "text-amber-400"
+                        }`}
+                      >
+                        {i.status}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {i.email_sent ? `Email terkirim · ${waktu(i.created_at)}` : "Email belum terkirim"}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label={`Salin tautan undangan ${i.email}`}
+                          data-testid="btn-copy-invite-link"
+                          onClick={() => {
+                            void navigator.clipboard?.writeText(i.invite_link);
+                            toast.success("Tautan undangan disalin");
+                          }}
+                        >
+                          <Link2 className="size-4" />
+                        </Button>
+                        {i.status !== "DITERIMA" && (
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label={`Kirim ulang undangan ${i.email}`}
+                            data-testid="btn-resend-invite"
+                            disabled={resendInvite.isPending}
+                            onClick={() => resendInvite.mutate(i.id)}
+                          >
+                            <Send className="size-4" />
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label={`Hapus undangan ${i.email}`}
+                          data-testid="btn-delete-invite"
+                          onClick={() => removeInvite.mutate(i.id)}
+                        >
+                          <Trash2 className="size-4 text-red-400" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
       </div>
+
+      <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Undang Staf Gudang</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="i-email">Email Google Staf</Label>
+              <Input
+                id="i-email"
+                type="email"
+                autoCapitalize="none"
+                placeholder="petugas.gudang@gmail.com"
+                data-testid="form-invite-email"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="i-name">Nama Lengkap</Label>
+              <Input
+                id="i-name"
+                placeholder="Budi Petugas Gudang"
+                data-testid="form-invite-name"
+                value={inviteName}
+                onChange={(e) => setInviteName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Peran saat pertama masuk</Label>
+              <Select value={inviteRole} onValueChange={(v: string) => setInviteRole(v as Role)}>
+                <SelectTrigger data-testid="form-invite-role">
+                  <SelectValue>{ROLE_LABELS[inviteRole]}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {ROLE_OPTIONS.map((r) => (
+                    <SelectItem key={r} value={r}>
+                      {ROLE_LABELS[r]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">{ROLE_HINTS[inviteRole]}</p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="i-msg">Pesan (opsional)</Label>
+              <Input
+                id="i-msg"
+                placeholder="Mulai bertugas Senin di GBB 21"
+                data-testid="form-invite-message"
+                value={inviteMessage}
+                onChange={(e) => setInviteMessage(e.target.value)}
+              />
+            </div>
+            <p className="rounded-lg border border-border bg-secondary/40 p-3 text-xs text-muted-foreground">
+              Staf tidak perlu password: mereka cukup menekan "Masuk dengan Google" memakai email
+              ini, dan langsung mendapat peran di atas.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setInviteOpen(false)} data-testid="btn-cancel-invite">
+              Batal
+            </Button>
+            <Button
+              disabled={invite.isPending}
+              data-testid="btn-submit-invite"
+              onClick={() => {
+                if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(inviteEmail.trim())) {
+                  toast.error("Masukkan alamat email yang valid");
+                  return;
+                }
+                invite.mutate({
+                  email: inviteEmail.trim().toLowerCase(),
+                  full_name: inviteName.trim(),
+                  role: inviteRole,
+                  message: inviteMessage.trim(),
+                });
+              }}
+            >
+              <Send className="size-4" />
+              {invite.isPending ? "Mengirim..." : "Kirim Undangan"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-lg">
