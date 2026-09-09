@@ -12,7 +12,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          BASE="https://management-inventory-v1-0-gsuntertimur1-5309.vercel.app"
+          BASE="https://management-inventory-v1-0-66js5961x-gsuntertimur1-5309.vercel.app"
           for i in $(seq 1 24); do
             echo "Attempt $i"
             FRONT=$(curl -sS -L -o /tmp/front -w "%{http_code}|%{url_effective}" "$BASE/" || true)
