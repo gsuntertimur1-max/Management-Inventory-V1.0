@@ -1,1 +1,1 @@
-probe single fastapi deployment
+probe after lifespan deployment
