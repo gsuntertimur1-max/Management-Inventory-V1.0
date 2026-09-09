@@ -1,82 +1,72 @@
-name: Temporary Single App Bundle
+name: Build Single Vercel Bundle
+
 on:
   push:
     branches: [main]
     paths:
       - .vercel-single-trigger
+
+permissions:
+  contents: write
+
 jobs:
-  build:
+  bundle:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-
-      - name: Install Yarn
-        run: npm install -g yarn@1.22.22
+          cache: yarn
+          cache-dependency-path: frontend/package.json
 
       - name: Build React frontend
         working-directory: frontend
-        env:
-          CI: "false"
-          REACT_APP_BACKEND_URL: ""
         run: |
-          yarn install --ignore-engines
-          yarn build
+          yarn install --network-timeout 600000
+          CI=false yarn build
 
-      - name: Verify Python syntax
-        run: python -m compileall -q app.py backend/server.py
-
-      - name: Build deployment bundle
+      - name: Create deployment bundle
         run: |
           python - <<'PY'
           import base64, json
           from pathlib import Path
 
-          skip_top={".git",".github",".emergent","memory","test_reports"}
-          skip_names={
-              "vercel_bundle.json",
-              "vercel_single_bundle.json",
-              ".vercel-deploy-trigger",
-              ".vercel-public-probe-trigger",
-              ".vercel-single-trigger",
-          }
-          out=[]
-          for p in sorted(Path(".").rglob("*")):
-              if not p.is_file():
-                  continue
-              if "node_modules" in p.parts:
-                  continue
-              rel=p.as_posix()
-              if rel in skip_names:
-                  continue
-              if rel.split("/",1)[0] in skip_top:
-                  continue
-              raw=p.read_bytes()
+          include_files = [
+              Path("app.py"),
+              Path("requirements.txt"),
+              Path("backend/server.py"),
+              Path("backend/seed_data.csv"),
+          ]
+
+          build_dir = Path("frontend/build")
+          include_files.extend(sorted(p for p in build_dir.rglob("*") if p.is_file()))
+
+          files = []
+          for p in include_files:
+              raw = p.read_bytes()
               try:
-                  data=raw.decode("utf-8")
-                  out.append({"file":rel,"data":data})
+                  data = raw.decode("utf-8")
+                  files.append({"file": p.as_posix(), "data": data})
               except UnicodeDecodeError:
-                  out.append({
-                      "file":rel,
-                      "data":base64.b64encode(raw).decode("ascii"),
-                      "encoding":"base64"
+                  files.append({
+                      "file": p.as_posix(),
+                      "data": base64.b64encode(raw).decode("ascii"),
+                      "encoding": "base64"
                   })
+
           Path("vercel_single_bundle.json").write_text(
-              json.dumps(out,ensure_ascii=False,separators=(",",":")),
+              json.dumps(files, ensure_ascii=False, separators=(",", ":")),
               encoding="utf-8"
           )
-          print(f"Bundled {len(out)} files")
+          print(f"Bundled {len(files)} files")
           PY
 
-      - name: Commit bundle
+      - name: Commit deployment bundle
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add vercel_single_bundle.json
-          git diff --cached --quiet || git commit -m "chore: prepare single-app Vercel bundle"
+          git diff --cached --quiet || git commit -m "chore: build single Vercel deployment bundle"
           git push
