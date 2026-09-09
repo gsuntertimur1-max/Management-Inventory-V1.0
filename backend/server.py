@@ -13,6 +13,7 @@ import bcrypt
 import jwt
 import httpx
 from collections import Counter
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, UploadFile, File
@@ -37,9 +38,14 @@ JWT_SECRET = os.environ["JWT_SECRET"]
 JAKARTA_TZ = ZoneInfo("Asia/Jakarta")
 GOOGLE_SESSION_URL = os.environ.get("GOOGLE_SESSION_URL", "").strip()
 
-app = FastAPI()
-# Vercel Services memasang backend pada /api dan melepas prefix tersebut
-# sebelum request diteruskan ke FastAPI.
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await initialize_app()
+    yield
+    client.close()
+
+
+app = FastAPI(lifespan=lifespan)
 api_router = APIRouter(prefix="/api")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -238,8 +244,7 @@ async def create_unique_index_safely(collection, keys, **kwargs):
         logger.error("Index unik gagal dibuat; periksa data ganda pada %s: %s", collection.name, exc)
 
 
-@app.on_event("startup")
-async def on_startup():
+async def initialize_app():
     await db.users.create_index("username", unique=True)
     await db.user_sessions.create_index("session_token")
     await db.products.create_index("sku")
@@ -766,7 +771,3 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()
