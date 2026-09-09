@@ -1,1 +1,1 @@
-build single app after dependency fix
+build single app after node_modules exclusion
