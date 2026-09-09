@@ -40,7 +40,7 @@ GOOGLE_SESSION_URL = os.environ.get("GOOGLE_SESSION_URL", "").strip()
 app = FastAPI()
 # Vercel Services memasang backend pada /api dan melepas prefix tersebut
 # sebelum request diteruskan ke FastAPI.
-api_router = APIRouter()
+api_router = APIRouter(prefix="/api")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
