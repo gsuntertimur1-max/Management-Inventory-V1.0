@@ -1,0 +1,30 @@
+name: Temporary Public Probe
+on:
+  push:
+    branches: [main]
+    paths:
+      - .vercel-public-probe-trigger
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe production
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://management-inventory-v1-0-gsuntertimur1-5309.vercel.app"
+          for i in $(seq 1 24); do
+            echo "Attempt $i"
+            FRONT=$(curl -sS -L -o /tmp/front -w "%{http_code}|%{url_effective}" "$BASE/" || true)
+            API=$(curl -sS -L -o /tmp/api -w "%{http_code}|%{url_effective}" "$BASE/api/" || true)
+            echo "FRONT=$FRONT"
+            echo "API=$API"
+            echo "API_BODY=$(head -c 500 /tmp/api || true)"
+            if echo "$FRONT" | grep -q '^200|' && echo "$API" | grep -q '^200|' && grep -q 'Bulog Gudang API' /tmp/api && ! grep -q 'Log in to Vercel' /tmp/front; then
+              echo "PUBLIC_PROBE_OK"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "PUBLIC_PROBE_FAILED"
+          exit 1
