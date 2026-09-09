@@ -49,6 +49,8 @@ jobs:
           for p in sorted(Path(".").rglob("*")):
               if not p.is_file():
                   continue
+              if "node_modules" in p.parts:
+                  continue
               rel=p.as_posix()
               if rel in skip_names:
                   continue
