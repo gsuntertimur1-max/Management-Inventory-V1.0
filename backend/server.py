@@ -489,6 +489,22 @@ async def logout(request: Request, response: Response):
     return {"ok": True}
 
 
+# ---------- settings ----------
+@api_router.get("/settings")
+async def get_settings(user: dict = Depends(get_current_user)):
+    doc = await db.settings.find_one({"_id": "app"}, {"_id": 0})
+    return {**DEFAULT_SETTINGS, **(doc or {})}
+
+
+@api_router.put("/settings")
+async def update_settings(body: SettingsBody, admin: dict = Depends(require_admin)):
+    payload = body.model_dump()
+    payload["updated_at"] = now_iso()
+    payload["updated_by"] = admin["name"]
+    await db.settings.update_one({"_id": "app"}, {"$set": payload}, upsert=True)
+    return {**DEFAULT_SETTINGS, **payload}
+
+
 # ---------- users (admin) ----------
 @api_router.get("/users")
 async def list_users(user: dict = Depends(require_admin)):
@@ -759,6 +775,75 @@ async def create_po(body: POBody, user: dict = Depends(require_write)):
     }
     await db.purchase_orders.insert_one(dict(doc))
     return doc
+
+
+# ---------- exports ----------
+@api_router.get("/export/products.xlsx")
+async def export_products(user: dict = Depends(get_current_user)):
+    products = await db.products.find({}, {"_id": 0}).sort("name", 1).to_list(5000)
+    headers = [
+        "Nama Produk", "SKU", "Kategori", "Stok Baik", "Stok Rusak", "Satuan",
+        "Harga Modal", "Nilai Total", "Supplier", "Lokasi", "Stok Minimum",
+        "Berat/Unit (kg)", "Kedaluwarsa"
+    ]
+    rows = [
+        [
+            p.get("name", ""), p.get("sku", ""), p.get("category", ""),
+            p.get("stock", 0), p.get("damaged", 0), p.get("unit", ""),
+            p.get("cost", 0), (p.get("stock", 0) or 0) * (p.get("cost", 0) or 0),
+            p.get("supplier", ""), p.get("location", ""), p.get("min", 0),
+            p.get("weight", 0), p.get("exp", "")
+        ]
+        for p in products
+    ]
+    output = build_xlsx(headers, rows, "Daftar Produk")
+    filename = f"daftar_produk_{operational_now().strftime('%Y%m%d_%H%M')}.xlsx"
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@api_router.get("/export/transactions.xlsx")
+async def export_transactions_current_month(user: dict = Depends(get_current_user)):
+    now = operational_now()
+    start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if start.month == 12:
+        end = start.replace(year=start.year + 1, month=1)
+    else:
+        end = start.replace(month=start.month + 1)
+
+    transactions = await db.transactions.find(
+        {
+            "time": {
+                "$gte": start.astimezone(timezone.utc).isoformat(),
+                "$lt": end.astimezone(timezone.utc).isoformat(),
+            }
+        },
+        {"_id": 0},
+    ).sort("time", 1).to_list(10000)
+
+    headers = [
+        "Waktu", "No. Referensi", "Antrian", "Tipe", "Kondisi", "Produk", "SKU",
+        "Perubahan", "Pihak Terkait", "No. Polisi", "Dicatat Oleh", "Keterangan"
+    ]
+    rows = [
+        [
+            t.get("time", ""), t.get("ref", ""), t.get("antrian", ""),
+            t.get("type", ""), t.get("kondisi", ""), t.get("product", ""),
+            t.get("sku", ""), t.get("change", 0), t.get("penerima", ""),
+            t.get("polisi", ""), t.get("operator", ""), t.get("keterangan", "")
+        ]
+        for t in transactions
+    ]
+    output = build_xlsx(headers, rows, "Riwayat Transaksi")
+    filename = f"riwayat_transaksi_{start.strftime('%Y_%m')}.xlsx"
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ---------- import & admin ----------
