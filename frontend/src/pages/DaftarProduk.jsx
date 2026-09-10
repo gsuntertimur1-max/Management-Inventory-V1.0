@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Upload, Download, Plus, Search, Pencil, Trash2, X } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { formatRp, formatNum, catColor, CATEGORIES } from '../mock';
@@ -7,6 +8,7 @@ import { toast } from 'sonner';
 const empty = { name: '', sku: '', category: 'F&B / Bahan Makanan', stock: 0, damaged: 0, cost: 0, exp: '', location: '', supplier: '', min: 0, unit: 'Pcs', weight: 0, secondary: 'Dus' };
 
 const DaftarProduk = () => {
+  const navigate = useNavigate();
   const { products, suppliers, addProduct, updateProduct, deleteProduct } = useData();
   const [q, setQ] = useState('');
   const [cat, setCat] = useState('SEMUA');
@@ -31,7 +33,7 @@ const DaftarProduk = () => {
           <p className="text-[#8b93a1] mt-2">{filtered.length} dari {products.length} produk ditampilkan</p>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => toast.info('Fitur import tersedia di halaman Import Data')} className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-[#242f3d] hover:bg-[#141a24] transition-colors"><Upload size={15} /> Import Data</button>
+          <button onClick={() => navigate('/import')} className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-[#242f3d] hover:bg-[#141a24] transition-colors"><Upload size={15} /> Import Data</button>
           <button onClick={() => toast.success('Excel diunduh (mock)')} className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-[#242f3d] hover:bg-[#141a24] transition-colors"><Download size={15} /> Unduh Excel</button>
           <button data-testid="add-product-btn" onClick={() => setModal({ mode: 'add', data: { ...empty } })} className="btn-primary inline-flex items-center gap-2 text-sm font-semibold px-4 py-2.5 rounded-lg"><Plus size={15} /> Tambah Produk</button>
         </div>
