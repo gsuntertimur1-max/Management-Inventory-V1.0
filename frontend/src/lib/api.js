@@ -20,6 +20,23 @@ export const setToken = (token) => {
   else localStorage.removeItem('bulog_token');
 };
 
+export const downloadApiFile = async (path, fallbackName = 'download.xlsx') => {
+  const response = await api.get(path, { responseType: 'blob' });
+  const disposition = response.headers?.['content-disposition'] || '';
+  const match = disposition.match(/filename="?([^";]+)"?/i);
+  const filename = match?.[1] || fallbackName;
+
+  const url = URL.createObjectURL(response.data);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+  return filename;
+};
+
 export const apiError = (e) => {
   const detail = e?.response?.data?.detail;
   if (typeof detail === 'string') return detail;
