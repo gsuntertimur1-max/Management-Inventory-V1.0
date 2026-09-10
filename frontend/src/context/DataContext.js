@@ -58,11 +58,31 @@ export const DataProvider = ({ children }) => {
   const deleteProduct = async (id) => { await api.delete(`/products/${id}`); await fetchAll(); };
   const addTransaction = async (payload) => { await api.post('/transactions', payload); await fetchAll(); };
   const updateSJStatus = async (id, status) => { await api.put(`/surat-jalan/${id}/status`, { status }); await fetchAll(); };
-  const addSupplier = async (sup) => { await api.post('/suppliers', sup); await fetchAll(); };
+  // Update only the affected slice after small CRUD operations. This avoids
+  // refetching every dashboard dataset after adding a supplier/user.
+  const addSupplier = async (sup) => {
+    const { data } = await api.post('/suppliers', sup);
+    setState((prev) => ({ ...prev, suppliers: [...prev.suppliers, data] }));
+    return data;
+  };
   const addPO = async (po) => { await api.post('/purchase-orders', po); await fetchAll(); };
-  const addUser = async (u) => { await api.post('/users', u); await fetchAll(); };
-  const updateUser = async (id, patch) => { await api.put(`/users/${id}`, patch); await fetchAll(); };
-  const deleteUser = async (id) => { await api.delete(`/users/${id}`); await fetchAll(); };
+  const addUser = async (u) => {
+    const { data } = await api.post('/users', u);
+    setState((prev) => ({ ...prev, users: [...prev.users, data] }));
+    return data;
+  };
+  const updateUser = async (id, patch) => {
+    const { data } = await api.put(`/users/${id}`, patch);
+    setState((prev) => ({
+      ...prev,
+      users: prev.users.map((item) => item.id === id ? data : item),
+    }));
+    return data;
+  };
+  const deleteUser = async (id) => {
+    await api.delete(`/users/${id}`);
+    setState((prev) => ({ ...prev, users: prev.users.filter((item) => item.id !== id) }));
+  };
   const changeUserPassword = async (id, password) => { await api.put(`/users/${id}/password`, { password }); };
   const resetData = async () => { await api.post('/admin/reset-data'); await fetchAll(); };
   const importCsv = async (file) => {
