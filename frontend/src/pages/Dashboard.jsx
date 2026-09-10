@@ -14,15 +14,36 @@ const StatCard = ({ icon: Icon, label, value, sub, color }) => (
 );
 
 const Dashboard = () => {
-  const { products, transactions } = useData();
+  const { products, transactions, settings } = useData();
   const navigate = useNavigate();
   const [q, setQ] = useState('');
 
   const totalUnits = products.reduce((a, p) => a + p.stock, 0);
   const totalDamaged = products.reduce((a, p) => a + (p.damaged || 0), 0);
   const totalValue = products.reduce((a, p) => a + p.stock * p.cost, 0);
-  const activity30 = transactions.reduce((a, t) => a + Math.abs(t.change), 0);
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  const activity30 = transactions
+    .filter((t) => new Date(t.time) >= thirtyDaysAgo)
+    .reduce((a, t) => a + Math.abs(t.change), 0);
   const lowStock = products.filter((p) => p.stock <= p.min);
+
+  const expiringProducts = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return products
+      .map((product) => {
+        if (!product.exp) return null;
+        const expiry = new Date(product.exp);
+        if (Number.isNaN(expiry.getTime())) return null;
+        expiry.setHours(0, 0, 0, 0);
+        const days = Math.ceil((expiry - today) / 86400000);
+        if (days > 30) return null;
+        return { ...product, daysToExpiry: days };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.daysToExpiry - b.daysToExpiry);
+  }, [products]);
 
   const chart = useMemo(() => {
     const days = [];
@@ -64,27 +85,64 @@ const Dashboard = () => {
         <StatCard icon={Activity} label="Aktivitas 30 Hari" value={formatNum(activity30)} sub="Unit masuk & keluar" color="#eab308" />
       </div>
 
-      <div className="card-surface p-6">
-        <div className="flex items-center gap-3 mb-4">
-          <AlertTriangle size={20} className="text-[#eab308]" />
-          <h2 className="font-display text-xl font-bold">Peringatan Stok Minimum</h2>
-          <span className="text-xs px-2.5 py-1 rounded-full bg-[#eab308]/15 text-[#eab308] font-medium">{lowStock.length} barang</span>
-        </div>
-        {lowStock.length === 0 ? (
-          <p className="text-sm text-[#8b93a1]">Semua stok masih di atas batas minimum. Tidak ada yang perlu direstock.</p>
-        ) : (
-          <div className="space-y-2">
-            {lowStock.map((p) => (
-              <div key={p.id} className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-lg bg-[#0b0f17] border border-[#1a222e]">
-                <div><div className="font-medium text-sm">{p.name}</div><div className="label-mono text-[10px]">{p.sku} · {p.location}</div></div>
-                <div className="font-mono text-sm"><span className="text-[#eab308] font-semibold">{p.stock}</span> / min {p.min} {p.unit} <span className="text-[#6b7688] block text-[10px]">Saran pesan {Math.max(p.min - p.stock + Math.ceil(p.min * 0.2), p.min)} {p.unit}</span></div>
-                <div className="text-xs text-[#8b93a1]">Supplier<div className="text-[#c7d0dc]">{p.supplier}</div></div>
-                <button onClick={() => navigate('/po')} className="btn-primary inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg"><ClipboardList size={13} /> Buat PO</button>
-              </div>
-            ))}
+      {(settings?.lowAlert ?? true) && (
+        <div className="card-surface p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <AlertTriangle size={20} className="text-[#eab308]" />
+            <h2 className="font-display text-xl font-bold">Peringatan Stok Minimum</h2>
+            <span className="text-xs px-2.5 py-1 rounded-full bg-[#eab308]/15 text-[#eab308] font-medium">{lowStock.length} barang</span>
           </div>
-        )}
-      </div>
+          {lowStock.length === 0 ? (
+            <p className="text-sm text-[#8b93a1]">Semua stok masih di atas batas minimum. Tidak ada yang perlu direstock.</p>
+          ) : (
+            <div className="space-y-2">
+              {lowStock.map((p) => (
+                <div key={p.id} className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-lg bg-[#0b0f17] border border-[#1a222e]">
+                  <div><div className="font-medium text-sm">{p.name}</div><div className="label-mono text-[10px]">{p.sku} · {p.location}</div></div>
+                  <div className="font-mono text-sm"><span className="text-[#eab308] font-semibold">{p.stock}</span> / min {p.min} {p.unit} <span className="text-[#6b7688] block text-[10px]">Saran pesan {Math.max(p.min - p.stock + Math.ceil(p.min * 0.2), p.min)} {p.unit}</span></div>
+                  <div className="text-xs text-[#8b93a1]">Supplier<div className="text-[#c7d0dc]">{p.supplier}</div></div>
+                  <button onClick={() => navigate('/po')} className="btn-primary inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg"><ClipboardList size={13} /> Buat PO</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {(settings?.expAlert ?? true) && (
+        <div className="card-surface p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <AlertTriangle size={20} className="text-[#ef4444]" />
+            <h2 className="font-display text-xl font-bold">Peringatan Kedaluwarsa</h2>
+            <span className="text-xs px-2.5 py-1 rounded-full bg-[#ef4444]/15 text-[#ef4444] font-medium">{expiringProducts.length} barang</span>
+          </div>
+          {expiringProducts.length === 0 ? (
+            <p className="text-sm text-[#8b93a1]">Tidak ada barang yang kedaluwarsa atau jatuh tempo dalam 30 hari.</p>
+          ) : (
+            <div className="space-y-2">
+              {expiringProducts.slice(0, 10).map((p) => (
+                <div key={p.id} className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-lg bg-[#0b0f17] border border-[#1a222e]">
+                  <div>
+                    <div className="font-medium text-sm">{p.name}</div>
+                    <div className="label-mono text-[10px]">{p.sku} · {p.location}</div>
+                  </div>
+                  <div className="text-sm">
+                    <div className="font-mono">{p.exp}</div>
+                    <div className={`text-xs ${p.daysToExpiry < 0 ? 'text-[#ef4444]' : p.daysToExpiry <= 7 ? 'text-[#f97316]' : 'text-[#eab308]'}`}>
+                      {p.daysToExpiry < 0
+                        ? `Lewat ${Math.abs(p.daysToExpiry)} hari`
+                        : p.daysToExpiry === 0
+                          ? 'Kedaluwarsa hari ini'
+                          : `${p.daysToExpiry} hari lagi`}
+                    </div>
+                  </div>
+                  <div className="font-mono text-sm">{formatNum(p.stock)} {p.unit}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="card-surface p-6">
         <h2 className="font-display text-xl font-bold mb-4">Sisa Stok per Barang (A → Z)</h2>
