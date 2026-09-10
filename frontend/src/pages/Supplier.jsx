@@ -6,7 +6,7 @@ import { catColor, formatNum } from '../mock';
 import { toast } from 'sonner';
 
 const Supplier = () => {
-  const { suppliers, products, addSupplier } = useData();
+  const { suppliers, products, addSupplier, canManageMasterData } = useData();
   const [modal, setModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ name: '', pic: '', phone: '', email: '', address: '', category: 'Beras' });
@@ -52,13 +52,13 @@ const Supplier = () => {
           <h1 className="font-display text-4xl font-bold">Supplier</h1>
           <p className="text-[#8b93a1] mt-2">{suppliers.length} supplier terdaftar</p>
         </div>
-        <button
+        {canManageMasterData && <button
           data-testid="add-supplier-btn"
           onClick={() => setModal(true)}
           className="btn-primary inline-flex items-center gap-2 text-sm font-semibold px-4 py-2.5 rounded-lg"
         >
           <Plus size={15} /> Tambah Supplier
-        </button>
+        </button>}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">

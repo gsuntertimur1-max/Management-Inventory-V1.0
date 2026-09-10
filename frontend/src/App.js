@@ -17,6 +17,7 @@ import Pengguna from './pages/Pengguna';
 import Pengaturan from './pages/Pengaturan';
 import ImportData from './pages/ImportData';
 import TumpukanStok from './pages/TumpukanStok';
+import { hasPermission, roleLabel } from './lib/permissions';
 
 const Loading = () => (
   <div className="app-bg flex items-center justify-center min-h-screen">
@@ -24,10 +25,23 @@ const Loading = () => (
   </div>
 );
 
-const Protected = ({ children }) => {
+const AccessDenied = ({ userRole }) => (
+  <div className="card-surface p-8 text-center max-w-xl mx-auto">
+    <div className="label-mono mb-2">Akses Terbatas</div>
+    <h1 className="font-display text-2xl font-bold">Menu tidak tersedia untuk peran ini</h1>
+    <p className="text-[#8b93a1] mt-2">
+      Peran Anda ({roleLabel(userRole)}) tidak memiliki hak untuk membuka proses ini.
+    </p>
+  </div>
+);
+
+const Protected = ({ children, permission }) => {
   const { user, checking } = useData();
   if (checking) return <Loading />;
   if (!user) return <Navigate to="/login" replace />;
+  if (permission && !hasPermission(user.role, permission)) {
+    return <Layout><AccessDenied userRole={user.role} /></Layout>;
+  }
   return <Layout>{children}</Layout>;
 };
 
@@ -37,16 +51,16 @@ function AppRoutes() {
       <Route path="/login" element={<Login />} />
       <Route path="/" element={<Protected><Dashboard /></Protected>} />
       <Route path="/produk" element={<Protected><DaftarProduk /></Protected>} />
-      <Route path="/import" element={<Protected><ImportData /></Protected>} />
+      <Route path="/import" element={<Protected permission="masterWrite"><ImportData /></Protected>} />
       <Route path="/tumpukan" element={<Protected><TumpukanStok /></Protected>} />
-      <Route path="/catat" element={<Protected><CatatStok /></Protected>} />
-      <Route path="/pengeluaran" element={<Protected><Pengeluaran /></Protected>} />
+      <Route path="/catat" element={<Protected permission="operations"><CatatStok /></Protected>} />
+      <Route path="/pengeluaran" element={<Protected permission="outbound"><Pengeluaran /></Protected>} />
       <Route path="/riwayat" element={<Protected><Riwayat /></Protected>} />
       <Route path="/po" element={<Protected><PurchaseOrder /></Protected>} />
       <Route path="/supplier" element={<Protected><Supplier /></Protected>} />
       <Route path="/antrian" element={<Protected><LayarAntrian /></Protected>} />
-      <Route path="/pengguna" element={<Protected><Pengguna /></Protected>} />
-      <Route path="/pengaturan" element={<Protected><Pengaturan /></Protected>} />
+      <Route path="/pengguna" element={<Protected permission="users"><Pengguna /></Protected>} />
+      <Route path="/pengaturan" element={<Protected permission="settings"><Pengaturan /></Protected>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

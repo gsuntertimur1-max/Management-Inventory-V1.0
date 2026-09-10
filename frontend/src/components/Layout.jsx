@@ -2,19 +2,20 @@ import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { LayoutGrid, Boxes, Layers, ArrowLeftRight, Send, History, ClipboardList, Truck, MonitorSmartphone, Users, Settings, PlusCircle, LogOut } from 'lucide-react';
 import { useData } from '../context/DataContext';
+import { hasPermission, roleLabel } from '../lib/permissions';
 
 const NAV = [
   { to: '/', label: 'Dashboard', icon: LayoutGrid },
   { to: '/produk', label: 'Daftar Produk', icon: Boxes },
   { to: '/tumpukan', label: 'Tumpukan Stok', icon: Layers },
-  { to: '/catat', label: 'Catat Stok', icon: ArrowLeftRight },
-  { to: '/pengeluaran', label: 'Pengeluaran', icon: Send },
+  { to: '/catat', label: 'Catat Stok', icon: ArrowLeftRight, permission: 'operations' },
+  { to: '/pengeluaran', label: 'Pengeluaran', icon: Send, permission: 'outbound' },
   { to: '/riwayat', label: 'Riwayat', icon: History },
   { to: '/po', label: 'Purchase Order', icon: ClipboardList },
   { to: '/supplier', label: 'Supplier', icon: Truck },
   { to: '/antrian', label: 'Layar Antrian', icon: MonitorSmartphone },
-  { to: '/pengguna', label: 'Pengguna', icon: Users },
-  { to: '/pengaturan', label: 'Pengaturan', icon: Settings },
+  { to: '/pengguna', label: 'Pengguna', icon: Users, permission: 'users' },
+  { to: '/pengaturan', label: 'Pengaturan', icon: Settings, permission: 'settings' },
 ];
 
 const Layout = ({ children }) => {
@@ -36,7 +37,7 @@ const Layout = ({ children }) => {
           </div>
 
           <nav className="flex-1 flex flex-wrap items-center justify-center gap-1 px-2">
-            {NAV.map((n) => (
+            {NAV.filter((n) => !n.permission || hasPermission(user?.role, n.permission)).map((n) => (
               <NavLink key={n.to} to={n.to} end={n.to === '/'} className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
                 <n.icon size={15} />
                 <span>{n.label}</span>
@@ -51,7 +52,7 @@ const Layout = ({ children }) => {
             <div className="flex items-center gap-2 pl-2">
               <div className="text-right leading-tight hidden md:block">
                 <div className="text-[13px] font-semibold">{user?.name}</div>
-                <div className="label-mono text-[9px]">{user?.role}</div>
+                <div className="label-mono text-[9px]">{roleLabel(user?.role)}</div>
               </div>
               <button data-testid="logout-btn" onClick={logout} title="Keluar" className="w-9 h-9 rounded-lg border border-[#242f3d] flex items-center justify-center text-[#8b93a1] hover:text-white hover:bg-[#141a24] transition-colors">
                 <LogOut size={16} />

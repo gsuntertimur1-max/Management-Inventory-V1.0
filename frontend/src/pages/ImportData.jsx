@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 const TEMPLATE = 'sku;nama;kategori;satuan;harga_beli;supplier;lokasi;stok_minimum;berat_unit;kemasan_sekunder\nB0010001X;CONTOH BERAS MEDIUM 5 KG;Beras;Pcs;0;Nama Supplier;Gudang I;0;5;Karung\n';
 
 const ImportData = () => {
-  const { importCsv } = useData();
+  const { importCsv, canManageMasterData } = useData();
   const [file, setFile] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -34,6 +34,20 @@ const ImportData = () => {
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  if (!canManageMasterData) {
+    return (
+      <div className="space-y-6" data-testid="import-page">
+        <div>
+          <div className="label-mono mb-2">Master Data</div>
+          <h1 className="font-display text-4xl font-bold">Import Master SKU</h1>
+        </div>
+        <div className="card-surface p-8 text-center">
+          <p className="text-[#8b93a1]">Peran Anda hanya dapat melihat data. Import master hanya dapat dilakukan Superadmin atau Admin.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6" data-testid="import-page">

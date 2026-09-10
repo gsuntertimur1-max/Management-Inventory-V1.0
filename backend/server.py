@@ -109,7 +109,10 @@ async def next_sequence(key: str, floor: int = 0) -> int:
 
 
 def public_user(doc: dict) -> dict:
-    return {k: v for k, v in doc.items() if k not in ("_id", "password_hash")}
+    result = {k: v for k, v in doc.items() if k not in ("_id", "password_hash")}
+    if "role" in result:
+        result["role_label"] = role_label(result.get("role"))
+    return result
 
 
 async def get_current_user(request: Request) -> dict:
@@ -145,17 +148,72 @@ async def get_current_user(request: Request) -> dict:
 
 
 async def require_admin(user: dict = Depends(get_current_user)) -> dict:
-    if user.get("role") != "Administrator":
+    if canonical_role(user.get("role")) != ROLE_SUPERADMIN:
         raise HTTPException(status_code=403, detail="Hanya Administrator yang diizinkan")
     return user
 
 
-WRITE_ROLES = {"Administrator", "Supervisor", "Operator"}
+ROLE_SUPERADMIN = "Administrator"
+ROLE_ADMIN = "Supervisor"
+ROLE_OPERATOR = "Operator"
+ROLE_QC = "QC"
+ROLE_VIEWER = "Pemantau"
+
+ROLE_ALIASES = {
+    "Superadmin": ROLE_SUPERADMIN,
+    "Admin": ROLE_ADMIN,
+}
+
+ROLE_LABELS = {
+    ROLE_SUPERADMIN: "Superadmin",
+    ROLE_ADMIN: "Admin",
+    ROLE_OPERATOR: "Operator",
+    ROLE_QC: "QC",
+    ROLE_VIEWER: "Pemantau",
+}
+
+
+def canonical_role(role: Optional[str]) -> str:
+    value = (role or ROLE_VIEWER).strip()
+    return ROLE_ALIASES.get(value, value)
+
+
+ROLE_PERMISSIONS = {
+    ROLE_SUPERADMIN: {"masterWrite", "inbound", "outbound", "rebagging", "qc", "users", "settings"},
+    ROLE_ADMIN: {"masterWrite", "inbound", "outbound", "rebagging"},
+    ROLE_OPERATOR: {"rebagging"},
+    ROLE_QC: {"qc"},
+    ROLE_VIEWER: set(),
+}
+
+
+def has_role_permission(role: Optional[str], permission: str) -> bool:
+    canonical = canonical_role(role)
+    if permission == "currentWrite":
+        return canonical in {ROLE_SUPERADMIN, ROLE_ADMIN}
+    if permission == "operations":
+        return canonical in {ROLE_SUPERADMIN, ROLE_ADMIN}
+    return permission in ROLE_PERMISSIONS.get(canonical, set())
+
+
+def role_label(role: Optional[str]) -> str:
+    canonical = canonical_role(role)
+    return ROLE_LABELS.get(canonical, canonical)
+
+
+# The current Railway branch has no separate Rebagging/QC endpoints yet. The
+# generic write dependency therefore covers only the currently exposed master,
+# inbound, and outbound operations. Future modules should use the dedicated
+# permission helpers above instead of widening this set.
+WRITE_ROLES = {ROLE_SUPERADMIN, ROLE_ADMIN}
 
 
 async def require_write(user: dict = Depends(get_current_user)) -> dict:
-    if user.get("role") not in WRITE_ROLES:
-        raise HTTPException(status_code=403, detail="Peran Pemantau hanya dapat melihat data")
+    if not has_role_permission(user.get("role"), "currentWrite"):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Peran {role_label(user.get('role'))} tidak memiliki hak untuk mengubah data pada modul ini",
+        )
     return user
 
 
@@ -273,14 +331,14 @@ class UserCreate(BaseModel):
     name: str
     username: str
     email: str = ''
-    role: Literal['Administrator', 'Supervisor', 'Operator', 'Pemantau'] = 'Operator'
+    role: Literal['Administrator', 'Supervisor', 'Operator', 'QC', 'Pemantau', 'Superadmin', 'Admin'] = 'Operator'
     password: str
 
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None
     email: Optional[str] = None
-    role: Optional[Literal['Administrator', 'Supervisor', 'Operator', 'Pemantau']] = None
+    role: Optional[Literal['Administrator', 'Supervisor', 'Operator', 'QC', 'Pemantau', 'Superadmin', 'Admin']] = None
     active: Optional[bool] = None
 
 
@@ -472,7 +530,7 @@ async def google_session(body: SessionBody, response: Response):
 
 @api_router.get("/auth/me")
 async def me(user: dict = Depends(get_current_user)):
-    return user
+    return public_user(user)
 
 
 @api_router.post("/auth/logout")
@@ -508,7 +566,8 @@ async def update_settings(body: SettingsBody, admin: dict = Depends(require_admi
 # ---------- users (admin) ----------
 @api_router.get("/users")
 async def list_users(user: dict = Depends(require_admin)):
-    return await db.users.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", 1).to_list(500)
+    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", 1).to_list(500)
+    return [public_user(item) for item in users]
 
 
 @api_router.post("/users")
@@ -522,7 +581,7 @@ async def create_user(body: UserCreate, admin: dict = Depends(require_admin)):
         raise HTTPException(status_code=400, detail="Username sudah digunakan")
     doc = {
         "id": new_id(), "name": body.name.strip(), "username": username,
-        "email": body.email.strip(), "role": body.role, "active": True,
+        "email": body.email.strip(), "role": canonical_role(body.role), "active": True,
         "auth_provider": "local", "password_hash": hash_password(body.password),
         "created_at": now_iso(),
     }
@@ -536,17 +595,19 @@ async def update_user(user_id: str, body: UserUpdate, admin: dict = Depends(requ
     target = await db.users.find_one({"id": user_id}, {"_id": 0})
     if not target:
         raise HTTPException(status_code=404, detail="Pengguna tidak ditemukan")
+    if "role" in patch:
+        patch["role"] = canonical_role(patch["role"])
     if target["id"] == admin["id"] and (patch.get("role") not in (None, "Administrator") or patch.get("active") is False):
         raise HTTPException(status_code=400, detail="Tidak dapat menurunkan/menonaktifkan akun sendiri")
     if patch:
         await db.users.update_one({"id": user_id}, {"$set": patch})
     updated = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
-    return updated
+    return public_user(updated)
 
 
 @api_router.put("/users/{user_id}/password")
 async def change_password(user_id: str, body: PasswordBody, user: dict = Depends(get_current_user)):
-    if user.get("role") != "Administrator" and user["id"] != user_id:
+    if not has_role_permission(user.get("role"), "users") and user["id"] != user_id:
         raise HTTPException(status_code=403, detail="Tidak diizinkan mengubah password pengguna lain")
     if len(body.password) < 6:
         raise HTTPException(status_code=400, detail="Password minimal 6 karakter")
@@ -564,7 +625,7 @@ async def delete_user(user_id: str, admin: dict = Depends(require_admin)):
     target = await db.users.find_one({"id": user_id})
     if not target:
         raise HTTPException(status_code=404, detail="Pengguna tidak ditemukan")
-    if target.get("role") == "Administrator":
+    if canonical_role(target.get("role")) == ROLE_SUPERADMIN:
         admins = await db.users.count_documents({"role": "Administrator"})
         if admins <= 1:
             raise HTTPException(status_code=400, detail="Minimal harus ada satu Administrator")
@@ -898,4 +959,3 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-

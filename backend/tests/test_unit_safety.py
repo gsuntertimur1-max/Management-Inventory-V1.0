@@ -34,3 +34,30 @@ def test_service_routes_do_not_duplicate_api_prefix():
     paths = {route.path for route in server.app.routes}
     assert "/auth/login" in paths
     assert "/api/auth/login" not in paths
+
+
+@pytest.mark.parametrize(
+    "role, permission, expected",
+    [
+        ("Administrator", "currentWrite", True),
+        ("Superadmin", "currentWrite", True),
+        ("Supervisor", "inbound", True),
+        ("Supervisor", "outbound", True),
+        ("Supervisor", "qc", False),
+        ("Operator", "rebagging", True),
+        ("Operator", "inbound", False),
+        ("Operator", "outbound", False),
+        ("QC", "qc", True),
+        ("QC", "inbound", False),
+        ("QC", "outbound", False),
+    ],
+)
+def test_final_role_permissions(role, permission, expected):
+    assert server.has_role_permission(role, permission) is expected
+
+
+def test_role_aliases_and_labels_preserve_legacy_values():
+    assert server.canonical_role("Superadmin") == "Administrator"
+    assert server.canonical_role("Admin") == "Supervisor"
+    assert server.role_label("Administrator") == "Superadmin"
+    assert server.role_label("Supervisor") == "Admin"

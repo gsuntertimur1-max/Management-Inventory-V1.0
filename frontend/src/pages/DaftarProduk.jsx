@@ -27,7 +27,7 @@ const masterPayload = (data) => ({
 
 const DaftarProduk = () => {
   const navigate = useNavigate();
-  const { products, suppliers, addProduct, updateProduct, deleteProduct } = useData();
+  const { products, suppliers, addProduct, updateProduct, deleteProduct, canManageMasterData } = useData();
   const [q, setQ] = useState('');
   const [cat, setCat] = useState('SEMUA');
   const [modal, setModal] = useState(null);
@@ -80,9 +80,9 @@ const DaftarProduk = () => {
           <p className="text-[#8b93a1] mt-2">{filtered.length} dari {products.length} produk ditampilkan</p>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => navigate('/import')} className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-[#242f3d] hover:bg-[#141a24] transition-colors"><Upload size={15} /> Import Data</button>
+          {canManageMasterData && <button onClick={() => navigate('/import')} className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-[#242f3d] hover:bg-[#141a24] transition-colors"><Upload size={15} /> Import Data</button>}
           <button onClick={exportProducts} disabled={exporting} className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-[#242f3d] hover:bg-[#141a24] transition-colors disabled:opacity-60 disabled:cursor-wait"><Download size={15} /> {exporting ? 'Menyiapkan…' : 'Unduh Excel'}</button>
-          <button data-testid="add-product-btn" onClick={() => setModal({ mode: 'add', data: { ...empty } })} className="btn-primary inline-flex items-center gap-2 text-sm font-semibold px-4 py-2.5 rounded-lg"><Plus size={15} /> Tambah Produk</button>
+          {canManageMasterData && <button data-testid="add-product-btn" onClick={() => setModal({ mode: 'add', data: { ...empty } })} className="btn-primary inline-flex items-center gap-2 text-sm font-semibold px-4 py-2.5 rounded-lg"><Plus size={15} /> Tambah Produk</button>}
         </div>
       </div>
 
@@ -112,10 +112,10 @@ const DaftarProduk = () => {
                   <td className="py-3 pr-4 font-mono whitespace-nowrap">{formatRp(p.cost)}</td>
                   <td className="py-3 pr-4 font-mono whitespace-nowrap">{formatRp((p.stock || 0) * (p.cost || 0))}</td>
                   <td className="py-3 pr-4 text-xs"><div className="text-[#c7d0dc]">{p.supplier || '—'}</div><div className="text-[#6b7688]">{p.location || '—'}</div></td>
-                  <td className="py-3 pr-4"><div className="flex gap-1.5">
+                  <td className="py-3 pr-4">{canManageMasterData ? <div className="flex gap-1.5">
                     <button data-testid={`edit-product-btn-${p.sku}`} onClick={() => setModal({ mode: 'edit', data: { ...p } })} className="w-8 h-8 rounded-lg border border-[#242f3d] flex items-center justify-center text-[#8b93a1] hover:text-[#60a5fa] hover:border-[#2563eb] transition-colors"><Pencil size={14} /></button>
                     <button data-testid={`delete-product-btn-${p.sku}`} onClick={() => { if (window.confirm('Hapus master produk ini?')) { deleteProduct(p.id); toast.success('Produk dihapus'); } }} className="w-8 h-8 rounded-lg border border-[#242f3d] flex items-center justify-center text-[#8b93a1] hover:text-[#ef4444] hover:border-[#ef4444] transition-colors"><Trash2 size={14} /></button>
-                  </div></td>
+                  </div> : <span className="text-xs text-[#6b7688]">Lihat saja</span>}</td>
                 </tr>
               ))}
             </tbody>

@@ -8,9 +8,9 @@ import { useNavigate } from 'react-router-dom';
 const emptyRow = () => ({ productId: '', qty: 1, exp: '' });
 
 const CatatStok = () => {
-  const { products, suppliers, purchaseOrders, addReceipt, createOutboundLoad, canWrite } = useData();
+  const { products, suppliers, purchaseOrders, addReceipt, createOutboundLoad, canInbound, canOutbound } = useData();
   const navigate = useNavigate();
-  const [type, setType] = useState('MASUK');
+  const [type, setType] = useState(canInbound ? 'MASUK' : 'KELUAR');
   const [rows, setRows] = useState([emptyRow()]);
   const [poId, setPoId] = useState('');
   const [party, setParty] = useState('');
@@ -37,6 +37,12 @@ const CatatStok = () => {
     setPengambil('');
     setKondisi('BAIK');
     setKet('');
+  };
+
+  const chooseType = (nextType) => {
+    if (nextType === 'MASUK' && !canInbound) return;
+    if (nextType === 'KELUAR' && !canOutbound) return;
+    resetForm(nextType);
   };
 
   const setRow = (index, patch) => setRows((prev) => prev.map((row, i) => i === index ? { ...row, ...patch } : row));
@@ -140,11 +146,11 @@ const CatatStok = () => {
     }
   };
 
-  if (!canWrite) {
+  if (!canInbound && !canOutbound) {
     return (
       <div className="space-y-6">
         <div><div className="label-mono mb-2">Operasional Gudang</div><h1 className="font-display text-4xl font-bold">Pencatatan Stok Masuk / Keluar</h1></div>
-        <div className="card-surface p-8 text-center"><p className="text-[#8b93a1]">Peran Pemantau hanya dapat melihat data.</p></div>
+        <div className="card-surface p-8 text-center"><p className="text-[#8b93a1]">Peran Anda tidak memiliki hak untuk memproses inbound atau outbound.</p></div>
       </div>
     );
   }
@@ -160,9 +166,9 @@ const CatatStok = () => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="card-surface p-6 lg:col-span-2">
           <h2 className="font-display text-lg font-bold mb-4">Formulir Transaksi</h2>
-          <div className="grid grid-cols-2 gap-2 mb-5 p-1 bg-[#0b0f17] rounded-xl border border-[#1a222e]">
-            <button onClick={() => resetForm('MASUK')} className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold ${type === 'MASUK' ? 'bg-[#22c55e]/15 text-[#22c55e]' : 'text-[#8b93a1]'}`}><ArrowDownLeft size={16} /> Stok Masuk</button>
-            <button onClick={() => resetForm('KELUAR')} className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold ${type === 'KELUAR' ? 'bg-[#ef4444]/15 text-[#ef4444]' : 'text-[#8b93a1]'}`}><ArrowUpRight size={16} /> Stok Keluar</button>
+          <div className={`grid ${canInbound && canOutbound ? 'grid-cols-2' : 'grid-cols-1'} gap-2 mb-5 p-1 bg-[#0b0f17] rounded-xl border border-[#1a222e]`}>
+            {canInbound && <button onClick={() => chooseType('MASUK')} className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold ${type === 'MASUK' ? 'bg-[#22c55e]/15 text-[#22c55e]' : 'text-[#8b93a1]'}`}><ArrowDownLeft size={16} /> Stok Masuk</button>}
+            {canOutbound && <button onClick={() => chooseType('KELUAR')} className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold ${type === 'KELUAR' ? 'bg-[#ef4444]/15 text-[#ef4444]' : 'text-[#8b93a1]'}`}><ArrowUpRight size={16} /> Stok Keluar</button>}
           </div>
 
           {type === 'MASUK' && (

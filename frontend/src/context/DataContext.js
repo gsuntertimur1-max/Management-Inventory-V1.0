@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import api, { setToken, apiError } from '../lib/api';
+import { hasPermission, roleLabel } from '../lib/permissions';
 
 const DataContext = createContext(null);
 export const useData = () => useContext(DataContext);
@@ -38,7 +39,7 @@ export const DataProvider = ({ children }) => {
         api.get('/purchase-orders-v2'),
         api.get('/transactions'),
         api.get('/settings'),
-        user?.role === 'Administrator' ? api.get('/users') : Promise.resolve({ data: [] }),
+        hasPermission(user?.role, 'users') ? api.get('/users') : Promise.resolve({ data: [] }),
       ]);
       setState({
         products: p.data,
@@ -159,7 +160,17 @@ export const DataProvider = ({ children }) => {
 
   return (
     <DataContext.Provider value={{
-      user, checking, canWrite: ['Administrator', 'Supervisor', 'Operator'].includes(user?.role),
+      user,
+      checking,
+      roleLabel: roleLabel(user?.role),
+      canWrite: hasPermission(user?.role, 'currentWrite'),
+      canManageMasterData: hasPermission(user?.role, 'masterWrite'),
+      canInbound: hasPermission(user?.role, 'inbound'),
+      canOutbound: hasPermission(user?.role, 'outbound'),
+      canRebagging: hasPermission(user?.role, 'rebagging'),
+      canQC: hasPermission(user?.role, 'qc'),
+      canManageUsers: hasPermission(user?.role, 'users'),
+      canManageSettings: hasPermission(user?.role, 'settings'),
       login, logout, ...state, fetchAll,
       addProduct, updateProduct, deleteProduct, addTransaction, addReceipt,
       createOutboundLoad, startOutboundLoad, completeOutboundLoad, updateSJStatus,

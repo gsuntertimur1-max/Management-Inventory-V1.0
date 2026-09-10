@@ -17,8 +17,8 @@ const Toggle = ({ on, onClick, disabled = false }) => (
 );
 
 const Pengaturan = () => {
-  const { user, settings, updateSettings, resetData } = useData();
-  const isAdmin = user?.role === 'Administrator';
+  const { user, settings, updateSettings, resetData, canManageSettings } = useData();
+  const isAdmin = canManageSettings;
   const [warehouse, setWarehouse] = useState(settings?.warehouse || 'Gudang Sunter Timur I & II');
   const [address, setAddress] = useState(settings?.address || 'Jl. Sunter Agung, Jakarta Utara');
   const [savingProfile, setSavingProfile] = useState(false);

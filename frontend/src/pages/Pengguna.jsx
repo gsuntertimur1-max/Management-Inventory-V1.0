@@ -4,9 +4,9 @@ import { Plus, X, ShieldCheck, User as UserIcon, KeyRound, Trash2, Power } from 
 import { useData } from '../context/DataContext';
 import { apiError } from '../lib/api';
 import { toast } from 'sonner';
+import { ROLE_COLORS, ROLE_LABELS, canonicalRole, roleLabel } from '../lib/permissions';
 
-const ROLE_COLOR = { 'Administrator': '#ef4444', 'Supervisor': '#a855f7', 'Operator': '#3b82f6', 'Pemantau': '#8b93a1' };
-const ROLES = ['Administrator', 'Supervisor', 'Operator', 'Pemantau'];
+const ROLES = ['Administrator', 'Supervisor', 'Operator', 'QC', 'Pemantau'];
 
 const inputCls = 'w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]';
 
@@ -34,8 +34,8 @@ const Modal = ({ title, onClose, children, locked = false }) => createPortal(
 );
 
 const Pengguna = () => {
-  const { user, users, addUser, deleteUser, updateUser, changeUserPassword } = useData();
-  const isAdmin = user?.role === 'Administrator';
+  const { user, users, addUser, deleteUser, updateUser, changeUserPassword, canManageUsers } = useData();
+  const isAdmin = canManageUsers;
   const [modal, setModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ name: '', username: '', email: '', role: 'Operator', password: '' });
@@ -90,7 +90,7 @@ const Pengguna = () => {
   const changeRole = async (u, role) => {
     try {
       await updateUser(u.id, { role });
-      toast.success(`Peran ${u.name} diubah menjadi ${role}`);
+      toast.success(`Peran ${u.name} diubah menjadi ${roleLabel(role)}`);
     } catch (e) { toast.error(apiError(e)); }
   };
 
@@ -100,11 +100,15 @@ const Pengguna = () => {
         <div>
           <div className="label-mono mb-2">Kontrol Akses</div>
           <h1 className="font-display text-4xl font-bold">Pengguna</h1>
-          <p className="text-[#8b93a1] mt-2">{users.length} akun terdaftar · {isAdmin ? 'kelola akun, peran & password' : 'hanya Administrator yang dapat mengelola akun'}</p>
+          <p className="text-[#8b93a1] mt-2">{users.length} akun terdaftar · {isAdmin ? 'kelola akun, peran & password' : 'hanya Superadmin yang dapat mengelola akun'}</p>
         </div>
         {isAdmin && (
           <button data-testid="add-user-btn" onClick={() => setModal(true)} className="btn-primary inline-flex items-center gap-2 text-sm font-semibold px-4 py-2.5 rounded-lg"><Plus size={15} /> Tambah Pengguna</button>
         )}
+      </div>
+
+      <div className="card-surface p-4 text-xs text-[#aab4c4]">
+        <span className="font-semibold text-white">Aturan akses:</span> Superadmin semua proses · Admin inbound, rebagging, mutasi & outbound (tanpa QC) · Operator rebagging saja · QC QC saja.
       </div>
 
       <div className="card-surface p-6">
@@ -119,11 +123,11 @@ const Pengguna = () => {
                   <td className="py-3 pr-4 text-[#aab4c4]">{u.email || '—'}</td>
                   <td className="py-3 pr-4">
                     {isAdmin && u.id !== user?.id ? (
-                      <select data-testid={`role-select-${u.username}`} value={u.role} onChange={(e) => changeRole(u, e.target.value)} className="bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-1.5 text-xs outline-none focus:border-[#2563eb]" style={{ color: ROLE_COLOR[u.role] }}>
-                        {ROLES.map((r) => <option key={r}>{r}</option>)}
+                      <select data-testid={`role-select-${u.username}`} value={canonicalRole(u.role)} onChange={(e) => changeRole(u, e.target.value)} className="bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-1.5 text-xs outline-none focus:border-[#2563eb]" style={{ color: ROLE_COLORS[u.role] || '#8b93a1' }}>
+                        {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
                       </select>
                     ) : (
-                      <span className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium" style={{ background: `${ROLE_COLOR[u.role]}22`, color: ROLE_COLOR[u.role] }}><ShieldCheck size={12} /> {u.role}</span>
+                      <span className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium" style={{ background: `${ROLE_COLORS[u.role] || '#8b93a1'}22`, color: ROLE_COLORS[u.role] || '#8b93a1' }}><ShieldCheck size={12} /> {roleLabel(u.role)}</span>
                     )}
                   </td>
                   <td className="py-3 pr-4"><span className={`text-xs px-2.5 py-1 rounded-full ${u.active ? 'bg-[#22c55e]/15 text-[#22c55e]' : 'bg-[#6b7688]/15 text-[#8b93a1]'}`}>{u.active ? 'Aktif' : 'Nonaktif'}</span></td>
@@ -154,7 +158,7 @@ const Pengguna = () => {
               <div key={k}><label className="text-xs font-medium mb-1 block text-[#8b93a1]">{l}</label><input data-testid={`user-form-${k}`} value={form[k]} onChange={(e) => setForm((prev) => ({ ...prev, [k]: e.target.value }))} className={inputCls} /></div>
             ))}
             <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Password (min. 6 karakter)</label><input data-testid="user-form-password" type="password" value={form.password} onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value }))} className={inputCls} /></div>
-            <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Peran</label><select data-testid="user-form-role" value={form.role} onChange={(e) => setForm((prev) => ({ ...prev, role: e.target.value }))} className={inputCls}>{ROLES.map((r) => <option key={r}>{r}</option>)}</select></div>
+            <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Peran</label><select data-testid="user-form-role" value={form.role} onChange={(e) => setForm((prev) => ({ ...prev, role: e.target.value }))} className={inputCls}>{ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}</select></div>
           </div>
           <div className="flex justify-end gap-2 mt-6">
             <button onClick={() => setModal(false)} disabled={saving} className="px-4 py-2.5 rounded-lg border border-[#242f3d] text-sm hover:bg-[#141a24] disabled:opacity-50">Batal</button>
