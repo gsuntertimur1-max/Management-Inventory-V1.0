@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import timedelta, timezone
+import re
 from typing import List, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -29,6 +29,7 @@ class OutboundCreateInput(BaseModel):
     party: str
     ref: str = ""
     polisi: str = ""
+    pengambil: str = ""
     kondisi: Literal["BAIK", "RUSAK"] = "BAIK"
     keterangan: str = ""
 
@@ -48,6 +49,29 @@ async def _reserved_qty(product_id: str, kondisi: str, exclude_id: str = "") -> 
     return total
 
 
+def _loading_unit_from_products(products: List[dict]) -> tuple[str, str]:
+    """Bentuk label unit pemuatan dan prefix antrean, contoh: Unit 17 / 17."""
+    labels = []
+    queue_prefix = ""
+    for product in products:
+        location = str(product.get("location") or "").strip()
+        if not location:
+            continue
+        match = re.search(r"unit\s*0*(\d+)", location, re.IGNORECASE)
+        if not match:
+            match = re.search(r"\b(\d{1,3})\b", location)
+        if match:
+            number = str(int(match.group(1)))
+            label = f"Unit {number}"
+            if not queue_prefix:
+                queue_prefix = number
+        else:
+            label = location
+        if label not in labels:
+            labels.append(label)
+    return " / ".join(labels) if labels else "-", queue_prefix or "A"
+
+
 @router.get("/outbound-loads")
 async def list_outbound_loads(user: dict = Depends(get_current_user)):
     return await db.outbound_loads.find({}, {"_id": 0}).sort("created_at", -1).to_list(2000)
@@ -60,12 +84,16 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         raise HTTPException(status_code=400, detail="Penerima barang wajib diisi")
 
     requested = defaultdict(float)
+    item_order = []
     for item in body.items:
+        if item.productId not in requested:
+            item_order.append(item.productId)
         requested[item.productId] += float(item.qty)
 
     products = {}
     load_items = []
-    for product_id, qty in requested.items():
+    for product_id in item_order:
+        qty = requested[product_id]
         product = await db.products.find_one({"id": product_id}, {"_id": 0})
         if not product:
             raise HTTPException(status_code=404, detail="Produk pengeluaran tidak ditemukan")
@@ -93,27 +121,42 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
             "unit": product.get("unit", ""),
             "weight": weight,
             "berat": weight * qty,
+            "location": product.get("location", ""),
         })
+
+    ordered_products = [products[product_id] for product_id in item_order]
+    unit_loading, queue_prefix = _loading_unit_from_products(ordered_products)
 
     op_now = operational_now()
     operational_date = op_now.strftime("%Y-%m-%d")
-    day_start = op_now.replace(hour=0, minute=0, second=0, microsecond=0)
-    day_end = day_start + timedelta(days=1)
-    day_query = {
-        "created_at": {
-            "$gte": day_start.astimezone(timezone.utc).isoformat(),
-            "$lt": day_end.astimezone(timezone.utc).isoformat(),
-        }
-    }
-    queue_floor = await max_suffix(db.outbound_loads, "antrian", "A-", day_query)
-    queue_number = await next_sequence(f"loading-queue:{operational_date}", queue_floor)
+
+    queue_floor = await max_suffix(
+        db.outbound_loads,
+        "antrian",
+        f"{queue_prefix}-",
+        {"operational_date": operational_date},
+    )
+    queue_number = await next_sequence(
+        f"loading-queue:{operational_date}:{queue_prefix}",
+        queue_floor,
+    )
+
+    bon_prefix = f"BM-{op_now.strftime('%Y%m%d')}-"
+    bon_floor = await max_suffix(
+        db.outbound_loads,
+        "bon_no",
+        bon_prefix,
+        {"operational_date": operational_date},
+    )
+    bon_number = await next_sequence(f"bon-muat:{operational_date}", bon_floor)
 
     total_unit = sum(float(item["qty"]) for item in load_items)
     total_berat = sum(float(item["berat"]) for item in load_items)
     created_at = now_iso()
     doc = {
         "id": new_id(),
-        "antrian": f"A-{queue_number:03d}",
+        "bon_no": f"{bon_prefix}{bon_number:03d}",
+        "antrian": f"{queue_prefix}-{queue_number:03d}",
         "operational_date": operational_date,
         "created_at": created_at,
         "started_at": "",
@@ -122,6 +165,8 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         "penerima": party,
         "ref": body.ref.strip(),
         "polisi": body.polisi.strip(),
+        "pengambil": body.pengambil.strip(),
+        "unit_loading": unit_loading,
         "kondisi": body.kondisi,
         "keterangan": body.keterangan.strip(),
         "items": load_items,
@@ -204,6 +249,7 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
                 "load_id": load["id"],
                 "time": completed_at,
                 "ref": load.get("ref") or load.get("antrian", ""),
+                "bon_no": load.get("bon_no", ""),
                 "antrian": load.get("antrian", ""),
                 "type": "KELUAR",
                 "kondisi": kondisi,
@@ -212,6 +258,7 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
                 "change": -qty,
                 "unit": product.get("unit", ""),
                 "penerima": load.get("party", "-"),
+                "pengambil": load.get("pengambil", ""),
                 "polisi": load.get("polisi", ""),
                 "operator": user.get("name", ""),
                 "keterangan": load.get("keterangan", ""),
@@ -228,11 +275,14 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
             "operation_id": operation_id,
             "load_id": load["id"],
             "no": sj_no,
+            "bon_no": load.get("bon_no", ""),
             "antrian": load.get("antrian", ""),
             "operational_date": load.get("operational_date", op_now.strftime("%Y-%m-%d")),
             "time": completed_at,
             "penerima": load.get("party", "-"),
+            "pengambil": load.get("pengambil", ""),
             "polisi": load.get("polisi", ""),
+            "unit_loading": load.get("unit_loading", ""),
             "operator": user.get("name", ""),
             "status": "Selesai",
             "ref": load.get("ref", ""),
@@ -243,6 +293,7 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
                     "qty": float(item.get("qty", 0) or 0),
                     "unit": item.get("unit", ""),
                     "berat": float(item.get("berat", 0) or 0),
+                    "location": item.get("location", ""),
                     "sec": "",
                 }
                 for item in load.get("items", [])
