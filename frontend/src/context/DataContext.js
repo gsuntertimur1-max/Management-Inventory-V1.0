@@ -4,7 +4,23 @@ import api, { setToken, apiError } from '../lib/api';
 const DataContext = createContext(null);
 export const useData = () => useContext(DataContext);
 
-const EMPTY = { products: [], suppliers: [], suratJalan: [], purchaseOrders: [], users: [], transactions: [] };
+const DEFAULT_SETTINGS = {
+  warehouse: 'Gudang Sunter Timur I & II',
+  address: 'Jl. Sunter Agung, Jakarta Utara',
+  lowAlert: true,
+  expAlert: true,
+  autoQueue: true,
+};
+
+const EMPTY = {
+  products: [],
+  suppliers: [],
+  suratJalan: [],
+  purchaseOrders: [],
+  users: [],
+  transactions: [],
+  settings: DEFAULT_SETTINGS,
+};
 
 export const DataProvider = ({ children }) => {
   const [user, setUser] = useState(null);
@@ -13,12 +29,24 @@ export const DataProvider = ({ children }) => {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [p, s, sj, po, t] = await Promise.all([
-        api.get('/products'), api.get('/suppliers'), api.get('/surat-jalan'),
-        api.get('/purchase-orders'), api.get('/transactions'),
+      const [p, suppliersRes, sj, po, t, settingsRes, usersRes] = await Promise.all([
+        api.get('/products'),
+        api.get('/suppliers'),
+        api.get('/surat-jalan'),
+        api.get('/purchase-orders'),
+        api.get('/transactions'),
+        api.get('/settings'),
+        user?.role === 'Administrator' ? api.get('/users') : Promise.resolve({ data: [] }),
       ]);
-      const users = user?.role === 'Administrator' ? (await api.get('/users')).data : [];
-      setState({ products: p.data, suppliers: s.data, suratJalan: sj.data, purchaseOrders: po.data, users, transactions: t.data });
+      setState({
+        products: p.data,
+        suppliers: suppliersRes.data,
+        suratJalan: sj.data,
+        purchaseOrders: po.data,
+        users: usersRes.data,
+        transactions: t.data,
+        settings: { ...DEFAULT_SETTINGS, ...settingsRes.data },
+      });
     } catch (e) {
       console.error('fetchAll failed', e);
     }
@@ -84,6 +112,11 @@ export const DataProvider = ({ children }) => {
     setState((prev) => ({ ...prev, users: prev.users.filter((item) => item.id !== id) }));
   };
   const changeUserPassword = async (id, password) => { await api.put(`/users/${id}/password`, { password }); };
+  const updateSettings = async (payload) => {
+    const { data } = await api.put('/settings', payload);
+    setState((prev) => ({ ...prev, settings: { ...DEFAULT_SETTINGS, ...data } }));
+    return data;
+  };
   const resetData = async () => { await api.post('/admin/reset-data'); await fetchAll(); };
   const importCsv = async (file) => {
     const fd = new FormData();
@@ -98,7 +131,7 @@ export const DataProvider = ({ children }) => {
       user, checking, canWrite: ['Administrator', 'Supervisor', 'Operator'].includes(user?.role),
       login, logout, ...state, fetchAll,
       addProduct, updateProduct, deleteProduct, addTransaction, updateSJStatus,
-      addSupplier, addPO, addUser, updateUser, deleteUser, changeUserPassword, resetData, importCsv,
+      addSupplier, addPO, addUser, updateUser, deleteUser, changeUserPassword, updateSettings, resetData, importCsv,
     }}>
       {children}
     </DataContext.Provider>
