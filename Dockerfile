@@ -1,8 +1,8 @@
 FROM node:20-bookworm-slim AS frontend-build
 WORKDIR /app/frontend
 
-COPY frontend/package.json frontend/yarn.lock ./
-RUN yarn install --frozen-lockfile --network-timeout 600000
+COPY frontend/package.json ./
+RUN yarn install --network-timeout 600000
 
 COPY frontend/ ./
 RUN CI=false yarn build
