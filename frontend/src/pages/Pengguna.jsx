@@ -11,10 +11,7 @@ const ROLES = ['Administrator', 'Supervisor', 'Operator', 'Pemantau'];
 const inputCls = 'w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]';
 
 const Modal = ({ title, onClose, children, locked = false }) => createPortal(
-  <div
-    className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 sm:p-6 overflow-y-auto"
-    onClick={() => !locked && onClose()}
-  >
+  <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 sm:p-6 overflow-y-auto">
     <div
       className="card-surface w-full max-w-md p-6 fade-up max-h-[calc(100dvh-3rem)] overflow-y-auto"
       onClick={(e) => e.stopPropagation()}
