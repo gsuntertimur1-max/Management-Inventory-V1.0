@@ -5,8 +5,10 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.server import app
 from backend.inventory_flow import router as inventory_flow_router
+from backend.master_products import router as master_products_router
 
 app.include_router(inventory_flow_router)
+app.include_router(master_products_router)
 
 ROOT_DIR = Path(__file__).resolve().parent
 BUILD_DIR = ROOT_DIR / "frontend" / "build"
