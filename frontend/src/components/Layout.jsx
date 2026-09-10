@@ -26,7 +26,9 @@ const Layout = ({ children }) => {
       <header className="sticky top-0 z-40 backdrop-blur-xl bg-[#070a10]/80 border-b border-[#161d29]">
         <div className="max-w-[1440px] mx-auto px-6 py-3 flex items-center gap-4">
           <div className="flex items-center gap-3 shrink-0">
-            <div className="w-11 h-11 rounded-xl bg-white flex items-center justify-center font-display font-bold text-[#1e40af] text-sm shadow-lg">bulog</div>
+            <div className="w-14 h-11 rounded-xl bg-white px-1.5 py-1 flex items-center justify-center shadow-lg overflow-hidden">
+              <img src="/bulog-sunter.png" alt="BULOG Sunter Timur I & II" className="w-full h-full object-contain" />
+            </div>
             <div className="leading-tight">
               <div className="font-display font-bold text-[15px] tracking-tight">BULOG</div>
               <div className="label-mono text-[9px]">{settings?.warehouse || 'Gudang Sunter Timur I & II'}</div>
