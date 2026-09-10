@@ -18,6 +18,18 @@ const escapeHtml = (value) => String(value ?? '')
   .replaceAll('"', '&quot;')
   .replaceAll("'", '&#039;');
 
+const printDateWib = (value) => {
+  try {
+    return new Intl.DateTimeFormat('id-ID', {
+      timeZone: 'Asia/Jakarta',
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    }).format(new Date(value || Date.now())).replace(',', '');
+  } catch (_) {
+    return String(value || '');
+  }
+};
+
 const Pengeluaran = () => {
   const { outboundLoads, suratJalan, startOutboundLoad, completeOutboundLoad } = useData();
   const navigate = useNavigate();
@@ -25,63 +37,71 @@ const Pengeluaran = () => {
   const [busyId, setBusyId] = useState('');
 
   const list = outboundLoads.filter((load) => filter === 'Semua Status' || load.status === filter);
-
   const findFinalSJ = (load) => suratJalan.find((sj) => sj.id === load.surat_jalan_id || sj.load_id === load.id);
 
-  const printBonMuat = (load) => {
-    const rows = (load.items || []).map((item) => `
-      <div class="item">
-        <div class="name">${escapeHtml(item.name)}</div>
-        <div class="line"><span>${escapeHtml(formatNum(item.qty))} ${escapeHtml(item.unit || '')}</span><span>${escapeHtml(formatNum(item.berat || 0))} kg</span></div>
-      </div>
-    `).join('');
-
-    const w = window.open('', '_blank', 'width=420,height=760');
+  const writeBonMuat = (load, targetWindow) => {
+    const w = targetWindow || window.open('', '_blank', 'width=420,height=760');
     if (!w) {
       toast.error('Popup diblokir browser. Izinkan popup untuk mencetak Bon Muat.');
-      return;
+      return false;
     }
-    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Bon Muat ${escapeHtml(load.antrian)}</title><style>
-      @page { size: 80mm auto; margin: 3mm; }
+
+    const logoUrl = `${window.location.origin}/bulog-sunter.png`;
+    const itemNames = (load.items || []).map((item) => `<div class="product-name">${escapeHtml(item.name)}</div>`).join('');
+    const colly = (load.items || []).map((item) => `${escapeHtml(formatNum(item.qty))} ${escapeHtml(item.unit || '')}`).join(' + ') || '-';
+
+    w.document.open();
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Bon Muat ${escapeHtml(load.antrian || '')}</title><style>
+      @page { size: 80mm auto; margin: 2.5mm 3mm 3mm; }
       * { box-sizing: border-box; }
-      body { width: 74mm; margin: 0 auto; color: #000; font-family: Arial, sans-serif; font-size: 11px; }
-      .center { text-align: center; }
-      .title { font-size: 16px; font-weight: 800; margin-top: 2mm; }
-      .queue-label { font-size: 11px; margin-top: 3mm; }
-      .queue { font-size: 36px; line-height: 1; font-weight: 900; letter-spacing: 1px; margin: 1mm 0 3mm; }
-      .sep { border-top: 1px dashed #000; margin: 2.5mm 0; }
-      .meta { display: grid; grid-template-columns: 20mm 1fr; gap: 1mm 1.5mm; }
-      .meta b { word-break: break-word; }
-      .item { margin: 2mm 0; }
-      .name { font-weight: 700; }
-      .line { display: flex; justify-content: space-between; gap: 3mm; margin-top: .5mm; }
-      .totals { font-weight: 700; }
-      .warning { text-align: center; font-size: 10px; font-weight: 800; border: 1px solid #000; padding: 2mm; margin-top: 3mm; }
-      .small { font-size: 9px; }
+      html, body { margin: 0; padding: 0; }
+      body { width: 74mm; margin: 0 auto; color: #000; background:#fff; font-family: Arial, Helvetica, sans-serif; font-size: 10.5px; line-height: 1.25; }
+      .logo { width: 46mm; max-height: 18mm; object-fit: contain; display:block; margin:0 auto 1.5mm; }
+      .center { text-align:center; }
+      .title { font-size: 14px; font-weight: 900; margin: 1mm 0 3mm; }
+      .label { font-size: 9px; font-weight: 700; text-transform: uppercase; }
+      .bon-no { font-size: 12px; font-weight: 900; margin: .7mm 0 2.5mm; overflow-wrap:anywhere; }
+      .queue { font-size: 31px; line-height: 1; font-weight: 900; letter-spacing: 1px; margin: 1mm 0 3mm; }
+      .rule { border-top: 1px dashed #000; margin: 2.5mm 0; }
+      .field { margin: 1.6mm 0; }
+      .field-name { font-size: 9px; font-weight: 700; margin-bottom: .4mm; }
+      .field-value { font-size: 10.5px; font-weight: 700; overflow-wrap:anywhere; }
+      .product-name { font-size: 11px; font-weight: 900; margin: .7mm 0; }
+      .grid { display:grid; grid-template-columns: 18mm 1fr; gap:1.2mm; align-items:start; margin:1mm 0; }
+      .grid .k { font-size:9px; }
+      .grid .v { font-size:10px; font-weight:700; overflow-wrap:anywhere; }
+      .footer { text-align:center; margin-top:3mm; font-size:9.5px; }
+      .footer strong { display:block; margin-bottom:1mm; }
     </style></head><body>
-      <div class="center"><div><b>PERUM BULOG</b></div><div>Gudang Sunter Timur I & II</div><div class="title">BON MUAT</div><div class="queue-label">NOMOR ANTRIAN</div><div class="queue">${escapeHtml(load.antrian)}</div></div>
-      <div class="sep"></div>
-      <div class="meta">
-        <span>Tanggal</span><b>${escapeHtml(formatDate(load.started_at || load.created_at))}</b>
-        <span>Tujuan</span><b>${escapeHtml(load.party || '-')}</b>
-        <span>No. Polisi</span><b>${escapeHtml(load.polisi || '-')}</b>
-        <span>Referensi</span><b>${escapeHtml(load.ref || '-')}</b>
-        <span>Kondisi</span><b>${escapeHtml(load.kondisi || 'BAIK')}</b>
-      </div>
-      <div class="sep"></div>
-      <b>BARANG</b>${rows}
-      <div class="sep"></div>
-      <div class="line totals"><span>Total Jenis</span><span>${escapeHtml((load.items || []).length)}</span></div>
-      <div class="line totals"><span>Total Unit</span><span>${escapeHtml(formatNum(load.total_unit || 0))}</span></div>
-      <div class="line totals"><span>Total Berat</span><span>${escapeHtml(formatNum(load.total_berat || 0))} kg</span></div>
-      <div class="sep"></div>
-      <div class="small">Petugas: ${escapeHtml(load.started_by || load.created_by || '-')}</div>
-      ${load.keterangan ? `<div class="small">Ket: ${escapeHtml(load.keterangan)}</div>` : ''}
-      <div class="warning">BON MUAT — BUKAN SURAT JALAN</div>
+      <img class="logo" src="${escapeHtml(logoUrl)}" alt="BULOG" />
+      <div class="center title">BON MUAT GBB SUNTER TIMUR I</div>
+
+      <div class="center label">NOMOR BON MUAT</div>
+      <div class="center bon-no">${escapeHtml(load.bon_no || '-')}</div>
+      <div class="center label">NOMOR ANTRIAN</div>
+      <div class="center queue">${escapeHtml(load.antrian || '-')}</div>
+
+      <div class="rule"></div>
+      <div class="field"><div class="field-name">Tanggal Cetak:</div><div class="field-value">${escapeHtml(printDateWib(Date.now()))}</div></div>
+      <div class="field"><div class="field-name">Nama Barang:</div>${itemNames || '<div class="field-value">-</div>'}</div>
+
+      <div class="grid"><div class="k">Colly:</div><div class="v">${colly}</div></div>
+      <div class="grid"><div class="k">Tonase:</div><div class="v">${escapeHtml(formatNum(load.total_berat || 0))} Kg</div></div>
+      <div class="grid"><div class="k">Pemuatan:</div><div class="v">${escapeHtml(load.unit_loading || '-')}</div></div>
+
+      <div class="rule"></div>
+      <div class="grid"><div class="k">Nomor SO:</div><div class="v">${escapeHtml(load.ref || '-')}</div></div>
+      <div class="field"><div class="field-name">Tujuan / A.N:</div><div class="field-value">${escapeHtml(load.party || '-')}</div></div>
+      <div class="grid"><div class="k">No. Plat:</div><div class="v">${escapeHtml(load.polisi || '-')}</div></div>
+      <div class="grid"><div class="k">Pengambil:</div><div class="v">${escapeHtml(load.pengambil || '-')}</div></div>
+
+      <div class="rule"></div>
+      <div class="footer"><strong>Serahkan bon ini ke petugas pemuatan</strong>Terima Kasih - GBB Sunter Timur I</div>
     </body></html>`);
     w.document.close();
     w.focus();
-    setTimeout(() => w.print(), 250);
+    setTimeout(() => { try { w.print(); } catch (_) {} }, 450);
+    return true;
   };
 
   const printSuratJalan = (sj) => {
@@ -95,32 +115,41 @@ const Pengeluaran = () => {
       toast.error('Popup diblokir browser. Izinkan popup untuk mencetak Surat Jalan.');
       return;
     }
+    const logoUrl = `${window.location.origin}/bulog-sunter.png`;
     w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(sj.no)}</title><style>
       @page { size: A4; margin: 14mm; } * { box-sizing: border-box; } body { font-family: Arial, sans-serif; color:#111; margin:0; }
-      .header { display:flex; justify-content:space-between; border-bottom:2px solid #111; padding-bottom:10px; margin-bottom:14px; }
-      .company { font-size:20px; font-weight:800; } .warehouse { font-size:11px; margin-top:3px; } .title { font-size:24px; font-weight:800; }
+      .header { display:flex; justify-content:space-between; align-items:center; border-bottom:2px solid #111; padding-bottom:10px; margin-bottom:14px; }
+      .brand { display:flex; align-items:center; gap:12px; } .brand img { width:115px; max-height:58px; object-fit:contain; }
+      .warehouse { font-size:11px; margin-top:3px; } .title { font-size:24px; font-weight:800; }
       .meta { display:grid; grid-template-columns:1fr 1fr; gap:7px 24px; margin-bottom:16px; } .meta div { display:grid; grid-template-columns:115px 1fr; font-size:12px; } .meta span { color:#555; }
       table { width:100%; border-collapse:collapse; font-size:12px; } th,td { border:1px solid #333; padding:7px; } th { background:#f0f0f0; text-align:left; } .right{text-align:right;}
       .signatures { display:grid; grid-template-columns:1fr 1fr; gap:80px; margin-top:36px; text-align:center; font-size:12px; } .space { height:70px; }
     </style></head><body>
-      <div class="header"><div><div class="company">PERUM BULOG</div><div class="warehouse">Gudang Sunter Timur I & II</div></div><div class="title">SURAT JALAN</div></div>
-      <div class="meta"><div><span>No. Surat Jalan</span><b>${escapeHtml(sj.no)}</b></div><div><span>Antrian</span><b>${escapeHtml(sj.antrian || '-')}</b></div><div><span>Waktu Terbit</span><b>${escapeHtml(formatDate(sj.time))}</b></div><div><span>Penerima</span><b>${escapeHtml(sj.penerima || '-')}</b></div><div><span>No. Polisi</span><b>${escapeHtml(sj.polisi || '-')}</b></div><div><span>Referensi</span><b>${escapeHtml(sj.ref || '-')}</b></div></div>
+      <div class="header"><div class="brand"><img src="${escapeHtml(logoUrl)}" alt="BULOG"/><div><b>PERUM BULOG</b><div class="warehouse">Gudang Sunter Timur I & II</div></div></div><div class="title">SURAT JALAN</div></div>
+      <div class="meta"><div><span>No. Surat Jalan</span><b>${escapeHtml(sj.no)}</b></div><div><span>Antrian</span><b>${escapeHtml(sj.antrian || '-')}</b></div><div><span>Waktu Terbit</span><b>${escapeHtml(formatDate(sj.time))}</b></div><div><span>Penerima</span><b>${escapeHtml(sj.penerima || '-')}</b></div><div><span>No. Polisi</span><b>${escapeHtml(sj.polisi || '-')}</b></div><div><span>Pengambil</span><b>${escapeHtml(sj.pengambil || '-')}</b></div><div><span>Referensi</span><b>${escapeHtml(sj.ref || '-')}</b></div><div><span>Bon Muat</span><b>${escapeHtml(sj.bon_no || '-')}</b></div></div>
       <table><thead><tr><th>No</th><th>Nama Barang</th><th>Jumlah</th><th>Satuan</th><th>Berat (kg)</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="2"><b>Total</b></td><td class="right"><b>${escapeHtml(formatNum(sj.unit || 0))}</b></td><td></td><td class="right"><b>${escapeHtml(formatNum(sj.berat || 0))}</b></td></tr></tfoot></table>
       <div class="signatures"><div><p>Petugas Gudang</p><div class="space"></div><b>${escapeHtml(sj.operator || '')}</b></div><div><p>Penerima</p><div class="space"></div><b>${escapeHtml(sj.penerima || '')}</b></div></div>
     </body></html>`);
     w.document.close();
     w.focus();
-    setTimeout(() => w.print(), 250);
+    setTimeout(() => w.print(), 450);
   };
 
   const startAndPrint = async (load) => {
     if (busyId) return;
+    const printWindow = window.open('', '_blank', 'width=420,height=760');
+    if (!printWindow) {
+      toast.error('Popup diblokir browser. Izinkan popup untuk mencetak Bon Muat.');
+      return;
+    }
+    printWindow.document.write('<div style="font-family:Arial;padding:24px">Menyiapkan Bon Muat...</div>');
     setBusyId(load.id);
     try {
       const updated = await startOutboundLoad(load.id);
-      printBonMuat(updated);
+      writeBonMuat(updated, printWindow);
       toast.success(`Pemuatan ${updated.antrian} dimulai · Bon Muat siap dicetak`);
     } catch (e) {
+      try { printWindow.close(); } catch (_) {}
       toast.error(e?.response?.data?.detail || 'Gagal memulai pemuatan');
     } finally {
       setBusyId('');
@@ -147,7 +176,7 @@ const Pengeluaran = () => {
         <div>
           <div className="label-mono mb-2">Pengiriman Barang</div>
           <h1 className="font-display text-4xl font-bold">Proses Pengeluaran</h1>
-          <p className="text-[#8b93a1] mt-2">Bon Muat digunakan saat proses loading. Surat Jalan baru terbit setelah pemuatan selesai.</p>
+          <p className="text-[#8b93a1] mt-2">Bon Muat diterbitkan untuk proses loading. Stok dan Surat Jalan baru diproses setelah pemuatan selesai.</p>
         </div>
         <button onClick={() => navigate('/antrian')} className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-[#242f3d] hover:bg-[#141a24]"><MonitorSmartphone size={15} /> Layar Antrian</button>
       </div>
@@ -155,31 +184,32 @@ const Pengeluaran = () => {
       <div className="card-surface p-6">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <select value={filter} onChange={(e) => setFilter(e.target.value)} className="bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none"><option>Semua Status</option><option>Menunggu</option><option>Sedang Dimuat</option><option>Selesai</option></select>
-          <div className="text-xs text-[#6b7688]">Nomor antrian A-001, A-002, ... otomatis reset setiap hari.</div>
+          <div className="text-xs text-[#6b7688]">Nomor antrean mengikuti unit pemuatan, misalnya 17-001, dan reset setiap hari.</div>
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full text-sm tbl">
-            <thead><tr className="text-left border-b border-[#1a222e]">{['Antrian', 'Waktu', 'Tujuan', 'No. Polisi', 'Referensi', 'Barang', 'Total Berat', 'Status', 'Surat Jalan', 'Aksi'].map((h) => <th key={h} className="py-2.5 pr-4 font-semibold whitespace-nowrap">{h}</th>)}</tr></thead>
+            <thead><tr className="text-left border-b border-[#1a222e]">{['Antrian', 'Bon Muat', 'Waktu', 'Tujuan', 'Pengambil', 'No. Polisi', 'Barang', 'Pemuatan', 'Status', 'Surat Jalan', 'Aksi'].map((h) => <th key={h} className="py-2.5 pr-4 font-semibold whitespace-nowrap">{h}</th>)}</tr></thead>
             <tbody>
-              {list.length === 0 ? <tr><td colSpan={10} className="py-8 text-center text-[#6b7688]">Belum ada antrian pengeluaran.</td></tr> : list.map((load) => {
+              {list.length === 0 ? <tr><td colSpan={11} className="py-8 text-center text-[#6b7688]">Belum ada antrian pengeluaran.</td></tr> : list.map((load) => {
                 const sj = findFinalSJ(load);
                 const st = STATUS[load.status] || STATUS.Menunggu;
                 return (
                   <tr key={load.id} className="tbl-row border-b border-[#131a24] align-top">
                     <td className="py-3 pr-4 font-display text-xl font-bold text-[#60a5fa] whitespace-nowrap">{load.antrian}</td>
+                    <td className="py-3 pr-4 font-mono text-xs whitespace-nowrap">{load.bon_no || '—'}</td>
                     <td className="py-3 pr-4 whitespace-nowrap text-[#8b93a1]">{formatDate(load.started_at || load.created_at)}</td>
-                    <td className="py-3 pr-4 text-[#c7d0dc]">{load.party}</td>
+                    <td className="py-3 pr-4 text-[#c7d0dc] min-w-[180px]">{load.party}</td>
+                    <td className="py-3 pr-4 whitespace-nowrap">{load.pengambil || '—'}</td>
                     <td className="py-3 pr-4 font-mono text-xs whitespace-nowrap">{load.polisi || '—'}</td>
-                    <td className="py-3 pr-4 font-mono text-xs">{load.ref || '—'}</td>
-                    <td className="py-3 pr-4 text-xs min-w-[260px]">{(load.items || []).map((item, i) => <div key={i} className="text-[#aab4c4]">{item.name} · {formatNum(item.qty)} {item.unit} <span className="text-[#6b7688]">({formatNum(item.berat || 0)} kg)</span></div>)}</td>
-                    <td className="py-3 pr-4 font-mono whitespace-nowrap">{formatNum(load.total_berat || 0)} kg</td>
+                    <td className="py-3 pr-4 text-xs min-w-[250px]">{(load.items || []).map((item, i) => <div key={i} className="text-[#aab4c4]">{item.name} · {formatNum(item.qty)} {item.unit} <span className="text-[#6b7688]">({formatNum(item.berat || 0)} kg)</span></div>)}</td>
+                    <td className="py-3 pr-4 whitespace-nowrap">{load.unit_loading || '—'}</td>
                     <td className="py-3 pr-4"><span className="text-xs px-2.5 py-1 rounded-full font-medium whitespace-nowrap" style={{ background: st.bg, color: st.c }}>{load.status}</span></td>
                     <td className="py-3 pr-4 font-mono text-xs whitespace-nowrap">{load.surat_jalan_no || 'Belum terbit'}</td>
-                    <td className="py-3 pr-4"><div className="flex flex-wrap gap-2 min-w-[260px]">
+                    <td className="py-3 pr-4"><div className="flex flex-wrap gap-2 min-w-[270px]">
                       {load.status === 'Menunggu' && <button disabled={busyId === load.id} onClick={() => startAndPrint(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#2563eb] text-[#60a5fa] hover:bg-[#2563eb]/10 disabled:opacity-50"><Play size={13} /> Mulai Muat & Cetak Bon</button>}
-                      {load.status === 'Sedang Dimuat' && <><button onClick={() => printBonMuat(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#242f3d] hover:bg-[#141a24]"><Printer size={13} /> Cetak Ulang Bon</button><button disabled={busyId === load.id} onClick={() => finishLoading(load)} className="btn-primary inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg disabled:opacity-50"><CheckCircle2 size={13} /> Selesai Muat</button></>}
-                      {load.status === 'Selesai' && <button onClick={() => printSuratJalan(sj)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#22c55e] text-[#4ade80] hover:bg-[#22c55e]/10"><Printer size={13} /> Cetak Surat Jalan</button>}
+                      {load.status === 'Sedang Dimuat' && <><button onClick={() => writeBonMuat(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#242f3d] hover:bg-[#141a24]"><Printer size={13} /> Cetak Ulang Bon</button><button disabled={busyId === load.id} onClick={() => finishLoading(load)} className="btn-primary inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg disabled:opacity-50"><CheckCircle2 size={13} /> Selesai Muat</button></>}
+                      {load.status === 'Selesai' && <><button onClick={() => writeBonMuat(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#242f3d] hover:bg-[#141a24]"><Printer size={13} /> Bon Muat</button><button onClick={() => printSuratJalan(sj)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#22c55e] text-[#4ade80] hover:bg-[#22c55e]/10"><Printer size={13} /> Surat Jalan</button></>}
                     </div></td>
                   </tr>
                 );
