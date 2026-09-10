@@ -1,11 +1,13 @@
-// Role values stored by the existing backend are kept for compatibility.
-// The labels below are the names used in the warehouse workflow.
+// The backend keeps legacy storage values (Administrator/Supervisor/Pemantau)
+// for compatibility. The UI exposes the workflow names requested by the
+// warehouse: Superadmin/Admin/Operator/QC/Viewer.
 export const ROLE_LABELS = {
   Administrator: 'Superadmin',
   Supervisor: 'Admin',
   Operator: 'Operator',
   QC: 'QC',
-  Pemantau: 'Pemantau',
+  Pemantau: 'Viewer',
+  Viewer: 'Viewer',
   Superadmin: 'Superadmin',
   Admin: 'Admin',
 };
@@ -18,36 +20,37 @@ export const ROLE_COLORS = {
   Operator: '#3b82f6',
   QC: '#22c55e',
   Pemantau: '#8b93a1',
+  Viewer: '#8b93a1',
 };
 
 export const canonicalRole = (role) => ({
   Superadmin: 'Administrator',
   Admin: 'Supervisor',
-}[role] || role || 'Pemantau');
+  Pemantau: 'Viewer',
+}[role] || role || 'Viewer');
 
 const ROLE_PERMISSIONS = {
-  Administrator: new Set(['masterWrite', 'inbound', 'outbound', 'rebagging', 'qc', 'users', 'settings']),
-  Supervisor: new Set(['masterWrite', 'inbound', 'outbound', 'rebagging']),
+  Administrator: new Set(['masterWrite', 'inbound', 'mutasi', 'outbound', 'rebagging', 'qc', 'users', 'settings']),
+  Supervisor: new Set(['inbound', 'mutasi', 'outbound']),
   Operator: new Set(['rebagging']),
   QC: new Set(['qc']),
-  Pemantau: new Set(),
+  Viewer: new Set(),
 };
 
 export const hasPermission = (role, permission) => {
   const canonical = canonicalRole(role);
-  if (permission === 'view') return Boolean(canonical);
+  if (permission === 'view') return Boolean(ROLE_PERMISSIONS[canonical]);
   if (permission === 'operations') {
-    return hasPermission(canonical, 'inbound') || hasPermission(canonical, 'outbound');
+    return ['inbound', 'mutasi', 'outbound'].some((item) => hasPermission(canonical, item));
   }
-  // Current Railway branch exposes only master, inbound, outbound, and loading
-  // write endpoints. Keep this separate from the future rebagging permission.
+  // This is the permission used by the current shared transaction button.
+  // It intentionally excludes master-data writes.
   if (permission === 'currentWrite') {
-    return hasPermission(canonical, 'masterWrite')
-      || hasPermission(canonical, 'inbound')
+    return hasPermission(canonical, 'inbound')
+      || hasPermission(canonical, 'mutasi')
       || hasPermission(canonical, 'outbound');
   }
   return ROLE_PERMISSIONS[canonical]?.has(permission) || false;
 };
 
-export const roleLabel = (role) => ROLE_LABELS[role] || role || '—';
-
+export const roleLabel = (role) => ROLE_LABELS[canonicalRole(role)] || role || '—';

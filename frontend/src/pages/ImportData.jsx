@@ -43,7 +43,7 @@ const ImportData = () => {
           <h1 className="font-display text-4xl font-bold">Import Master SKU</h1>
         </div>
         <div className="card-surface p-8 text-center">
-          <p className="text-[#8b93a1]">Peran Anda hanya dapat melihat data. Import master hanya dapat dilakukan Superadmin atau Admin.</p>
+          <p className="text-[#8b93a1]">Peran Anda hanya dapat melihat data. Import master hanya dapat dilakukan Superadmin.</p>
         </div>
       </div>
     );

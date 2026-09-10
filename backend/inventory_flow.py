@@ -17,7 +17,9 @@ from backend.server import (
     next_sequence,
     now_iso,
     operational_now,
-    require_write,
+    require_inbound,
+    require_inbound_view,
+    require_master_write,
 )
 
 router = APIRouter(prefix="/api")
@@ -131,13 +133,13 @@ async def _hydrate_legacy_po(doc: dict) -> dict:
 
 
 @router.get("/purchase-orders-v2")
-async def list_purchase_orders(user: dict = Depends(get_current_user)):
+async def list_purchase_orders(user: dict = Depends(require_inbound_view)):
     docs = await db.purchase_orders.find({}, {"_id": 0}).sort("date", -1).to_list(1000)
     return [await _hydrate_legacy_po(doc) for doc in docs]
 
 
 @router.post("/purchase-orders-v2")
-async def create_purchase_order(body: PurchaseOrderInput, user: dict = Depends(require_write)):
+async def create_purchase_order(body: PurchaseOrderInput, user: dict = Depends(require_master_write)):
     supplier = body.supplier.strip()
     if not supplier:
         raise HTTPException(status_code=400, detail="Supplier wajib dipilih")
@@ -187,7 +189,7 @@ async def create_purchase_order(body: PurchaseOrderInput, user: dict = Depends(r
 
 
 @router.post("/receipts")
-async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write)):
+async def receive_stock(body: ReceiptInput, user: dict = Depends(require_inbound)):
     po = None
     if body.poId:
         raw_po = await db.purchase_orders.find_one({"id": body.poId}, {"_id": 0})
@@ -322,7 +324,7 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
 
 
 @router.post("/import/master-csv")
-async def import_master_csv(file: UploadFile = File(...), user: dict = Depends(require_write)):
+async def import_master_csv(file: UploadFile = File(...), user: dict = Depends(require_master_write)):
     content = (await file.read()).decode("utf-8-sig", errors="replace")
     reader = csv.DictReader(io.StringIO(content), delimiter=";")
     inserted = 0

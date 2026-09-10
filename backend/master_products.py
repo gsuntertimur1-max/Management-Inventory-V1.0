@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from backend.server import db, new_id, require_write
+from backend.server import db, new_id, require_master_write
 
 router = APIRouter(prefix="/api")
 
@@ -32,7 +32,7 @@ def clean_master(body: MasterProductBody) -> dict:
 
 
 @router.post("/products-master")
-async def create_master_product(body: MasterProductBody, user: dict = Depends(require_write)):
+async def create_master_product(body: MasterProductBody, user: dict = Depends(require_master_write)):
     master = clean_master(body)
     if await db.products.find_one({"sku": master["sku"]}):
         raise HTTPException(status_code=409, detail="SKU sudah digunakan")
@@ -49,7 +49,7 @@ async def create_master_product(body: MasterProductBody, user: dict = Depends(re
 
 
 @router.put("/products-master/{product_id}")
-async def update_master_product(product_id: str, body: MasterProductBody, user: dict = Depends(require_write)):
+async def update_master_product(product_id: str, body: MasterProductBody, user: dict = Depends(require_master_write)):
     master = clean_master(body)
     duplicate = await db.products.find_one({"sku": master["sku"], "id": {"$ne": product_id}})
     if duplicate:
@@ -62,7 +62,7 @@ async def update_master_product(product_id: str, body: MasterProductBody, user: 
 
 
 @router.delete("/products-master/{product_id}")
-async def delete_master_product(product_id: str, user: dict = Depends(require_write)):
+async def delete_master_product(product_id: str, user: dict = Depends(require_master_write)):
     product = await db.products.find_one({"id": product_id}, {"_id": 0})
     if not product:
         raise HTTPException(status_code=404, detail="Produk tidak ditemukan")

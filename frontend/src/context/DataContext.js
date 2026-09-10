@@ -31,12 +31,14 @@ export const DataProvider = ({ children }) => {
 
   const fetchAll = useCallback(async () => {
     try {
+      const canInbound = hasPermission(user?.role, 'inbound');
+      const canOutbound = hasPermission(user?.role, 'outbound');
       const [p, suppliersRes, sj, loads, po, t, settingsRes, usersRes] = await Promise.all([
         api.get('/products'),
-        api.get('/suppliers'),
-        api.get('/surat-jalan'),
-        api.get('/outbound-loads'),
-        api.get('/purchase-orders-v2'),
+        canInbound ? api.get('/suppliers') : Promise.resolve({ data: [] }),
+        canOutbound ? api.get('/surat-jalan') : Promise.resolve({ data: [] }),
+        canOutbound ? api.get('/outbound-loads') : Promise.resolve({ data: [] }),
+        canInbound ? api.get('/purchase-orders-v2') : Promise.resolve({ data: [] }),
         api.get('/transactions'),
         api.get('/settings'),
         hasPermission(user?.role, 'users') ? api.get('/users') : Promise.resolve({ data: [] }),
@@ -166,6 +168,7 @@ export const DataProvider = ({ children }) => {
       canWrite: hasPermission(user?.role, 'currentWrite'),
       canManageMasterData: hasPermission(user?.role, 'masterWrite'),
       canInbound: hasPermission(user?.role, 'inbound'),
+      canMutasi: hasPermission(user?.role, 'mutasi'),
       canOutbound: hasPermission(user?.role, 'outbound'),
       canRebagging: hasPermission(user?.role, 'rebagging'),
       canQC: hasPermission(user?.role, 'qc'),

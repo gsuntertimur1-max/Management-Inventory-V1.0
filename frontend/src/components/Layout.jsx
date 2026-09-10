@@ -11,9 +11,9 @@ const NAV = [
   { to: '/catat', label: 'Catat Stok', icon: ArrowLeftRight, permission: 'operations' },
   { to: '/pengeluaran', label: 'Pengeluaran', icon: Send, permission: 'outbound' },
   { to: '/riwayat', label: 'Riwayat', icon: History },
-  { to: '/po', label: 'Purchase Order', icon: ClipboardList },
-  { to: '/supplier', label: 'Supplier', icon: Truck },
-  { to: '/antrian', label: 'Layar Antrian', icon: MonitorSmartphone },
+  { to: '/po', label: 'Purchase Order', icon: ClipboardList, permission: 'masterWrite' },
+  { to: '/supplier', label: 'Supplier', icon: Truck, permission: 'masterWrite' },
+  { to: '/antrian', label: 'Layar Antrian', icon: MonitorSmartphone, permission: 'outbound' },
   { to: '/pengguna', label: 'Pengguna', icon: Users, permission: 'users' },
   { to: '/pengaturan', label: 'Pengaturan', icon: Settings, permission: 'settings' },
 ];

@@ -13,7 +13,7 @@ from backend.server import (
     next_sequence,
     now_iso,
     operational_now,
-    require_write,
+    require_outbound,
 )
 
 router = APIRouter(prefix="/api")
@@ -73,12 +73,12 @@ def _loading_unit_from_products(products: List[dict]) -> tuple[str, str]:
 
 
 @router.get("/outbound-loads")
-async def list_outbound_loads(user: dict = Depends(get_current_user)):
+async def list_outbound_loads(user: dict = Depends(require_outbound)):
     return await db.outbound_loads.find({}, {"_id": 0}).sort("created_at", -1).to_list(2000)
 
 
 @router.post("/outbound-loads")
-async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(require_write)):
+async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(require_outbound)):
     party = body.party.strip()
     if not party:
         raise HTTPException(status_code=400, detail="Penerima barang wajib diisi")
@@ -184,7 +184,7 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
 
 
 @router.post("/outbound-loads/{load_id}/start")
-async def start_outbound_load(load_id: str, user: dict = Depends(require_write)):
+async def start_outbound_load(load_id: str, user: dict = Depends(require_outbound)):
     load = await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
     if not load:
         raise HTTPException(status_code=404, detail="Data pemuatan tidak ditemukan")
@@ -202,7 +202,7 @@ async def start_outbound_load(load_id: str, user: dict = Depends(require_write))
 
 
 @router.post("/outbound-loads/{load_id}/complete")
-async def complete_outbound_load(load_id: str, user: dict = Depends(require_write)):
+async def complete_outbound_load(load_id: str, user: dict = Depends(require_outbound)):
     load = await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
     if not load:
         raise HTTPException(status_code=404, detail="Data pemuatan tidak ditemukan")
