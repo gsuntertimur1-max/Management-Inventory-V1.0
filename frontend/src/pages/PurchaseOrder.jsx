@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Plus, X } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { formatRp, formatDate, formatNum } from '../mock';
@@ -51,9 +52,9 @@ const PurchaseOrder = () => {
         </div>
       </div>
 
-      {modal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={() => setModal(false)}>
-          <div className="card-surface w-full max-w-md p-6 fade-up" onClick={(e) => e.stopPropagation()}>
+      {modal && createPortal(
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 sm:p-6 overflow-y-auto">
+          <div className="card-surface w-full max-w-md p-6 fade-up max-h-[calc(100dvh-3rem)] overflow-y-auto">
             <div className="flex items-center justify-between mb-5"><h2 className="font-display text-xl font-bold">Buat Purchase Order</h2><button onClick={() => setModal(false)} className="text-[#8b93a1] hover:text-white"><X size={20} /></button></div>
             <div className="space-y-4">
               <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Supplier</label><select data-testid="po-supplier-select" value={form.supplier} onChange={(e) => setForm({ ...form, supplier: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]"><option value="">Pilih supplier...</option>{suppliers.map((s) => <option key={s.id}>{s.name}</option>)}</select></div>
@@ -62,7 +63,8 @@ const PurchaseOrder = () => {
             </div>
             <div className="flex justify-end gap-2 mt-6"><button onClick={() => setModal(false)} className="px-4 py-2.5 rounded-lg border border-[#242f3d] text-sm hover:bg-[#141a24]">Batal</button><button data-testid="po-save-btn" onClick={save} className="btn-primary px-5 py-2.5 rounded-lg text-sm font-semibold">Simpan PO</button></div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
