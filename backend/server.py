@@ -17,12 +17,15 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, UploadFile, File
+from fastapi.responses import StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ReturnDocument
 from pymongo.errors import OperationFailure
 from pydantic import BaseModel, Field
 from typing import List, Literal, Optional
+from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment
 
 REQUIRED_ENV = ("MONGO_URL", "DB_NAME", "JWT_SECRET")
 missing_env = [name for name in REQUIRED_ENV if not os.environ.get(name)]
@@ -357,6 +360,44 @@ class POBody(BaseModel):
     total: float = Field(ge=0)
     status: str = 'Draft'
     date: str = ''
+
+
+class SettingsBody(BaseModel):
+    warehouse: str = 'Gudang Sunter Timur I & II'
+    address: str = 'Jl. Sunter Agung, Jakarta Utara'
+    lowAlert: bool = True
+    expAlert: bool = True
+    autoQueue: bool = True
+
+
+DEFAULT_SETTINGS = SettingsBody().model_dump()
+
+
+def build_xlsx(headers: list[str], rows: list[list], sheet_name: str) -> io.BytesIO:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = sheet_name[:31]
+
+    ws.append(headers)
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(horizontal='center')
+
+    for row in rows:
+        ws.append(row)
+
+    for column in ws.columns:
+        max_len = 0
+        letter = column[0].column_letter
+        for cell in column:
+            value = '' if cell.value is None else str(cell.value)
+            max_len = max(max_len, len(value))
+        ws.column_dimensions[letter].width = min(max(max_len + 2, 10), 42)
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return output
 
 
 # ---------- auth ----------
