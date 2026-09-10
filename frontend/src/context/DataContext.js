@@ -16,6 +16,7 @@ const EMPTY = {
   products: [],
   suppliers: [],
   suratJalan: [],
+  outboundLoads: [],
   purchaseOrders: [],
   users: [],
   transactions: [],
@@ -29,10 +30,11 @@ export const DataProvider = ({ children }) => {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [p, suppliersRes, sj, po, t, settingsRes, usersRes] = await Promise.all([
+      const [p, suppliersRes, sj, loads, po, t, settingsRes, usersRes] = await Promise.all([
         api.get('/products'),
         api.get('/suppliers'),
         api.get('/surat-jalan'),
+        api.get('/outbound-loads'),
         api.get('/purchase-orders-v2'),
         api.get('/transactions'),
         api.get('/settings'),
@@ -42,6 +44,7 @@ export const DataProvider = ({ children }) => {
         products: p.data,
         suppliers: suppliersRes.data,
         suratJalan: sj.data,
+        outboundLoads: loads.data,
         purchaseOrders: po.data,
         users: usersRes.data,
         transactions: t.data,
@@ -86,6 +89,28 @@ export const DataProvider = ({ children }) => {
   const deleteProduct = async (id) => { await api.delete(`/products-master/${id}`); await fetchAll(); };
   const addTransaction = async (payload) => { await api.post('/transactions', payload); await fetchAll(); };
   const addReceipt = async (payload) => { const { data } = await api.post('/receipts', payload); await fetchAll(); return data; };
+
+  const createOutboundLoad = async (payload) => {
+    const { data } = await api.post('/outbound-loads', payload);
+    setState((prev) => ({ ...prev, outboundLoads: [data, ...prev.outboundLoads] }));
+    return data;
+  };
+
+  const startOutboundLoad = async (id) => {
+    const { data } = await api.post(`/outbound-loads/${id}/start`);
+    setState((prev) => ({
+      ...prev,
+      outboundLoads: prev.outboundLoads.map((item) => item.id === id ? data : item),
+    }));
+    return data;
+  };
+
+  const completeOutboundLoad = async (id) => {
+    const { data } = await api.post(`/outbound-loads/${id}/complete`);
+    await fetchAll();
+    return data;
+  };
+
   const updateSJStatus = async (id, status) => { await api.put(`/surat-jalan/${id}/status`, { status }); await fetchAll(); };
 
   const addSupplier = async (sup) => {
@@ -136,7 +161,8 @@ export const DataProvider = ({ children }) => {
     <DataContext.Provider value={{
       user, checking, canWrite: ['Administrator', 'Supervisor', 'Operator'].includes(user?.role),
       login, logout, ...state, fetchAll,
-      addProduct, updateProduct, deleteProduct, addTransaction, addReceipt, updateSJStatus,
+      addProduct, updateProduct, deleteProduct, addTransaction, addReceipt,
+      createOutboundLoad, startOutboundLoad, completeOutboundLoad, updateSJStatus,
       addSupplier, addPO, addUser, updateUser, deleteUser, changeUserPassword, updateSettings, resetData, importCsv,
     }}>
       {children}
