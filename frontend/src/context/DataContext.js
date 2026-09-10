@@ -33,7 +33,7 @@ export const DataProvider = ({ children }) => {
         api.get('/products'),
         api.get('/suppliers'),
         api.get('/surat-jalan'),
-        api.get('/purchase-orders'),
+        api.get('/purchase-orders-v2'),
         api.get('/transactions'),
         api.get('/settings'),
         user?.role === 'Administrator' ? api.get('/users') : Promise.resolve({ data: [] }),
@@ -85,15 +85,21 @@ export const DataProvider = ({ children }) => {
   const updateProduct = async (id, patch) => { await api.put(`/products/${id}`, patch); await fetchAll(); };
   const deleteProduct = async (id) => { await api.delete(`/products/${id}`); await fetchAll(); };
   const addTransaction = async (payload) => { await api.post('/transactions', payload); await fetchAll(); };
+  const addReceipt = async (payload) => { const { data } = await api.post('/receipts', payload); await fetchAll(); return data; };
   const updateSJStatus = async (id, status) => { await api.put(`/surat-jalan/${id}/status`, { status }); await fetchAll(); };
-  // Update only the affected slice after small CRUD operations. This avoids
-  // refetching every dashboard dataset after adding a supplier/user.
+
   const addSupplier = async (sup) => {
     const { data } = await api.post('/suppliers', sup);
     setState((prev) => ({ ...prev, suppliers: [...prev.suppliers, data] }));
     return data;
   };
-  const addPO = async (po) => { await api.post('/purchase-orders', po); await fetchAll(); };
+
+  const addPO = async (po) => {
+    const { data } = await api.post('/purchase-orders-v2', po);
+    setState((prev) => ({ ...prev, purchaseOrders: [data, ...prev.purchaseOrders] }));
+    return data;
+  };
+
   const addUser = async (u) => {
     const { data } = await api.post('/users', u);
     setState((prev) => ({ ...prev, users: [...prev.users, data] }));
@@ -130,7 +136,7 @@ export const DataProvider = ({ children }) => {
     <DataContext.Provider value={{
       user, checking, canWrite: ['Administrator', 'Supervisor', 'Operator'].includes(user?.role),
       login, logout, ...state, fetchAll,
-      addProduct, updateProduct, deleteProduct, addTransaction, updateSJStatus,
+      addProduct, updateProduct, deleteProduct, addTransaction, addReceipt, updateSJStatus,
       addSupplier, addPO, addUser, updateUser, deleteUser, changeUserPassword, updateSettings, resetData, importCsv,
     }}>
       {children}
