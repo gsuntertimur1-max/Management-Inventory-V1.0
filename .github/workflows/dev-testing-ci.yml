@@ -26,4 +26,4 @@ jobs:
           python-version: '3.12'
 
       - name: Validate Python syntax
-        run: python -m py_compile backend/server.py backend/inventory_flow.py app.py
+        run: python -m py_compile backend/server.py backend/inventory_flow.py backend/master_products.py app.py
