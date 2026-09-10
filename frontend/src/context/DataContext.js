@@ -81,9 +81,9 @@ export const DataProvider = ({ children }) => {
     setState(EMPTY);
   };
 
-  const addProduct = async (p) => { await api.post('/products', p); await fetchAll(); };
-  const updateProduct = async (id, patch) => { await api.put(`/products/${id}`, patch); await fetchAll(); };
-  const deleteProduct = async (id) => { await api.delete(`/products/${id}`); await fetchAll(); };
+  const addProduct = async (p) => { await api.post('/products-master', p); await fetchAll(); };
+  const updateProduct = async (id, patch) => { await api.put(`/products-master/${id}`, patch); await fetchAll(); };
+  const deleteProduct = async (id) => { await api.delete(`/products-master/${id}`); await fetchAll(); };
   const addTransaction = async (payload) => { await api.post('/transactions', payload); await fetchAll(); };
   const addReceipt = async (payload) => { const { data } = await api.post('/receipts', payload); await fetchAll(); return data; };
   const updateSJStatus = async (id, status) => { await api.put(`/surat-jalan/${id}/status`, { status }); await fetchAll(); };
