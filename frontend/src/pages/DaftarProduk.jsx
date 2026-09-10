@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Upload, Download, Plus, Search, Pencil, Trash2, X } from 'lucide-react';
 import { useData } from '../context/DataContext';
+import { apiError, downloadApiFile } from '../lib/api';
 import { formatRp, formatNum, catColor, CATEGORIES } from '../mock';
 import { toast } from 'sonner';
 
@@ -13,15 +14,38 @@ const DaftarProduk = () => {
   const [q, setQ] = useState('');
   const [cat, setCat] = useState('SEMUA');
   const [modal, setModal] = useState(null); // {mode, data}
+  const [exporting, setExporting] = useState(false);
 
   const filtered = products.filter((p) => (cat === 'SEMUA' || p.category === cat) && (p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase()))).sort((a, b) => a.name.localeCompare(b.name));
 
-  const save = () => {
+  const save = async () => {
     const d = modal.data;
     if (!d.name || !d.sku) { toast.error('Nama & SKU wajib diisi'); return; }
-    if (modal.mode === 'add') { addProduct(d); toast.success('Produk ditambahkan'); }
-    else { updateProduct(d.id, d); toast.success('Produk diperbarui'); }
-    setModal(null);
+    try {
+      if (modal.mode === 'add') {
+        await addProduct(d);
+        toast.success('Produk ditambahkan');
+      } else {
+        await updateProduct(d.id, d);
+        toast.success('Produk diperbarui');
+      }
+      setModal(null);
+    } catch (e) {
+      toast.error(apiError(e));
+    }
+  };
+
+  const exportProducts = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      await downloadApiFile('/export/products.xlsx', 'daftar_produk.xlsx');
+      toast.success('File Excel daftar produk berhasil diunduh');
+    } catch (e) {
+      toast.error(apiError(e));
+    } finally {
+      setExporting(false);
+    }
   };
 
   return (
@@ -34,7 +58,7 @@ const DaftarProduk = () => {
         </div>
         <div className="flex gap-2">
           <button onClick={() => navigate('/import')} className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-[#242f3d] hover:bg-[#141a24] transition-colors"><Upload size={15} /> Import Data</button>
-          <button onClick={() => toast.success('Excel diunduh (mock)')} className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-[#242f3d] hover:bg-[#141a24] transition-colors"><Download size={15} /> Unduh Excel</button>
+          <button onClick={exportProducts} disabled={exporting} className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-[#242f3d] hover:bg-[#141a24] transition-colors disabled:opacity-60 disabled:cursor-wait"><Download size={15} /> {exporting ? 'Menyiapkan…' : 'Unduh Excel'}</button>
           <button data-testid="add-product-btn" onClick={() => setModal({ mode: 'add', data: { ...empty } })} className="btn-primary inline-flex items-center gap-2 text-sm font-semibold px-4 py-2.5 rounded-lg"><Plus size={15} /> Tambah Produk</button>
         </div>
       </div>
