@@ -3,7 +3,6 @@ import re
 import sys
 import uuid
 from collections import defaultdict
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import List
 
@@ -153,7 +152,6 @@ async def create_outgoing_transaction(body: TxnBody, user: dict):
         'id': legacy.new_id(),
         'operation_id': operation_id,
         'transaction_ref': transaction_ref,
-        'no': '',
         'bon_no': bon_no,
         'antrian': antrian,
         'operational_date': operational_date,
