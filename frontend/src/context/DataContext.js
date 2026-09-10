@@ -56,8 +56,16 @@ export const DataProvider = ({ children }) => {
   const addProduct = async (p) => { await api.post('/products', p); await fetchAll(); };
   const updateProduct = async (id, patch) => { await api.put(`/products/${id}`, patch); await fetchAll(); };
   const deleteProduct = async (id) => { await api.delete(`/products/${id}`); await fetchAll(); };
-  const addTransaction = async (payload) => { await api.post('/transactions', payload); await fetchAll(); };
-  const updateSJStatus = async (id, status) => { await api.put(`/surat-jalan/${id}/status`, { status }); await fetchAll(); };
+  const addTransaction = async (payload) => {
+    const { data } = await api.post('/transactions', payload);
+    await fetchAll();
+    return data;
+  };
+  const updateSJStatus = async (id, status) => {
+    const { data } = await api.put(`/surat-jalan/${id}/status`, { status });
+    await fetchAll();
+    return data;
+  };
   const addSupplier = async (sup) => { await api.post('/suppliers', sup); await fetchAll(); };
   const addPO = async (po) => { await api.post('/purchase-orders', po); await fetchAll(); };
   const addUser = async (u) => { await api.post('/users', u); await fetchAll(); };

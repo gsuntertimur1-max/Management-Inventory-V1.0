@@ -20,12 +20,12 @@ const Login = () => {
 
   return (
     <div className="app-bg flex flex-col items-center justify-center min-h-screen px-4">
-      <div className="flex items-center gap-3 mb-8">
-        <div className="w-14 h-14 rounded-2xl bg-white flex items-center justify-center font-display font-bold text-[#1e40af] shadow-xl">bulog</div>
-        <div>
-          <div className="font-display font-bold text-xl tracking-tight">Bulog Gudang Sunter Timur I &amp; II</div>
-          <div className="label-mono">Sistem Manajemen Stok</div>
+      <div className="flex flex-col items-center text-center mb-8">
+        <div className="bg-white rounded-2xl px-5 py-3 shadow-xl mb-4">
+          <img src="/bulog-sunter.png" alt="BULOG Sunter Timur I & II" className="w-[220px] max-w-[70vw] h-auto" />
         </div>
+        <div className="font-display font-bold text-xl tracking-tight">Sistem Manajemen Inventory Gudang</div>
+        <div className="label-mono mt-1">Gudang Sunter Timur I &amp; II</div>
       </div>
 
       <div className="card-surface w-full max-w-md p-8 fade-up">

@@ -13,6 +13,7 @@ const CatatStok = () => {
   const [party, setParty] = useState('');
   const [ref, setRef] = useState('');
   const [polisi, setPolisi] = useState('');
+  const [pengambil, setPengambil] = useState('');
   const [kondisi, setKondisi] = useState('BAIK');
   const [ket, setKet] = useState('');
 
@@ -27,11 +28,26 @@ const CatatStok = () => {
 
   const submit = async () => {
     if (chosen.length === 0) { toast.error('Pilih minimal satu produk'); return; }
-    if (type === 'KELUAR' && !party) { toast.error('Isi penerima barang'); return; }
+    if (type === 'KELUAR' && !party.trim()) { toast.error('Isi tujuan / penerima barang'); return; }
     try {
-      await addTransaction({ type, items: chosen.map((r) => ({ productId: r.productId, qty: Number(r.qty) })), party, ref, polisi, kondisi, keterangan: ket });
-      toast.success(type === 'MASUK' ? 'Stok masuk tersimpan' : 'Surat jalan dibuat & stok keluar tersimpan');
-      if (type === 'KELUAR') navigate('/pengeluaran'); else navigate('/riwayat');
+      const result = await addTransaction({
+        type,
+        items: chosen.map((r) => ({ productId: r.productId, qty: Number(r.qty) })),
+        party,
+        ref,
+        polisi,
+        pengambil,
+        kondisi,
+        keterangan: ket,
+      });
+      if (type === 'MASUK') {
+        toast.success('Stok masuk tersimpan');
+        navigate('/riwayat');
+      } else {
+        const queue = result?.suratJalan?.antrian;
+        toast.success(`Antrian pemuatan ${queue || ''} dibuat. Stok belum berkurang.`);
+        navigate('/pengeluaran');
+      }
     } catch (e) {
       toast.error(e?.response?.data?.detail || 'Gagal menyimpan transaksi');
     }
@@ -56,7 +72,7 @@ const CatatStok = () => {
       <div>
         <div className="label-mono mb-2">Operasional Gudang</div>
         <h1 className="font-display text-4xl font-bold">Pencatatan Stok Masuk / Keluar</h1>
-        <p className="text-[#8b93a1] mt-2 max-w-2xl">Satu pengeluaran bisa memuat beberapa jenis barang dan menghasilkan satu surat jalan beserta nomor antrian pemuatan.</p>
+        <p className="text-[#8b93a1] mt-2 max-w-3xl">Pengeluaran membuat antrian pemuatan terlebih dahulu. Stok baru berkurang saat petugas menekan Selesai Muat dan nomor Surat Jalan diterbitkan.</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -87,15 +103,21 @@ const CatatStok = () => {
           <button onClick={addRow} className="inline-flex items-center gap-2 text-sm text-[#60a5fa] hover:text-[#93c5fd] mb-5"><Plus size={15} /> Tambah Barang</button>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div><label className="text-sm font-medium mb-1.5 block">{type === 'MASUK' ? 'Supplier Pengirim' : 'Penerima Barang'}</label>{type === 'MASUK' ? (
-              <select data-testid="txn-party-select" value={party} onChange={(e) => setParty(e.target.value)} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]"><option value="">Pilih supplier...</option>{suppliers.map((s) => <option key={s.id}>{s.name}</option>)}</select>
-            ) : (<input data-testid="txn-party-input" value={party} onChange={(e) => setParty(e.target.value)} placeholder="Nama penerima / toko" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" />)}</div>
-            <div><label className="text-sm font-medium mb-1.5 block">No. Referensi / PO</label><input value={ref} onChange={(e) => setRef(e.target.value)} placeholder="PO-2026-001" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" /></div>
-            <div><label className="text-sm font-medium mb-1.5 block">Nomor Plat Kendaraan</label><input value={polisi} onChange={(e) => setPolisi(e.target.value)} placeholder="B 9021 XY" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" /></div>
+            <div>
+              <label className="text-sm font-medium mb-1.5 block">{type === 'MASUK' ? 'Supplier Pengirim' : 'Tujuan / A.N'}</label>
+              {type === 'MASUK' ? (
+                <select data-testid="txn-party-select" value={party} onChange={(e) => setParty(e.target.value)} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]"><option value="">Pilih supplier...</option>{suppliers.map((s) => <option key={s.id}>{s.name}</option>)}</select>
+              ) : (
+                <input data-testid="txn-party-input" value={party} onChange={(e) => setParty(e.target.value)} placeholder="PELANGGAN UMUM / tujuan" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" />
+              )}
+            </div>
+            <div><label className="text-sm font-medium mb-1.5 block">{type === 'KELUAR' ? 'Nomor SO' : 'No. Referensi / PO'}</label><input value={ref} onChange={(e) => setRef(e.target.value)} placeholder={type === 'KELUAR' ? 'SO/8775/09/2026/09001' : 'PO-2026-001'} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" /></div>
+            <div><label className="text-sm font-medium mb-1.5 block">Nomor Plat Kendaraan</label><input value={polisi} onChange={(e) => setPolisi(e.target.value)} placeholder="B 1441 PQF" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" /></div>
+            {type === 'KELUAR' && <div><label className="text-sm font-medium mb-1.5 block">Pengambil</label><input value={pengambil} onChange={(e) => setPengambil(e.target.value)} placeholder="Nama pengambil / sopir" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" /></div>}
             <div><label className="text-sm font-medium mb-1.5 block">Kondisi Barang</label><select value={kondisi} onChange={(e) => setKondisi(e.target.value)} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]"><option value="BAIK">Baik (Good)</option><option value="RUSAK">Rusak (Damage)</option></select><p className="text-xs text-[#6b7688] mt-1">Stok rusak dicatat terpisah dari stok baik.</p></div>
           </div>
-          <div className="mt-4"><label className="text-sm font-medium mb-1.5 block">Keterangan</label><textarea value={ket} onChange={(e) => setKet(e.target.value)} rows={2} placeholder="Muat pagi — truk B 9021 XX..." className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb] resize-none" /></div>
-          <button data-testid="txn-submit-btn" onClick={submit} className="btn-primary w-full mt-5 flex items-center justify-center gap-2 py-3 rounded-lg font-semibold text-sm"><Save size={16} /> Simpan Stok {type === 'MASUK' ? 'Masuk' : 'Keluar'}</button>
+          <div className="mt-4"><label className="text-sm font-medium mb-1.5 block">Keterangan</label><textarea value={ket} onChange={(e) => setKet(e.target.value)} rows={2} placeholder="Catatan operasional pemuatan..." className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb] resize-none" /></div>
+          <button data-testid="txn-submit-btn" onClick={submit} className="btn-primary w-full mt-5 flex items-center justify-center gap-2 py-3 rounded-lg font-semibold text-sm"><Save size={16} /> {type === 'MASUK' ? 'Simpan Stok Masuk' : 'Buat Antrian Pengeluaran'}</button>
         </div>
 
         <div className="card-surface p-6 h-fit">
@@ -106,9 +128,10 @@ const CatatStok = () => {
               <div key={l} className="flex justify-between items-center border-b border-[#151d28] pb-3"><span className="text-[#8b93a1]">{l}</span><span className="font-mono font-semibold">{v}</span></div>
             ))}
           </div>
-          {chosen.length === 0 ? <p className="text-xs text-[#6b7688] mt-4">Pilih barang untuk melihat perkiraan stok setelah transaksi.</p> : (
-            <div className="mt-4 space-y-2">{chosen.map((r) => (<div key={r.productId} className="text-xs p-2.5 rounded-lg bg-[#0b0f17] border border-[#151d28]"><div className="font-medium">{r.product.name}</div><div className="text-[#8b93a1] font-mono">{formatNum(r.product.stock)} → {formatNum(type === 'MASUK' ? r.product.stock + Number(r.qty) : r.product.stock - Number(r.qty))} {r.product.unit}</div></div>))}</div>
+          {chosen.length === 0 ? <p className="text-xs text-[#6b7688] mt-4">Pilih barang untuk melihat detail persediaan.</p> : (
+            <div className="mt-4 space-y-2">{chosen.map((r) => (<div key={r.productId} className="text-xs p-2.5 rounded-lg bg-[#0b0f17] border border-[#151d28]"><div className="font-medium">{r.product.name}</div><div className="text-[#8b93a1] font-mono">Stok saat ini: {formatNum(r.product.stock)} {r.product.unit}</div></div>))}</div>
           )}
+          {type === 'KELUAR' && <div className="mt-4 p-3 rounded-lg border border-[#2563eb]/30 bg-[#2563eb]/10 text-xs text-[#9cc3ff] leading-relaxed">Stok tidak langsung dikurangi ketika antrian dibuat. Pengurangan stok dilakukan saat pemuatan dinyatakan selesai.</div>}
         </div>
       </div>
     </div>
