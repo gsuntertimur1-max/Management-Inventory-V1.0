@@ -34,6 +34,10 @@ Aplikasi inventaris Gudang Sunter Timur I & II dengan frontend React, backend Fa
 
 Frontend lokal mem-proxy `/api` ke `http://localhost:8001`. Backend lokal sendiri mengekspos route tanpa prefix karena Vercel Services memasang layanan tersebut pada `/api` ketika deployment.
 
+## Railway Dev / Testing
+
+Branch `dev-testing` digunakan untuk pengujian aktif di Railway sebelum perubahan dinyatakan final. Perubahan operasional, UI, Bon Muat, dan alur gudang diverifikasi di Railway terlebih dahulu. Vercel digunakan setelah versi pengujian telah disetujui.
+
 ## Deployment Vercel
 
 1. Import repository ini sebagai project Vercel.
@@ -54,7 +58,7 @@ Login Google lama tidak diaktifkan karena bergantung pada layanan Emergent. Logi
 
 ## Keamanan dan data
 
-- `.env` tidak boleh di-commit. Gunakan environment variables di Vercel.
+- `.env` tidak boleh di-commit. Gunakan environment variables di platform deployment.
 - `backend/seed_data.csv` hanya berisi header agar data stok/pemasok tidak dipublikasikan.
 - Gunakan database uji yang terpisah saat verifikasi. Kode ini tidak memigrasikan atau menghapus database aktif secara otomatis.
 - Bila secret pernah masuk ke riwayat Git repository publik, ganti/rotasi secret tersebut sebelum deployment.
