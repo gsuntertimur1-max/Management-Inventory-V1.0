@@ -91,10 +91,7 @@ const Supplier = () => {
       </div>
 
       {modal && createPortal(
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 sm:p-6 overflow-y-auto"
-          onClick={closeModal}
-        >
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 sm:p-6 overflow-y-auto">
           <div
             className="card-surface w-full max-w-md p-6 fade-up max-h-[calc(100dvh-3rem)] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
