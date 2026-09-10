@@ -102,10 +102,7 @@ const DaftarProduk = () => {
       </div>
 
       {modal && createPortal(
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 sm:p-6 overflow-y-auto"
-          onClick={() => setModal(null)}
-        >
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 sm:p-6 overflow-y-auto">
           <div className="w-full max-w-2xl translate-y-6 sm:translate-y-8">
             <div
               className="card-surface w-full p-6 fade-up max-h-[calc(100dvh-4rem)] overflow-y-auto"
