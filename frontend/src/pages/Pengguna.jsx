@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Plus, X, ShieldCheck, User as UserIcon, KeyRound, Trash2, Power } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { apiError } from '../lib/api';
@@ -9,18 +10,30 @@ const ROLES = ['Administrator', 'Supervisor', 'Operator', 'Pemantau'];
 
 const inputCls = 'w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]';
 
-const Modal = ({ title, onClose, children, locked = false }) => (
-  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 overflow-y-auto" onClick={() => !locked && onClose()}>
-    <div className="w-full max-w-md translate-y-8 sm:translate-y-10">
-      <div className="card-surface w-full p-6 fade-up max-h-[calc(100dvh-6rem)] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-5">
-          <h2 className="font-display text-xl font-bold">{title}</h2>
-          <button data-testid="modal-close-btn" onClick={onClose} disabled={locked} className="text-[#8b93a1] hover:text-white disabled:opacity-50"><X size={20} /></button>
-        </div>
-        {children}
+const Modal = ({ title, onClose, children, locked = false }) => createPortal(
+  <div
+    className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 sm:p-6 overflow-y-auto"
+    onClick={() => !locked && onClose()}
+  >
+    <div
+      className="card-surface w-full max-w-md p-6 fade-up max-h-[calc(100dvh-3rem)] overflow-y-auto"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="flex items-center justify-between mb-5">
+        <h2 className="font-display text-xl font-bold">{title}</h2>
+        <button
+          data-testid="modal-close-btn"
+          onClick={onClose}
+          disabled={locked}
+          className="text-[#8b93a1] hover:text-white disabled:opacity-50"
+        >
+          <X size={20} />
+        </button>
       </div>
+      {children}
     </div>
-  </div>
+  </div>,
+  document.body
 );
 
 const Pengguna = () => {
