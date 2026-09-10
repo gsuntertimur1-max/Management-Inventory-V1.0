@@ -681,12 +681,14 @@ async def create_transaction(body: TxnBody, user: dict = Depends(require_write))
     sj = None
     if body.type == "KELUAR":
         operational_date = op_now.strftime("%Y-%m-%d")
-        day_start = op_now.replace(hour=0, minute=0, second=0, microsecond=0)
-        day_end = day_start + timedelta(days=1)
-        day_query = {"time": {"$gte": day_start.astimezone(timezone.utc).isoformat(), "$lt": day_end.astimezone(timezone.utc).isoformat()}}
-        queue_floor = await max_suffix(db.surat_jalan, "antrian", "A-", day_query)
-        queue_number = await next_sequence(f"queue:{operational_date}", queue_floor)
-        antrian = f"A-{queue_number:03d}"
+        settings = await db.settings.find_one({"_id": "app"}, {"_id": 0, "autoQueue": 1}) or {}
+        if settings.get("autoQueue", True):
+            day_start = op_now.replace(hour=0, minute=0, second=0, microsecond=0)
+            day_end = day_start + timedelta(days=1)
+            day_query = {"time": {"$gte": day_start.astimezone(timezone.utc).isoformat(), "$lt": day_end.astimezone(timezone.utc).isoformat()}}
+            queue_floor = await max_suffix(db.surat_jalan, "antrian", "A-", day_query)
+            queue_number = await next_sequence(f"queue:{operational_date}", queue_floor)
+            antrian = f"A-{queue_number:03d}"
 
         month_prefix = op_now.strftime("SJ-%Y%m")
         sj_floor = await max_suffix(db.surat_jalan, "no", f"{month_prefix}-")
