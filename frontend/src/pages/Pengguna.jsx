@@ -9,14 +9,16 @@ const ROLES = ['Administrator', 'Supervisor', 'Operator', 'Pemantau'];
 
 const inputCls = 'w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]';
 
-const Modal = ({ title, onClose, children }) => (
-  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 pt-20" onClick={onClose}>
-    <div className="card-surface w-full max-w-md p-6 fade-up max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-      <div className="flex items-center justify-between mb-5">
-        <h2 className="font-display text-xl font-bold">{title}</h2>
-        <button data-testid="modal-close-btn" onClick={onClose} className="text-[#8b93a1] hover:text-white"><X size={20} /></button>
+const Modal = ({ title, onClose, children, locked = false }) => (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 overflow-y-auto" onClick={() => !locked && onClose()}>
+    <div className="w-full max-w-md translate-y-8 sm:translate-y-10">
+      <div className="card-surface w-full p-6 fade-up max-h-[calc(100dvh-6rem)] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-5">
+          <h2 className="font-display text-xl font-bold">{title}</h2>
+          <button data-testid="modal-close-btn" onClick={onClose} disabled={locked} className="text-[#8b93a1] hover:text-white disabled:opacity-50"><X size={20} /></button>
+        </div>
+        {children}
       </div>
-      {children}
     </div>
   </div>
 );
@@ -25,19 +27,30 @@ const Pengguna = () => {
   const { user, users, addUser, deleteUser, updateUser, changeUserPassword } = useData();
   const isAdmin = user?.role === 'Administrator';
   const [modal, setModal] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ name: '', username: '', email: '', role: 'Operator', password: '' });
   const [pwdModal, setPwdModal] = useState(null);
   const [newPwd, setNewPwd] = useState('');
   const [delModal, setDelModal] = useState(null);
 
   const save = async () => {
-    if (!form.name || !form.username || !form.password) { toast.error('Nama, username & password wajib diisi'); return; }
+    if (!form.name.trim() || !form.username.trim() || !form.password) {
+      toast.error('Nama, username & password wajib diisi');
+      return;
+    }
+    if (saving) return;
+
+    setSaving(true);
     try {
-      await addUser(form);
+      await addUser({ ...form, name: form.name.trim(), username: form.username.trim() });
       toast.success('Pengguna ditambahkan');
       setModal(false);
       setForm({ name: '', username: '', email: '', role: 'Operator', password: '' });
-    } catch (e) { toast.error(apiError(e)); }
+    } catch (e) {
+      toast.error(apiError(e));
+    } finally {
+      setSaving(false);
+    }
   };
 
   const savePwd = async () => {
@@ -125,17 +138,17 @@ const Pengguna = () => {
       </div>
 
       {modal && (
-        <Modal title="Tambah Pengguna" onClose={() => setModal(false)}>
+        <Modal title="Tambah Pengguna" onClose={() => setModal(false)} locked={saving}>
           <div className="space-y-4">
             {[['name', 'Nama Lengkap'], ['username', 'Username'], ['email', 'Email (opsional)']].map(([k, l]) => (
-              <div key={k}><label className="text-xs font-medium mb-1 block text-[#8b93a1]">{l}</label><input data-testid={`user-form-${k}`} value={form[k]} onChange={(e) => setForm({ ...form, [k]: e.target.value })} className={inputCls} /></div>
+              <div key={k}><label className="text-xs font-medium mb-1 block text-[#8b93a1]">{l}</label><input data-testid={`user-form-${k}`} value={form[k]} onChange={(e) => setForm((prev) => ({ ...prev, [k]: e.target.value }))} className={inputCls} /></div>
             ))}
-            <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Password (min. 6 karakter)</label><input data-testid="user-form-password" type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className={inputCls} /></div>
-            <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Peran</label><select data-testid="user-form-role" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} className={inputCls}>{ROLES.map((r) => <option key={r}>{r}</option>)}</select></div>
+            <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Password (min. 6 karakter)</label><input data-testid="user-form-password" type="password" value={form.password} onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value }))} className={inputCls} /></div>
+            <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Peran</label><select data-testid="user-form-role" value={form.role} onChange={(e) => setForm((prev) => ({ ...prev, role: e.target.value }))} className={inputCls}>{ROLES.map((r) => <option key={r}>{r}</option>)}</select></div>
           </div>
           <div className="flex justify-end gap-2 mt-6">
-            <button onClick={() => setModal(false)} className="px-4 py-2.5 rounded-lg border border-[#242f3d] text-sm hover:bg-[#141a24]">Batal</button>
-            <button data-testid="user-form-submit" onClick={save} className="btn-primary px-5 py-2.5 rounded-lg text-sm font-semibold">Simpan</button>
+            <button onClick={() => setModal(false)} disabled={saving} className="px-4 py-2.5 rounded-lg border border-[#242f3d] text-sm hover:bg-[#141a24] disabled:opacity-50">Batal</button>
+            <button data-testid="user-form-submit" onClick={save} disabled={saving} className="btn-primary px-5 py-2.5 rounded-lg text-sm font-semibold disabled:opacity-60 disabled:cursor-wait">{saving ? 'Menyimpan…' : 'Simpan'}</button>
           </div>
         </Modal>
       )}
