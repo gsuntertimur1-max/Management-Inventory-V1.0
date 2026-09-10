@@ -18,7 +18,7 @@ const NAV = [
 ];
 
 const Layout = ({ children }) => {
-  const { user, logout, canWrite } = useData();
+  const { user, logout, canWrite, settings } = useData();
   const navigate = useNavigate();
 
   return (
@@ -29,7 +29,7 @@ const Layout = ({ children }) => {
             <div className="w-11 h-11 rounded-xl bg-white flex items-center justify-center font-display font-bold text-[#1e40af] text-sm shadow-lg">bulog</div>
             <div className="leading-tight">
               <div className="font-display font-bold text-[15px] tracking-tight">BULOG</div>
-              <div className="label-mono text-[9px]">Gudang Sunter Timur I &amp; II</div>
+              <div className="label-mono text-[9px]">{settings?.warehouse || 'Gudang Sunter Timur I & II'}</div>
             </div>
           </div>
 
