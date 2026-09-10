@@ -1,17 +1,22 @@
+import csv
+import io
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from backend.server import (
+    build_xlsx,
     db,
+    get_current_user,
+    max_suffix,
     new_id,
+    next_sequence,
     now_iso,
     operational_now,
-    next_sequence,
-    max_suffix,
     require_write,
 )
 
@@ -43,6 +48,22 @@ class ReceiptInput(BaseModel):
     polisi: str = ""
     kondisi: Literal["BAIK", "RUSAK"] = "BAIK"
     keterangan: str = ""
+
+
+def _number(value, default=0.0) -> float:
+    if value is None or value == "":
+        return default
+    text = str(value).strip().replace(" ", "")
+    if not text:
+        return default
+    if "," in text and "." in text:
+        text = text.replace(".", "").replace(",", ".")
+    elif "," in text:
+        text = text.replace(",", ".")
+    try:
+        return float(text)
+    except ValueError:
+        return default
 
 
 def _validate_exp(value: str) -> str:
@@ -84,10 +105,35 @@ def _normalize_po(doc: dict) -> dict:
     return doc
 
 
+async def _hydrate_legacy_po(doc: dict) -> dict:
+    """Lengkapi PO lama yang belum menyimpan productId/satuan agar tetap bisa dipakai."""
+    normalized = _normalize_po(doc)
+    changed = False
+    for item in normalized.get("items", []):
+        if item.get("productId"):
+            continue
+        query = {"sku": item.get("sku")} if item.get("sku") else {"name": item.get("name", "")}
+        product = await db.products.find_one(query, {"_id": 0}) if query else None
+        if not product:
+            continue
+        item["productId"] = product.get("id", "")
+        item["sku"] = product.get("sku", "")
+        item["unit"] = product.get("unit", "")
+        item["cost"] = float(item.get("cost", product.get("cost", 0)) or 0)
+        changed = True
+    normalized["status"] = _po_status(normalized["items"])
+    if changed and normalized.get("id"):
+        await db.purchase_orders.update_one(
+            {"id": normalized["id"]},
+            {"$set": {"items": normalized["items"], "status": normalized["status"]}},
+        )
+    return normalized
+
+
 @router.get("/purchase-orders-v2")
-async def list_purchase_orders(user: dict = Depends(require_write)):
+async def list_purchase_orders(user: dict = Depends(get_current_user)):
     docs = await db.purchase_orders.find({}, {"_id": 0}).sort("date", -1).to_list(1000)
-    return [_normalize_po(doc) for doc in docs]
+    return [await _hydrate_legacy_po(doc) for doc in docs]
 
 
 @router.post("/purchase-orders-v2")
@@ -144,10 +190,10 @@ async def create_purchase_order(body: PurchaseOrderInput, user: dict = Depends(r
 async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write)):
     po = None
     if body.poId:
-        po = await db.purchase_orders.find_one({"id": body.poId}, {"_id": 0})
-        if not po:
+        raw_po = await db.purchase_orders.find_one({"id": body.poId}, {"_id": 0})
+        if not raw_po:
             raise HTTPException(status_code=404, detail="Purchase Order tidak ditemukan")
-        po = _normalize_po(po)
+        po = await _hydrate_legacy_po(raw_po)
         if po["status"] == "Selesai":
             raise HTTPException(status_code=400, detail="PO sudah selesai diterima")
 
@@ -165,13 +211,8 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
     if not party:
         raise HTTPException(status_code=400, detail="Supplier pengirim wajib dipilih")
 
-    po_item_map = {}
     if po:
-        for item in po.get("items", []):
-            product_id = item.get("productId", "")
-            if product_id:
-                po_item_map[product_id] = item
-
+        po_item_map = {item.get("productId", ""): item for item in po.get("items", []) if item.get("productId")}
         for product_id, qty in requested_by_product.items():
             po_item = po_item_map.get(product_id)
             if not po_item:
@@ -199,8 +240,8 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
             previous_exp = product.get("exp", "") or ""
             update_doc = {"$inc": {field: float(item.qty)}}
 
-            # Produk tetap menyimpan tanggal kedaluwarsa terdekat sebagai ringkasan.
-            # Tanggal aktual setiap penerimaan juga dicatat di transaksi di bawah.
+            # Di master produk hanya disimpan expired terdekat sebagai ringkasan.
+            # Expired aktual tiap penerimaan tetap tersimpan pada transaksi.
             if body.kondisi == "BAIK" and exp and (not previous_exp or exp < previous_exp):
                 update_doc["$set"] = {"exp": exp}
 
@@ -229,6 +270,7 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
                 "product": product.get("name", ""),
                 "sku": product.get("sku", ""),
                 "change": float(item.qty),
+                "unit": product.get("unit", ""),
                 "exp": exp,
                 "penerima": party,
                 "polisi": body.polisi,
@@ -241,13 +283,12 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
 
         updated_po = None
         if po:
-            increments = requested_by_product
             updated_items = []
             for item in po["items"]:
                 updated = dict(item)
                 product_id = updated.get("productId", "")
-                if product_id in increments:
-                    updated["receivedQty"] = float(updated.get("receivedQty", 0) or 0) + increments[product_id]
+                if product_id in requested_by_product:
+                    updated["receivedQty"] = float(updated.get("receivedQty", 0) or 0) + requested_by_product[product_id]
                 updated_items.append(updated)
 
             new_status = _po_status(updated_items)
@@ -278,3 +319,106 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
         "purchaseOrder": updated_po,
         "message": "Penerimaan stok berhasil disimpan",
     }
+
+
+@router.post("/import/master-csv")
+async def import_master_csv(file: UploadFile = File(...), user: dict = Depends(require_write)):
+    content = (await file.read()).decode("utf-8-sig", errors="replace")
+    reader = csv.DictReader(io.StringIO(content), delimiter=";")
+    inserted = 0
+    updated = 0
+    supplier_names = set()
+
+    for row in reader:
+        sku = (row.get("sku") or "").strip().strip("[]")
+        name = (row.get("nama") or "").strip()
+        if not sku or not name:
+            continue
+
+        master = {
+            "name": name,
+            "sku": sku,
+            "category": (row.get("kategori") or "").strip(),
+            "cost": _number(row.get("harga_beli"), 0),
+            "location": (row.get("lokasi") or "").strip(),
+            "supplier": (row.get("supplier") or "").strip(),
+            "min": _number(row.get("stok_minimum"), 0),
+            "unit": (row.get("satuan") or "Pcs").strip() or "Pcs",
+            "weight": _number(row.get("berat_unit"), 0),
+            "secondary": (row.get("kemasan_sekunder") or "").strip(),
+        }
+        if master["supplier"]:
+            supplier_names.add(master["supplier"])
+
+        existing = await db.products.find_one({"sku": sku}, {"_id": 0, "id": 1})
+        if existing:
+            # Import master tidak pernah mengubah stock, damaged, atau expired.
+            await db.products.update_one({"sku": sku}, {"$set": master})
+            updated += 1
+        else:
+            doc = {
+                **master,
+                "id": new_id(),
+                "stock": 0,
+                "damaged": 0,
+                "exp": "",
+            }
+            await db.products.insert_one(doc)
+            inserted += 1
+
+    if inserted == 0 and updated == 0:
+        raise HTTPException(status_code=400, detail="File tidak berisi master SKU yang valid")
+
+    existing_suppliers = {
+        doc["name"]
+        for doc in await db.suppliers.find({}, {"_id": 0, "name": 1}).to_list(1000)
+    }
+    for name in sorted(supplier_names - existing_suppliers):
+        await db.suppliers.insert_one({
+            "id": new_id(), "name": name, "pic": "", "phone": "",
+            "email": "", "address": "", "category": "",
+        })
+
+    return {"inserted": inserted, "updated": updated}
+
+
+@router.get("/export/transactions-v2.xlsx")
+async def export_transactions_with_expiry(user: dict = Depends(get_current_user)):
+    now = operational_now()
+    start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if start.month == 12:
+        end = start.replace(year=start.year + 1, month=1)
+    else:
+        end = start.replace(month=start.month + 1)
+
+    transactions = await db.transactions.find(
+        {
+            "time": {
+                "$gte": start.astimezone(timezone.utc).isoformat(),
+                "$lt": end.astimezone(timezone.utc).isoformat(),
+            }
+        },
+        {"_id": 0},
+    ).sort("time", 1).to_list(10000)
+
+    headers = [
+        "Waktu", "No. Referensi", "No. PO", "Antrian", "Tipe", "Kondisi",
+        "Produk", "SKU", "Jumlah", "Satuan", "Tanggal Kedaluwarsa",
+        "Pihak Terkait", "No. Polisi", "Dicatat Oleh", "Keterangan",
+    ]
+    rows = [
+        [
+            t.get("time", ""), t.get("ref", ""), t.get("po_no", ""), t.get("antrian", ""),
+            t.get("type", ""), t.get("kondisi", ""), t.get("product", ""), t.get("sku", ""),
+            t.get("change", 0), t.get("unit", ""), t.get("exp", ""), t.get("penerima", ""),
+            t.get("polisi", ""), t.get("operator", ""), t.get("keterangan", ""),
+        ]
+        for t in transactions
+    ]
+    output = build_xlsx(headers, rows, "Riwayat Transaksi")
+    filename = f"riwayat_transaksi_{start.strftime('%Y_%m')}.xlsx"
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
