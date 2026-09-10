@@ -1,34 +1,56 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { Upload, Download, Plus, Search, Pencil, Trash2, X } from 'lucide-react';
+import { Upload, Download, Plus, Search, Pencil, Trash2, X, Info } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { apiError, downloadApiFile } from '../lib/api';
 import { formatRp, formatNum, catColor, CATEGORIES } from '../mock';
 import { toast } from 'sonner';
 
-const empty = { name: '', sku: '', category: 'F&B / Bahan Makanan', stock: 0, damaged: 0, cost: 0, exp: '', location: '', supplier: '', min: 0, unit: 'Pcs', weight: 0, secondary: 'Dus' };
+const empty = {
+  name: '', sku: '', category: 'F&B / Bahan Makanan', cost: 0,
+  location: '', supplier: '', min: 0, unit: 'Pcs', weight: 0, secondary: 'Dus',
+};
+
+const masterPayload = (data) => ({
+  name: data.name || '',
+  sku: data.sku || '',
+  category: data.category || '',
+  cost: Number(data.cost || 0),
+  location: data.location || '',
+  supplier: data.supplier || '',
+  min: Number(data.min || 0),
+  unit: data.unit || 'Pcs',
+  weight: Number(data.weight || 0),
+  secondary: data.secondary || '',
+});
 
 const DaftarProduk = () => {
   const navigate = useNavigate();
   const { products, suppliers, addProduct, updateProduct, deleteProduct } = useData();
   const [q, setQ] = useState('');
   const [cat, setCat] = useState('SEMUA');
-  const [modal, setModal] = useState(null); // {mode, data}
+  const [modal, setModal] = useState(null);
   const [exporting, setExporting] = useState(false);
 
-  const filtered = products.filter((p) => (cat === 'SEMUA' || p.category === cat) && (p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase()))).sort((a, b) => a.name.localeCompare(b.name));
+  const filtered = products
+    .filter((p) => (cat === 'SEMUA' || p.category === cat)
+      && (p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase())))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   const save = async () => {
-    const d = modal.data;
-    if (!d.name || !d.sku) { toast.error('Nama & SKU wajib diisi'); return; }
+    const data = masterPayload(modal.data);
+    if (!data.name.trim() || !data.sku.trim()) {
+      toast.error('Nama & SKU wajib diisi');
+      return;
+    }
     try {
       if (modal.mode === 'add') {
-        await addProduct(d);
-        toast.success('Produk ditambahkan');
+        await addProduct(data);
+        toast.success('Master produk ditambahkan dengan stok awal 0');
       } else {
-        await updateProduct(d.id, d);
-        toast.success('Produk diperbarui');
+        await updateProduct(modal.data.id, data);
+        toast.success('Master produk diperbarui');
       }
       setModal(null);
     } catch (e) {
@@ -85,14 +107,14 @@ const DaftarProduk = () => {
                   <td className="py-3 pr-4 font-medium">{p.name}</td>
                   <td className="py-3 pr-4 font-mono text-xs text-[#8b93a1]">{p.sku}</td>
                   <td className="py-3 pr-4"><span className="text-xs px-2 py-0.5 rounded-full whitespace-nowrap" style={{ background: `${catColor(p.category)}1f`, color: catColor(p.category) }}>{p.category}</span></td>
-                  <td className="py-3 pr-4 font-mono whitespace-nowrap">{formatNum(p.stock)} {p.unit}</td>
-                  <td className="py-3 pr-4 font-mono">{p.damaged || 0}</td>
+                  <td className="py-3 pr-4 font-mono whitespace-nowrap">{formatNum(p.stock || 0)} {p.unit}</td>
+                  <td className="py-3 pr-4 font-mono">{formatNum(p.damaged || 0)}</td>
                   <td className="py-3 pr-4 font-mono whitespace-nowrap">{formatRp(p.cost)}</td>
-                  <td className="py-3 pr-4 font-mono whitespace-nowrap">{formatRp(p.stock * p.cost)}</td>
-                  <td className="py-3 pr-4 text-xs"><div className="text-[#c7d0dc]">{p.supplier}</div><div className="text-[#6b7688]">{p.location}</div></td>
+                  <td className="py-3 pr-4 font-mono whitespace-nowrap">{formatRp((p.stock || 0) * (p.cost || 0))}</td>
+                  <td className="py-3 pr-4 text-xs"><div className="text-[#c7d0dc]">{p.supplier || '—'}</div><div className="text-[#6b7688]">{p.location || '—'}</div></td>
                   <td className="py-3 pr-4"><div className="flex gap-1.5">
                     <button data-testid={`edit-product-btn-${p.sku}`} onClick={() => setModal({ mode: 'edit', data: { ...p } })} className="w-8 h-8 rounded-lg border border-[#242f3d] flex items-center justify-center text-[#8b93a1] hover:text-[#60a5fa] hover:border-[#2563eb] transition-colors"><Pencil size={14} /></button>
-                    <button data-testid={`delete-product-btn-${p.sku}`} onClick={() => { if (window.confirm('Hapus produk ini?')) { deleteProduct(p.id); toast.success('Produk dihapus'); } }} className="w-8 h-8 rounded-lg border border-[#242f3d] flex items-center justify-center text-[#8b93a1] hover:text-[#ef4444] hover:border-[#ef4444] transition-colors"><Trash2 size={14} /></button>
+                    <button data-testid={`delete-product-btn-${p.sku}`} onClick={() => { if (window.confirm('Hapus master produk ini?')) { deleteProduct(p.id); toast.success('Produk dihapus'); } }} className="w-8 h-8 rounded-lg border border-[#242f3d] flex items-center justify-center text-[#8b93a1] hover:text-[#ef4444] hover:border-[#ef4444] transition-colors"><Trash2 size={14} /></button>
                   </div></td>
                 </tr>
               ))}
@@ -104,25 +126,35 @@ const DaftarProduk = () => {
       {modal && createPortal(
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 sm:p-6 overflow-y-auto">
           <div className="w-full max-w-2xl translate-y-6 sm:translate-y-8">
-            <div
-              className="card-surface w-full p-6 fade-up max-h-[calc(100dvh-4rem)] overflow-y-auto"
-              onClick={(e) => e.stopPropagation()}
-            >
+            <div className="card-surface w-full p-6 fade-up max-h-[calc(100dvh-4rem)] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-center justify-between mb-5">
-                <h2 className="font-display text-xl font-bold">{modal.mode === 'add' ? 'Tambah Produk' : 'Edit Produk'}</h2>
+                <div>
+                  <h2 className="font-display text-xl font-bold">{modal.mode === 'add' ? 'Tambah Master Produk' : 'Edit Master Produk'}</h2>
+                  <p className="text-xs text-[#6b7688] mt-1">Jumlah stok tidak diubah dari master produk.</p>
+                </div>
                 <button data-testid="product-modal-close-btn" onClick={() => setModal(null)} className="text-[#8b93a1] hover:text-white"><X size={20} /></button>
               </div>
+
+              <div className="mb-5 flex gap-2 rounded-lg border border-[#1f3657] bg-[#0d1b2f] px-3 py-2.5 text-xs text-[#93c5fd]">
+                <Info size={15} className="shrink-0 mt-0.5" />
+                <span>Produk baru selalu dimulai dari stok 0. Stok hanya bertambah atau berkurang melalui menu Catat Stok.</span>
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {[['name', 'Nama Produk', 'text'], ['sku', 'SKU', 'text'], ['stock', 'Stok Baik', 'number'], ['damaged', 'Stok Rusak', 'number'], ['cost', 'Harga Modal (Rp)', 'number'], ['min', 'Stok Minimum', 'number'], ['location', 'Lokasi', 'text'], ['weight', 'Berat/Unit (kg)', 'number']].map(([k, l, t]) => (
-                  <div key={k}><label className="text-xs font-medium mb-1 block text-[#8b93a1]">{l}</label><input data-testid={`product-form-${k}`} type={t} value={modal.data[k]} onChange={(e) => setModal({ ...modal, data: { ...modal.data, [k]: t === 'number' ? Number(e.target.value) : e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]" /></div>
+                {[['name', 'Nama Produk', 'text'], ['sku', 'SKU', 'text'], ['cost', 'Harga Modal (Rp)', 'number'], ['min', 'Stok Minimum', 'number'], ['location', 'Lokasi', 'text'], ['weight', 'Berat/Unit (kg)', 'number']].map(([k, l, t]) => (
+                  <div key={k}>
+                    <label className="text-xs font-medium mb-1 block text-[#8b93a1]">{l}</label>
+                    <input data-testid={`product-form-${k}`} type={t} value={modal.data[k] ?? ''} onChange={(e) => setModal({ ...modal, data: { ...modal.data, [k]: t === 'number' ? Number(e.target.value) : e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]" />
+                  </div>
                 ))}
-                <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Kategori</label><select value={modal.data.category} onChange={(e) => setModal({ ...modal, data: { ...modal.data, category: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]">{CATEGORIES.map((c) => <option key={c.name}>{c.name}</option>)}</select></div>
-                <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Supplier</label><select value={modal.data.supplier} onChange={(e) => setModal({ ...modal, data: { ...modal.data, supplier: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]"><option value="">Pilih supplier...</option>{suppliers.map((s) => <option key={s.id}>{s.name}</option>)}</select></div>
-                <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Satuan</label><input value={modal.data.unit} onChange={(e) => setModal({ ...modal, data: { ...modal.data, unit: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]" /></div>
+                <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Kategori</label><select value={modal.data.category || ''} onChange={(e) => setModal({ ...modal, data: { ...modal.data, category: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]">{CATEGORIES.map((c) => <option key={c.name}>{c.name}</option>)}</select></div>
+                <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Supplier Default</label><select value={modal.data.supplier || ''} onChange={(e) => setModal({ ...modal, data: { ...modal.data, supplier: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]"><option value="">Pilih supplier...</option>{suppliers.map((s) => <option key={s.id}>{s.name}</option>)}</select></div>
+                <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Satuan</label><input value={modal.data.unit || ''} onChange={(e) => setModal({ ...modal, data: { ...modal.data, unit: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]" /></div>
+                <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Kemasan Sekunder</label><input value={modal.data.secondary || ''} onChange={(e) => setModal({ ...modal, data: { ...modal.data, secondary: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]" /></div>
               </div>
               <div className="flex justify-end gap-2 mt-6">
                 <button onClick={() => setModal(null)} className="px-4 py-2.5 rounded-lg border border-[#242f3d] text-sm hover:bg-[#141a24]">Batal</button>
-                <button data-testid="product-save-btn" onClick={save} className="btn-primary px-5 py-2.5 rounded-lg text-sm font-semibold">Simpan</button>
+                <button data-testid="product-save-btn" onClick={save} className="btn-primary px-5 py-2.5 rounded-lg text-sm font-semibold">Simpan Master</button>
               </div>
             </div>
           </div>
