@@ -1,12 +1,11 @@
 import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { LayoutGrid, Boxes, Upload, Layers, ArrowLeftRight, Send, History, ClipboardList, Truck, MonitorSmartphone, Users, Settings, PlusCircle, LogOut } from 'lucide-react';
+import { LayoutGrid, Boxes, Layers, ArrowLeftRight, Send, History, ClipboardList, Truck, MonitorSmartphone, Users, Settings, PlusCircle, LogOut } from 'lucide-react';
 import { useData } from '../context/DataContext';
 
 const NAV = [
   { to: '/', label: 'Dashboard', icon: LayoutGrid },
   { to: '/produk', label: 'Daftar Produk', icon: Boxes },
-  { to: '/import', label: 'Import Data', icon: Upload },
   { to: '/tumpukan', label: 'Tumpukan Stok', icon: Layers },
   { to: '/catat', label: 'Catat Stok', icon: ArrowLeftRight },
   { to: '/pengeluaran', label: 'Pengeluaran', icon: Send },
