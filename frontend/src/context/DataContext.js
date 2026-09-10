@@ -127,7 +127,7 @@ export const DataProvider = ({ children }) => {
   const importCsv = async (file) => {
     const fd = new FormData();
     fd.append('file', file);
-    const { data } = await api.post('/import/csv', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+    const { data } = await api.post('/import/master-csv', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
     await fetchAll();
     return data;
   };
