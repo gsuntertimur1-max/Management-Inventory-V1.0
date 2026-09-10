@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Box, Layers, AlertTriangle, Sparkles, Activity, Upload, Plus, Search, ClipboardList, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { Box, Layers, AlertTriangle, Sparkles, Activity, Search, ClipboardList, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { formatRp, formatRpShort, formatNum, formatDate, catColor, CATEGORIES } from '../mock';
 
@@ -68,10 +68,6 @@ const Dashboard = () => {
           <div className="label-mono mb-2">Pusat Kendali Gudang</div>
           <h1 className="font-display text-4xl font-bold">Ringkasan Penyimpanan Stok</h1>
           <p className="text-[#8b93a1] mt-2 max-w-xl">Pantau nilai aset inventori, perputaran barang, dan aktivitas terakhir gudang Anda.</p>
-        </div>
-        <div className="flex gap-2">
-          <button onClick={() => navigate('/import')} className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-[#242f3d] hover:bg-[#141a24] transition-colors"><Upload size={15} /> Import Data SKU</button>
-          <button onClick={() => navigate('/produk')} className="btn-primary inline-flex items-center gap-2 text-sm font-semibold px-4 py-2.5 rounded-lg"><Plus size={15} /> Tambah Produk</button>
         </div>
       </div>
 
