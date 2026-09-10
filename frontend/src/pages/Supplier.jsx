@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Plus, X, Phone, Mail, MapPin, User } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { catColor, formatNum } from '../mock';
@@ -89,16 +90,15 @@ const Supplier = () => {
         })}
       </div>
 
-      {modal && (
+      {modal && createPortal(
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 overflow-y-auto"
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 sm:p-6 overflow-y-auto"
           onClick={closeModal}
         >
-          <div className="w-full max-w-md translate-y-8 sm:translate-y-10">
-            <div
-              className="card-surface w-full p-6 fade-up max-h-[calc(100dvh-6rem)] overflow-y-auto"
-              onClick={(e) => e.stopPropagation()}
-            >
+          <div
+            className="card-surface w-full max-w-md p-6 fade-up max-h-[calc(100dvh-3rem)] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
               <div className="flex items-center justify-between mb-5">
                 <h2 className="font-display text-xl font-bold">Tambah Supplier</h2>
                 <button onClick={closeModal} disabled={saving} className="text-[#8b93a1] hover:text-white disabled:opacity-50">
@@ -143,9 +143,9 @@ const Supplier = () => {
                   {saving ? 'Menyimpan…' : 'Simpan'}
                 </button>
               </div>
-            </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
