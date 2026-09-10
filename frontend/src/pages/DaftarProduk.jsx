@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { Upload, Download, Plus, Search, Pencil, Trash2, X } from 'lucide-react';
 import { useData } from '../context/DataContext';
@@ -100,21 +101,36 @@ const DaftarProduk = () => {
         </div>
       </div>
 
-      {modal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={() => setModal(null)}>
-          <div className="card-surface w-full max-w-2xl p-6 fade-up" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-5"><h2 className="font-display text-xl font-bold">{modal.mode === 'add' ? 'Tambah Produk' : 'Edit Produk'}</h2><button data-testid="product-modal-close-btn" onClick={() => setModal(null)} className="text-[#8b93a1] hover:text-white"><X size={20} /></button></div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {[['name', 'Nama Produk', 'text'], ['sku', 'SKU', 'text'], ['stock', 'Stok Baik', 'number'], ['damaged', 'Stok Rusak', 'number'], ['cost', 'Harga Modal (Rp)', 'number'], ['min', 'Stok Minimum', 'number'], ['location', 'Lokasi', 'text'], ['weight', 'Berat/Unit (kg)', 'number']].map(([k, l, t]) => (
-                <div key={k}><label className="text-xs font-medium mb-1 block text-[#8b93a1]">{l}</label><input data-testid={`product-form-${k}`} type={t} value={modal.data[k]} onChange={(e) => setModal({ ...modal, data: { ...modal.data, [k]: t === 'number' ? Number(e.target.value) : e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]" /></div>
-              ))}
-              <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Kategori</label><select value={modal.data.category} onChange={(e) => setModal({ ...modal, data: { ...modal.data, category: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]">{CATEGORIES.map((c) => <option key={c.name}>{c.name}</option>)}</select></div>
-              <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Supplier</label><select value={modal.data.supplier} onChange={(e) => setModal({ ...modal, data: { ...modal.data, supplier: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]"><option value="">Pilih supplier...</option>{suppliers.map((s) => <option key={s.id}>{s.name}</option>)}</select></div>
-              <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Satuan</label><input value={modal.data.unit} onChange={(e) => setModal({ ...modal, data: { ...modal.data, unit: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]" /></div>
+      {modal && createPortal(
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 sm:p-6 overflow-y-auto"
+          onClick={() => setModal(null)}
+        >
+          <div className="w-full max-w-2xl translate-y-6 sm:translate-y-8">
+            <div
+              className="card-surface w-full p-6 fade-up max-h-[calc(100dvh-4rem)] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-5">
+                <h2 className="font-display text-xl font-bold">{modal.mode === 'add' ? 'Tambah Produk' : 'Edit Produk'}</h2>
+                <button data-testid="product-modal-close-btn" onClick={() => setModal(null)} className="text-[#8b93a1] hover:text-white"><X size={20} /></button>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {[['name', 'Nama Produk', 'text'], ['sku', 'SKU', 'text'], ['stock', 'Stok Baik', 'number'], ['damaged', 'Stok Rusak', 'number'], ['cost', 'Harga Modal (Rp)', 'number'], ['min', 'Stok Minimum', 'number'], ['location', 'Lokasi', 'text'], ['weight', 'Berat/Unit (kg)', 'number']].map(([k, l, t]) => (
+                  <div key={k}><label className="text-xs font-medium mb-1 block text-[#8b93a1]">{l}</label><input data-testid={`product-form-${k}`} type={t} value={modal.data[k]} onChange={(e) => setModal({ ...modal, data: { ...modal.data, [k]: t === 'number' ? Number(e.target.value) : e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]" /></div>
+                ))}
+                <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Kategori</label><select value={modal.data.category} onChange={(e) => setModal({ ...modal, data: { ...modal.data, category: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]">{CATEGORIES.map((c) => <option key={c.name}>{c.name}</option>)}</select></div>
+                <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Supplier</label><select value={modal.data.supplier} onChange={(e) => setModal({ ...modal, data: { ...modal.data, supplier: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]"><option value="">Pilih supplier...</option>{suppliers.map((s) => <option key={s.id}>{s.name}</option>)}</select></div>
+                <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Satuan</label><input value={modal.data.unit} onChange={(e) => setModal({ ...modal, data: { ...modal.data, unit: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]" /></div>
+              </div>
+              <div className="flex justify-end gap-2 mt-6">
+                <button onClick={() => setModal(null)} className="px-4 py-2.5 rounded-lg border border-[#242f3d] text-sm hover:bg-[#141a24]">Batal</button>
+                <button data-testid="product-save-btn" onClick={save} className="btn-primary px-5 py-2.5 rounded-lg text-sm font-semibold">Simpan</button>
+              </div>
             </div>
-            <div className="flex justify-end gap-2 mt-6"><button onClick={() => setModal(null)} className="px-4 py-2.5 rounded-lg border border-[#242f3d] text-sm hover:bg-[#141a24]">Batal</button><button data-testid="product-save-btn" onClick={save} className="btn-primary px-5 py-2.5 rounded-lg text-sm font-semibold">Simpan</button></div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
