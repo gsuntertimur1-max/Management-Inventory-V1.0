@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Printer, Plus, MonitorSmartphone, Truck } from 'lucide-react';
+import { Printer, MonitorSmartphone } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { formatNum, formatDate } from '../mock';
 import { toast } from 'sonner';
@@ -128,10 +128,7 @@ const Pengeluaran = () => {
           <h1 className="font-display text-4xl font-bold">Pengeluaran &amp; Surat Jalan</h1>
           <p className="text-[#8b93a1] mt-2">{suratJalan.length} surat jalan · setiap dokumen bisa memuat beberapa jenis barang</p>
         </div>
-        <div className="flex gap-2">
-          <button onClick={() => navigate('/antrian')} className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-[#242f3d] hover:bg-[#141a24]"><MonitorSmartphone size={15} /> Layar Antrian</button>
-          <button onClick={() => navigate('/catat')} className="btn-primary inline-flex items-center gap-2 text-sm font-semibold px-4 py-2.5 rounded-lg"><Plus size={15} /> Pengeluaran Baru</button>
-        </div>
+        <button onClick={() => navigate('/antrian')} className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-[#242f3d] hover:bg-[#141a24]"><MonitorSmartphone size={15} /> Layar Antrian</button>
       </div>
 
       <div className="card-surface p-6">
