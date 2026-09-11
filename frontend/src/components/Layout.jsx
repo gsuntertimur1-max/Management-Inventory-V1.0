@@ -1,22 +1,40 @@
 import React, { useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutGrid, Boxes, Layers, ArrowLeftRight, Send, History, ClipboardList, Truck, MonitorSmartphone, Users, Settings, PlusCircle, LogOut, Menu } from 'lucide-react';
+import { LayoutGrid, Boxes, Layers, ArrowLeftRight, Send, History, ClipboardList, Truck, MonitorSmartphone, Users, Settings, PlusCircle, LogOut, Menu, ChevronDown, PackageSearch, Workflow, ShoppingCart, ShieldCheck } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { hasPermission, roleLabel } from '../lib/permissions';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from './ui/sheet';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from './ui/accordion';
 
-const NAV = [
-  { to: '/', label: 'Dashboard', icon: LayoutGrid },
-  { to: '/produk', label: 'Daftar Produk', icon: Boxes },
-  { to: '/tumpukan', label: 'Tumpukan Stok', icon: Layers },
-  { to: '/catat', label: 'Catat Stok', icon: ArrowLeftRight, permission: 'operations' },
-  { to: '/pengeluaran', label: 'Pengeluaran', icon: Send, permission: 'outbound' },
-  { to: '/riwayat', label: 'Riwayat', icon: History },
-  { to: '/po', label: 'Purchase Order', icon: ClipboardList },
-  { to: '/supplier', label: 'Supplier', icon: Truck },
-  { to: '/antrian', label: 'Layar Antrian', icon: MonitorSmartphone },
-  { to: '/pengguna', label: 'Pengguna', icon: Users, permission: 'users' },
-  { to: '/pengaturan', label: 'Pengaturan', icon: Settings, permission: 'settings' },
+const NAV_GROUPS = [
+  { label: 'Dashboard', icon: LayoutGrid, to: '/' },
+  {
+    label: 'Inventori', icon: PackageSearch, items: [
+      { to: '/produk', label: 'Daftar Produk', icon: Boxes },
+      { to: '/tumpukan', label: 'Tumpukan Stok', icon: Layers },
+    ],
+  },
+  {
+    label: 'Operasional', icon: Workflow, items: [
+      { to: '/catat', label: 'Catat Stok', icon: ArrowLeftRight, permission: 'operations' },
+      { to: '/pengeluaran', label: 'Pengeluaran', icon: Send, permission: 'outbound' },
+      { to: '/antrian', label: 'Layar Antrian', icon: MonitorSmartphone },
+    ],
+  },
+  {
+    label: 'Pengadaan', icon: ShoppingCart, items: [
+      { to: '/po', label: 'Purchase Order', icon: ClipboardList },
+      { to: '/supplier', label: 'Supplier', icon: Truck },
+    ],
+  },
+  { label: 'Riwayat', icon: History, to: '/riwayat' },
+  {
+    label: 'Administrasi', icon: ShieldCheck, items: [
+      { to: '/pengguna', label: 'Pengguna', icon: Users, permission: 'users' },
+      { to: '/pengaturan', label: 'Pengaturan', icon: Settings, permission: 'settings' },
+    ],
+  },
 ];
 
 const Layout = ({ children }) => {
@@ -24,7 +42,12 @@ const Layout = ({ children }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const visibleNav = NAV.filter((n) => !n.permission || hasPermission(user?.role, n.permission));
+  const canSeeItem = (item) => !item.permission || hasPermission(user?.role, item.permission);
+  const visibleGroups = NAV_GROUPS
+    .map((group) => group.items ? { ...group, items: group.items.filter(canSeeItem) } : group)
+    .filter((group) => group.to || group.items.length > 0);
+  const isPathActive = (to) => to === '/' ? location.pathname === '/' : location.pathname.startsWith(to);
+  const isGroupActive = (group) => group.to ? isPathActive(group.to) : group.items.some((item) => isPathActive(item.to));
 
   const goToTransaction = () => {
     setMobileMenuOpen(false);
@@ -51,11 +74,31 @@ const Layout = ({ children }) => {
           </div>
 
           <nav className="hidden xl:flex flex-1 flex-wrap items-center justify-center gap-1 px-2">
-            {visibleNav.map((n) => (
-              <NavLink key={n.to} to={n.to} end={n.to === '/'} className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                <n.icon size={15} />
-                <span>{n.label}</span>
+            {visibleGroups.map((group) => group.to ? (
+              <NavLink key={group.to} to={group.to} end={group.to === '/'} className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+                <group.icon size={15} />
+                <span>{group.label}</span>
               </NavLink>
+            ) : (
+              <DropdownMenu key={group.label}>
+                <DropdownMenuTrigger asChild>
+                  <button type="button" className={`nav-link outline-none ${isGroupActive(group) ? 'active' : ''}`}>
+                    <group.icon size={15} />
+                    <span>{group.label}</span>
+                    <ChevronDown size={13} />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="min-w-52 border-[#242f3d] bg-[#0d121b] p-1.5 text-[#e7ebf2] shadow-xl">
+                  {group.items.map((item) => (
+                    <DropdownMenuItem key={item.to} asChild className="cursor-pointer rounded-lg p-0 focus:bg-[#172033] focus:text-white">
+                      <NavLink to={item.to} className={`flex w-full items-center gap-2.5 px-3 py-2.5 text-sm ${isPathActive(item.to) ? 'bg-[#2563eb]/15 text-[#60a5fa]' : 'text-[#aab4c4]'}`}>
+                        <item.icon size={17} />
+                        <span>{item.label}</span>
+                      </NavLink>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
             ))}
           </nav>
 
@@ -89,22 +132,40 @@ const Layout = ({ children }) => {
                   </SheetDescription>
                 </SheetHeader>
 
-                <nav aria-label="Navigasi mobile" className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
-                  {visibleNav.map((n) => {
-                    const isActive = n.to === '/' ? location.pathname === '/' : location.pathname.startsWith(n.to);
-                    return (
+                <nav aria-label="Navigasi mobile" className="flex-1 overflow-y-auto px-3 py-4">
+                  {visibleGroups.map((group) => group.to ? (
                       <NavLink
-                        key={n.to}
-                        to={n.to}
-                        end={n.to === '/'}
+                        key={group.to}
+                        to={group.to}
+                        end={group.to === '/'}
                         onClick={() => setMobileMenuOpen(false)}
-                        className={`mobile-nav-link ${isActive ? 'active' : ''}`}
+                        className={`mobile-nav-link mb-1 ${isGroupActive(group) ? 'active' : ''}`}
                       >
-                        <n.icon size={19} />
-                        <span>{n.label}</span>
+                        <group.icon size={19} />
+                        <span>{group.label}</span>
                       </NavLink>
-                    );
-                  })}
+                  ) : (
+                    <Accordion key={group.label} type="single" collapsible defaultValue={isGroupActive(group) ? group.label : undefined}>
+                      <AccordionItem value={group.label} className="border-0">
+                        <AccordionTrigger className={`mobile-nav-link mb-1 py-3 hover:no-underline [&>svg]:ml-auto ${isGroupActive(group) ? 'active' : ''}`}>
+                          <span className="flex items-center gap-3"><group.icon size={19} />{group.label}</span>
+                        </AccordionTrigger>
+                        <AccordionContent className="pb-2 pl-4 space-y-1">
+                          {group.items.map((item) => (
+                            <NavLink
+                              key={item.to}
+                              to={item.to}
+                              onClick={() => setMobileMenuOpen(false)}
+                              className={`mobile-nav-link ${isPathActive(item.to) ? 'active' : ''}`}
+                            >
+                              <item.icon size={18} />
+                              <span>{item.label}</span>
+                            </NavLink>
+                          ))}
+                        </AccordionContent>
+                      </AccordionItem>
+                    </Accordion>
+                  ))}
                 </nav>
 
                 <div className="p-4 border-t border-[#1a222e] space-y-2 pb-[max(1rem,env(safe-area-inset-bottom))]">
