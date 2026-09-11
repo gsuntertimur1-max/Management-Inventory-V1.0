@@ -9,6 +9,8 @@ const LayarAntrian = () => {
   const announcedQueueRef = useRef(null);
   const [presentationMode, setPresentationMode] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const [indonesianVoice, setIndonesianVoice] = useState(null);
+  const [voiceNotice, setVoiceNotice] = useState('');
   const [lastUpdated, setLastUpdated] = useState(new Date());
   const [refreshing, setRefreshing] = useState(false);
   const active = outboundLoads
@@ -40,19 +42,40 @@ const LayarAntrian = () => {
   }, []);
 
   useEffect(() => {
+    if (!('speechSynthesis' in window)) {
+      setVoiceNotice('Fitur suara tidak didukung browser ini. Gunakan Chrome atau Safari versi terbaru.');
+      return undefined;
+    }
+
+    const loadIndonesianVoice = () => {
+      const voices = window.speechSynthesis.getVoices();
+      const selected = voices.find((voice) => voice.lang?.toLowerCase() === 'id-id')
+        || voices.find((voice) => voice.lang?.toLowerCase().startsWith('id'))
+        || voices.find((voice) => /bahasa indonesia|indonesian|damayanti|dimas/i.test(voice.name));
+
+      setIndonesianVoice(selected || null);
+      setVoiceNotice(selected ? '' : 'Suara Bahasa Indonesia belum tersedia. Tambahkan suara Bahasa Indonesia pada pengaturan perangkat, lalu buka kembali halaman ini.');
+    };
+
+    loadIndonesianVoice();
+    window.speechSynthesis.addEventListener?.('voiceschanged', loadIndonesianVoice);
+    return () => window.speechSynthesis.removeEventListener?.('voiceschanged', loadIndonesianVoice);
+  }, []);
+
+  useEffect(() => {
     const queueNumber = loading?.antrian;
-    if (!voiceEnabled || !queueNumber || announcedQueueRef.current === queueNumber || !('speechSynthesis' in window)) return;
+    if (!voiceEnabled || !indonesianVoice || !queueNumber || announcedQueueRef.current === queueNumber || !('speechSynthesis' in window)) return;
 
     window.speechSynthesis.cancel();
-    const message = new SpeechSynthesisUtterance(`Nomor antrean ${queueNumber}, silakan menuju area pemuatan.`);
-    message.lang = 'id-ID';
-    message.rate = 0.9;
+    const spokenQueueNumber = String(queueNumber).replace(/[^a-zA-Z0-9]/g, '').split('').join(' ');
+    const message = new SpeechSynthesisUtterance(`Nomor antrian ${spokenQueueNumber}. Silakan menuju area pemuatan.`);
+    message.voice = indonesianVoice;
+    message.lang = indonesianVoice.lang || 'id-ID';
+    message.rate = 0.85;
     message.volume = 1;
-    const indonesianVoice = window.speechSynthesis.getVoices().find((voice) => voice.lang?.toLowerCase().startsWith('id'));
-    if (indonesianVoice) message.voice = indonesianVoice;
     window.speechSynthesis.speak(message);
     announcedQueueRef.current = queueNumber;
-  }, [loading?.antrian, voiceEnabled]);
+  }, [indonesianVoice, loading?.antrian, voiceEnabled]);
 
   const enterPresentation = async () => {
     setPresentationMode(true);
@@ -98,6 +121,12 @@ const LayarAntrian = () => {
           </button>
         </div>
       </div>
+
+      {voiceEnabled && voiceNotice && (
+        <div role="status" className="rounded-xl border border-[#eab308]/30 bg-[#eab308]/10 px-4 py-3 text-sm text-[#facc15]">
+          {voiceNotice}
+        </div>
+      )}
 
       <div className="flex items-end justify-between gap-4 border-y border-[#161d29] py-4">
         <div className="text-xs text-[#6b7688]">Diperbarui otomatis setiap 1 menit · Terakhir {lastUpdated.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</div>
