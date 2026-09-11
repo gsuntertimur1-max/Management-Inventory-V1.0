@@ -59,6 +59,19 @@ async def create_master_product(body: MasterProductBody, user: dict = Depends(re
 @router.put("/products-master/{product_id}")
 async def update_master_product(product_id: str, body: MasterProductBody, user: dict = Depends(require_write)):
     master = clean_master(body)
+    current = await db.products.find_one({"id": product_id}, {"_id": 0})
+    if not current:
+        raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
+    has_allocations = await db.stack_allocations.find_one({"productId": product_id})
+    packaging_changed = (
+        float(current.get("secondaryQty", 0) or 0) != float(master.get("secondaryQty", 0) or 0)
+        or str(current.get("secondary", "") or "").strip() != master.get("secondary", "")
+    )
+    if has_allocations and packaging_changed:
+        raise HTTPException(
+            status_code=400,
+            detail="Kemasan sekunder tidak dapat diubah selama produk masih dialokasikan pada tumpukan",
+        )
     duplicate = await db.products.find_one({"sku": master["sku"], "id": {"$ne": product_id}})
     if duplicate:
         raise HTTPException(status_code=409, detail="SKU sudah digunakan")
@@ -77,6 +90,9 @@ async def delete_master_product(product_id: str, user: dict = Depends(require_wr
 
     if float(product.get("stock", 0) or 0) > 0 or float(product.get("damaged", 0) or 0) > 0:
         raise HTTPException(status_code=400, detail="Master produk tidak dapat dihapus karena stok fisik masih tersedia")
+
+    if await db.stack_allocations.find_one({"productId": product_id}):
+        raise HTTPException(status_code=400, detail="Master produk masih digunakan pada tumpukan stok")
 
     open_po = await db.purchase_orders.find_one({
         "items.productId": product_id,

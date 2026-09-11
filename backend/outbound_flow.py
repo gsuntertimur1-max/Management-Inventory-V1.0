@@ -15,6 +15,7 @@ from backend.server import (
     operational_now,
     require_write,
 )
+from backend.stack_allocations import reconcile_product_allocations
 
 router = APIRouter(prefix="/api")
 
@@ -347,6 +348,9 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
         for product_id, qty in reversed(stock_changes):
             await db.products.update_one({"id": product_id}, {"$inc": {field: qty}})
         raise
+
+    for product_id in {item.get("productId") for item in load.get("items", []) if item.get("productId")}:
+        await reconcile_product_allocations(product_id)
 
     updated = await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
     return {"load": updated, "suratJalan": sj}

@@ -264,6 +264,7 @@ def suppliers_from_products(products: List[dict]) -> List[dict]:
 
 async def seed_master(force: bool = False):
     if force:
+        await db.stack_allocations.delete_many({})
         await db.transactions.delete_many({})
         await db.surat_jalan.delete_many({})
         await db.purchase_orders.delete_many({})
@@ -309,6 +310,7 @@ async def initialize_app():
     await db.users.create_index("username", unique=True)
     await db.user_sessions.create_index("session_token")
     await db.products.create_index("sku")
+    await db.stack_allocations.create_index([("productId", 1), ("stackCode", 1)], unique=True)
     await db.login_attempts.create_index("identifier")
     await create_unique_index_safely(db.surat_jalan, "no", sparse=True)
     await create_unique_index_safely(db.purchase_orders, "no", sparse=True)

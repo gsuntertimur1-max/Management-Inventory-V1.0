@@ -21,6 +21,7 @@ const EMPTY = {
   purchaseOrders: [],
   users: [],
   transactions: [],
+  stackAllocations: [],
   settings: DEFAULT_SETTINGS,
 };
 
@@ -31,13 +32,14 @@ export const DataProvider = ({ children }) => {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [p, suppliersRes, sj, loads, po, t, settingsRes, usersRes] = await Promise.all([
+      const [p, suppliersRes, sj, loads, po, t, stacks, settingsRes, usersRes] = await Promise.all([
         api.get('/products'),
         api.get('/suppliers'),
         api.get('/surat-jalan'),
         api.get('/outbound-loads'),
         api.get('/purchase-orders-v2'),
         api.get('/transactions'),
+        api.get('/stack-allocations'),
         api.get('/settings'),
         hasPermission(user?.role, 'users') ? api.get('/users') : Promise.resolve({ data: [] }),
       ]);
@@ -49,6 +51,7 @@ export const DataProvider = ({ children }) => {
         purchaseOrders: po.data,
         users: usersRes.data,
         transactions: t.data,
+        stackAllocations: stacks.data,
         settings: { ...DEFAULT_SETTINGS, ...settingsRes.data },
       });
     } catch (e) {
@@ -163,6 +166,9 @@ export const DataProvider = ({ children }) => {
     await fetchAll();
     return data;
   };
+  const addStackAllocation = async (payload) => { await api.post('/stack-allocations', payload); await fetchAll(); };
+  const updateStackAllocation = async (id, payload) => { await api.put(`/stack-allocations/${id}`, payload); await fetchAll(); };
+  const deleteStackAllocation = async (id) => { await api.delete(`/stack-allocations/${id}`); await fetchAll(); };
 
   return (
     <DataContext.Provider value={{
@@ -181,6 +187,7 @@ export const DataProvider = ({ children }) => {
       addProduct, updateProduct, deleteProduct, addTransaction, addReceipt,
       createOutboundLoad, refreshOutboundLoads, startOutboundLoad, completeOutboundLoad, updateSJStatus,
       addSupplier, addPO, addUser, updateUser, deleteUser, changeUserPassword, updateSettings, resetData, importCsv,
+      addStackAllocation, updateStackAllocation, deleteStackAllocation,
     }}>
       {children}
     </DataContext.Provider>
