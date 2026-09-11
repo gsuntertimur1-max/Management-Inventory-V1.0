@@ -5,6 +5,7 @@ import { useData } from '../context/DataContext';
 import { apiError } from '../lib/api';
 import { formatRp, formatDate, formatNum } from '../mock';
 import { toast } from 'sonner';
+import { packagingText, quantityFromInput, quantityIsValid, totalWeight } from '../lib/packaging';
 
 const STATUS = {
   'Belum Diterima': '#eab308',
@@ -16,7 +17,7 @@ const STATUS = {
   'Diterima': '#22c55e',
 };
 
-const newRow = () => ({ productId: '', qty: 1 });
+const newRow = () => ({ productId: '', inputMode: 'QTY', inputValue: 1, qty: 1 });
 
 const PurchaseOrder = () => {
   const { purchaseOrders, suppliers, products, addPO, canManageMasterData } = useData();
@@ -27,7 +28,12 @@ const PurchaseOrder = () => {
   const setItem = (index, patch) => {
     setForm((prev) => ({
       ...prev,
-      items: prev.items.map((item, i) => i === index ? { ...item, ...patch } : item),
+      items: prev.items.map((item, i) => {
+        if (i !== index) return item;
+        const next = { ...item, ...patch };
+        const product = products.find((candidate) => candidate.id === next.productId);
+        return { ...next, qty: quantityFromInput(next.inputValue, next.inputMode, product) };
+      }),
     }));
   };
 
@@ -51,6 +57,10 @@ const PurchaseOrder = () => {
     }
     if (selectedItems.some((item) => !item.product || Number(item.qty) <= 0)) {
       toast.error('Lengkapi produk dan jumlah pesanan');
+      return;
+    }
+    if (selectedItems.some((item) => !quantityIsValid(item.qty, item.product))) {
+      toast.error('Berat harus menghasilkan jumlah kemasan primer/pack yang utuh');
       return;
     }
     const ids = selectedItems.map((item) => item.productId);
@@ -107,6 +117,7 @@ const PurchaseOrder = () => {
                       {(po.items || []).map((it, i) => (
                         <div key={i} className="mb-1.5 last:mb-0">
                           <div>{it.name} × <span className="font-mono">{formatNum(it.qty)} {it.unit || ''}</span></div>
+                          {(packagingText(it.qty, it, formatNum) || Number(it.weight || 0) > 0) && <div className="text-[#7892b5]">{packagingText(it.qty, it, formatNum)}{packagingText(it.qty, it, formatNum) && Number(it.weight || 0) > 0 ? ' · ' : ''}{Number(it.weight || 0) > 0 ? `${formatNum(totalWeight(it.qty, it))} kg` : ''}</div>}
                           <div className="text-[#6b7688]">Diterima {formatNum(it.receivedQty || 0)} · Sisa {formatNum(Math.max(Number(it.qty || 0) - Number(it.receivedQty || 0), 0))} {it.unit || ''}</div>
                         </div>
                       ))}
@@ -153,23 +164,27 @@ const PurchaseOrder = () => {
                 </div>
                 <div className="space-y-3">
                   {selectedItems.map((item, index) => (
-                    <div key={index} className="grid grid-cols-1 sm:grid-cols-[1fr_150px_90px_40px] gap-2 items-end p-3 rounded-lg bg-[#0b0f17] border border-[#1a222e]">
+                    <div key={index} className="grid grid-cols-1 sm:grid-cols-[minmax(180px,1fr)_105px_145px_40px] gap-2 items-end p-3 rounded-lg bg-[#0b0f17] border border-[#1a222e]">
                       <div>
                         <label className="text-[10px] text-[#6b7688] mb-1 block">Produk</label>
-                        <select data-testid={`po-product-select-${index}`} value={item.productId} onChange={(e) => setItem(index, { productId: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]">
+                        <select data-testid={`po-product-select-${index}`} value={item.productId} onChange={(e) => setItem(index, { productId: e.target.value, inputMode: 'QTY', inputValue: 1 })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]">
                           <option value="">Pilih produk...</option>
                           {products.map((product) => <option key={product.id} value={product.id}>{product.name} ({product.sku})</option>)}
                         </select>
                       </div>
                       <div>
-                        <label className="text-[10px] text-[#6b7688] mb-1 block">Jumlah Pesan</label>
-                        <input data-testid={`po-qty-input-${index}`} type="number" min="0.01" step="any" value={item.qty} onChange={(e) => setItem(index, { qty: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" />
+                        <label className="text-[10px] text-[#6b7688] mb-1 block">Input Berdasarkan</label>
+                        <select value={item.inputMode || 'QTY'} onChange={(e) => setItem(index, { inputMode: e.target.value, inputValue: e.target.value === 'WEIGHT' ? totalWeight(item.qty, item.product) : item.qty })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2.5 text-xs outline-none focus:border-[#2563eb]">
+                          <option value="QTY">Jumlah</option>
+                          <option value="WEIGHT" disabled={!Number(item.product?.weight || 0)}>Berat</option>
+                        </select>
                       </div>
                       <div>
-                        <label className="text-[10px] text-[#6b7688] mb-1 block">Satuan</label>
-                        <div className="h-[42px] px-3 flex items-center rounded-lg border border-[#1a222e] text-xs text-[#aab4c4]">{item.product?.unit || '—'}</div>
+                        <label className="text-[10px] text-[#6b7688] mb-1 block">{item.inputMode === 'WEIGHT' ? 'Berat Pesanan (kg)' : `Jumlah (${item.product?.unit || 'unit'})`}</label>
+                        <input data-testid={`po-qty-input-${index}`} type="number" min="0.01" step="any" value={item.inputValue} onChange={(e) => setItem(index, { inputValue: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" />
                       </div>
                       <button type="button" title="Hapus barang" onClick={() => removeItem(index)} className="w-10 h-[42px] rounded-lg border border-[#242f3d] flex items-center justify-center text-[#ef4444] hover:bg-[#ef4444]/10"><Trash2 size={15} /></button>
+                      {item.product && Number(item.qty || 0) > 0 && <div className="sm:col-span-4 text-[10px] text-[#60a5fa]">{formatNum(item.qty)} {item.product.unit} · {formatNum(totalWeight(item.qty, item.product))} kg{packagingText(item.qty, item.product, formatNum) ? ` · ${packagingText(item.qty, item.product, formatNum)}` : ''}</div>}
                     </div>
                   ))}
                 </div>

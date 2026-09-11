@@ -19,6 +19,14 @@ from backend.server import (
 router = APIRouter(prefix="/api")
 
 
+def _validate_pack_qty(product: dict, qty: float) -> None:
+    if float(product.get("secondaryQty", 0) or 0) > 0 and abs(qty - round(qty)) > 1e-6:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Jumlah {product.get('name', 'produk')} harus berupa kemasan primer/pack utuh",
+        )
+
+
 class OutboundItemInput(BaseModel):
     productId: str
     qty: float = Field(gt=0)
@@ -97,6 +105,7 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         product = await db.products.find_one({"id": product_id}, {"_id": 0})
         if not product:
             raise HTTPException(status_code=404, detail="Produk pengeluaran tidak ditemukan")
+        _validate_pack_qty(product, qty)
         products[product_id] = product
 
         field = "damaged" if body.kondisi == "RUSAK" else "stock"
@@ -121,6 +130,8 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
             "unit": product.get("unit", ""),
             "weight": weight,
             "berat": weight * qty,
+            "secondary": product.get("secondary", ""),
+            "secondaryQty": float(product.get("secondaryQty", 0) or 0),
             "location": product.get("location", ""),
         })
 
@@ -257,6 +268,10 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
                 "sku": product.get("sku", ""),
                 "change": -qty,
                 "unit": product.get("unit", ""),
+                "weight": float(product.get("weight", 0) or 0),
+                "total_weight": float(product.get("weight", 0) or 0) * qty,
+                "secondary": product.get("secondary", ""),
+                "secondaryQty": float(product.get("secondaryQty", 0) or 0),
                 "penerima": load.get("party", "-"),
                 "pengambil": load.get("pengambil", ""),
                 "polisi": load.get("polisi", ""),
@@ -294,7 +309,16 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
                     "unit": item.get("unit", ""),
                     "berat": float(item.get("berat", 0) or 0),
                     "location": item.get("location", ""),
-                    "sec": "",
+                    "secondary": item.get("secondary", ""),
+                    "secondaryQty": float(item.get("secondaryQty", 0) or 0),
+                    "sec": (
+                        f"{int(float(item.get('qty', 0) or 0) // float(item.get('secondaryQty', 0) or 1))} "
+                        f"{item.get('secondary', '')} + "
+                        f"{int(float(item.get('qty', 0) or 0) % float(item.get('secondaryQty', 0) or 1))} "
+                        f"{item.get('unit', '')}"
+                        if float(item.get("secondaryQty", 0) or 0) > 0
+                        else ""
+                    ),
                 }
                 for item in load.get("items", [])
             ],

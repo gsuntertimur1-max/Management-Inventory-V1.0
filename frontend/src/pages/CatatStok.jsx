@@ -4,8 +4,9 @@ import { useData } from '../context/DataContext';
 import { formatRp, formatNum } from '../mock';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
+import { packagingText, quantityFromInput, quantityIsValid, totalWeight } from '../lib/packaging';
 
-const emptyRow = () => ({ productId: '', qty: 1, exp: '' });
+const emptyRow = () => ({ productId: '', inputMode: 'QTY', inputValue: 1, qty: 1, exp: '' });
 
 const CatatStok = () => {
   const { products, suppliers, purchaseOrders, addReceipt, createOutboundLoad, canInbound, canOutbound } = useData();
@@ -46,6 +47,12 @@ const CatatStok = () => {
   };
 
   const setRow = (index, patch) => setRows((prev) => prev.map((row, i) => i === index ? { ...row, ...patch } : row));
+  const setTransactionInput = (index, patch) => setRows((prev) => prev.map((row, i) => {
+    if (i !== index) return row;
+    const next = { ...row, ...patch };
+    const product = products.find((item) => item.id === next.productId);
+    return { ...next, qty: quantityFromInput(next.inputValue, next.inputMode, product) };
+  }));
   const addRow = () => setRows((prev) => [...prev, emptyRow()]);
   const delRow = (index) => setRows((prev) => prev.length === 1 ? prev : prev.filter((_, i) => i !== index));
 
@@ -62,6 +69,8 @@ const CatatStok = () => {
     const remainingItems = (po.items || [])
       .map((item) => ({
         productId: item.productId,
+        inputMode: 'QTY',
+        inputValue: Math.max(Number(item.qty || 0) - Number(item.receivedQty || 0), 0),
         qty: Math.max(Number(item.qty || 0) - Number(item.receivedQty || 0), 0),
         exp: '',
       }))
@@ -93,6 +102,10 @@ const CatatStok = () => {
     }
     if (chosen.some((row) => Number(row.qty) <= 0)) {
       toast.error('Jumlah barang harus lebih dari 0');
+      return;
+    }
+    if (chosen.some((row) => !quantityIsValid(row.qty, row.product))) {
+      toast.error('Berat harus menghasilkan jumlah kemasan primer/pack yang utuh');
       return;
     }
     if (!party.trim()) {
@@ -195,18 +208,26 @@ const CatatStok = () => {
               const product = products.find((item) => item.id === row.productId);
               const remaining = remainingFor(row.productId);
               return (
-                <div key={index} className={`grid gap-2 items-end p-3 rounded-lg border border-[#1a222e] bg-[#0b0f17] ${type === 'MASUK' ? 'grid-cols-1 md:grid-cols-[1fr_130px_175px_52px]' : 'grid-cols-1 md:grid-cols-[1fr_130px_52px]'}`}>
+                <div key={index} className={`grid gap-2 items-end p-3 rounded-lg border border-[#1a222e] bg-[#0b0f17] ${type === 'MASUK' ? 'grid-cols-1 md:grid-cols-[minmax(190px,1fr)_105px_145px_175px_52px]' : 'grid-cols-1 md:grid-cols-[minmax(220px,1fr)_105px_160px_52px]'}`}>
                   <div>
                     <label className="text-[10px] text-[#6b7688] mb-1 block">Produk</label>
-                    <select value={row.productId} disabled={Boolean(selectedPO)} onChange={(e) => setRow(index, { productId: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb] disabled:opacity-70">
+                    <select value={row.productId} disabled={Boolean(selectedPO)} onChange={(e) => setTransactionInput(index, { productId: e.target.value, inputMode: 'QTY', inputValue: 1 })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb] disabled:opacity-70">
                       <option value="">Pilih produk...</option>
                       {products.map((item) => <option key={item.id} value={item.id}>{item.name} ({formatNum(item.stock || 0)} {item.unit})</option>)}
                     </select>
                     {selectedPO && product && <div className="text-[10px] text-[#60a5fa] mt-1">Sisa PO: {formatNum(remaining)} {product.unit}</div>}
                   </div>
                   <div>
-                    <label className="text-[10px] text-[#6b7688] mb-1 block">Jumlah</label>
-                    <div className="flex items-center gap-2"><input type="number" min="0.01" step="any" value={row.qty} onChange={(e) => setRow(index, { qty: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" /><span className="text-xs text-[#6b7688] whitespace-nowrap">{product?.unit || '—'}</span></div>
+                    <label className="text-[10px] text-[#6b7688] mb-1 block">Input Berdasarkan</label>
+                    <select value={row.inputMode || 'QTY'} onChange={(e) => setTransactionInput(index, { inputMode: e.target.value, inputValue: e.target.value === 'WEIGHT' ? totalWeight(row.qty, product) : row.qty })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2.5 text-xs outline-none focus:border-[#2563eb]">
+                      <option value="QTY">Jumlah</option>
+                      <option value="WEIGHT" disabled={!Number(product?.weight || 0)}>Berat</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-[#6b7688] mb-1 block">{row.inputMode === 'WEIGHT' ? 'Berat (kg)' : `Jumlah (${product?.unit || 'unit'})`}</label>
+                    <input type="number" min="0.01" step="any" value={row.inputValue} onChange={(e) => setTransactionInput(index, { inputValue: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" />
+                    {product && Number(row.qty || 0) > 0 && <div className="text-[9px] text-[#60a5fa] mt-1">{formatNum(row.qty)} {product.unit} · {formatNum(totalWeight(row.qty, product))} kg{packagingText(row.qty, product, formatNum) ? ` · ${packagingText(row.qty, product, formatNum)}` : ''}</div>}
                   </div>
                   {type === 'MASUK' && (
                     <div><label className="text-[10px] text-[#6b7688] mb-1 flex items-center gap-1"><CalendarDays size={11} /> Tanggal Kedaluwarsa</label><input type="date" value={row.exp || ''} onChange={(e) => setRow(index, { exp: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" /><div className="text-[9px] text-[#566173] mt-1">Kosongkan jika tidak ada expired.</div></div>

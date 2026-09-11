@@ -6,10 +6,11 @@ import { useData } from '../context/DataContext';
 import { apiError, downloadApiFile } from '../lib/api';
 import { formatRp, formatNum, catColor, CATEGORIES } from '../mock';
 import { toast } from 'sonner';
+import { packagingText, totalWeight } from '../lib/packaging';
 
 const empty = {
   name: '', sku: '', category: 'F&B / Bahan Makanan', cost: 0,
-  location: '', supplier: '', min: 0, unit: 'Pcs', weight: 0, secondary: 'Dus',
+  location: '', supplier: '', min: 0, unit: 'Pack', weight: 0, secondary: '', secondaryQty: 0,
 };
 
 const masterPayload = (data) => ({
@@ -23,6 +24,7 @@ const masterPayload = (data) => ({
   unit: data.unit || 'Pcs',
   weight: Number(data.weight || 0),
   secondary: data.secondary || '',
+  secondaryQty: Number(data.secondaryQty || 0),
 });
 
 const DaftarProduk = () => {
@@ -42,6 +44,18 @@ const DaftarProduk = () => {
     const data = masterPayload(modal.data);
     if (!data.name.trim() || !data.sku.trim()) {
       toast.error('Nama & SKU wajib diisi');
+      return;
+    }
+    if (data.secondary && data.secondaryQty <= 0) {
+      toast.error('Isi per kemasan sekunder harus lebih dari 0');
+      return;
+    }
+    if (data.secondaryQty > 0 && !data.secondary) {
+      toast.error('Nama kemasan sekunder wajib diisi');
+      return;
+    }
+    if (data.secondaryQty > 0 && !Number.isInteger(data.secondaryQty)) {
+      toast.error('Isi kemasan sekunder harus berupa jumlah pack utuh');
       return;
     }
     try {
@@ -100,14 +114,15 @@ const DaftarProduk = () => {
 
         <div className="overflow-x-auto">
           <table className="w-full text-sm tbl">
-            <thead><tr className="text-left border-b border-[#1a222e]">{['Nama Produk', 'SKU', 'Kategori', 'Stok Baik', 'Stok Rusak', 'Harga Modal', 'Nilai Total', 'Supplier / Lokasi', 'Aksi'].map((h) => <th key={h} className="py-2.5 pr-4 font-semibold whitespace-nowrap">{h}</th>)}</tr></thead>
+            <thead><tr className="text-left border-b border-[#1a222e]">{['Nama Produk', 'SKU', 'Kategori', 'Stok Baik', 'Konversi Kemasan', 'Stok Rusak', 'Harga Modal', 'Nilai Total', 'Supplier / Lokasi', 'Aksi'].map((h) => <th key={h} className="py-2.5 pr-4 font-semibold whitespace-nowrap">{h}</th>)}</tr></thead>
             <tbody>
-              {filtered.length === 0 ? <tr><td colSpan={9} className="py-8 text-center text-[#6b7688]">Tidak ada produk.</td></tr> : filtered.map((p) => (
+              {filtered.length === 0 ? <tr><td colSpan={10} className="py-8 text-center text-[#6b7688]">Tidak ada produk.</td></tr> : filtered.map((p) => (
                 <tr key={p.id} className="tbl-row border-b border-[#131a24]">
                   <td className="py-3 pr-4 font-medium">{p.name}</td>
                   <td className="py-3 pr-4 font-mono text-xs text-[#8b93a1]">{p.sku}</td>
                   <td className="py-3 pr-4"><span className="text-xs px-2 py-0.5 rounded-full whitespace-nowrap" style={{ background: `${catColor(p.category)}1f`, color: catColor(p.category) }}>{p.category}</span></td>
                   <td className="py-3 pr-4 font-mono whitespace-nowrap">{formatNum(p.stock || 0)} {p.unit}</td>
+                  <td className="py-3 pr-4 text-xs min-w-[210px]"><div className="text-[#c7d0dc]">{packagingText(p.stock, p, formatNum) || 'Belum diatur'}</div>{Number(p.weight || 0) > 0 && <div className="text-[#6b7688] mt-1">{formatNum(totalWeight(p.stock, p))} kg</div>}</td>
                   <td className="py-3 pr-4 font-mono">{formatNum(p.damaged || 0)}</td>
                   <td className="py-3 pr-4 font-mono whitespace-nowrap">{formatRp(p.cost)}</td>
                   <td className="py-3 pr-4 font-mono whitespace-nowrap">{formatRp((p.stock || 0) * (p.cost || 0))}</td>
@@ -149,8 +164,10 @@ const DaftarProduk = () => {
                 ))}
                 <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Kategori</label><select value={modal.data.category || ''} onChange={(e) => setModal({ ...modal, data: { ...modal.data, category: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]">{CATEGORIES.map((c) => <option key={c.name}>{c.name}</option>)}</select></div>
                 <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Supplier Default</label><select value={modal.data.supplier || ''} onChange={(e) => setModal({ ...modal, data: { ...modal.data, supplier: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]"><option value="">Pilih supplier...</option>{suppliers.map((s) => <option key={s.id}>{s.name}</option>)}</select></div>
-                <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Satuan</label><input value={modal.data.unit || ''} onChange={(e) => setModal({ ...modal, data: { ...modal.data, unit: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]" /></div>
-                <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Kemasan Sekunder</label><input value={modal.data.secondary || ''} onChange={(e) => setModal({ ...modal, data: { ...modal.data, secondary: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]" /></div>
+                <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Kemasan Primer / Satuan Dasar</label><input value={modal.data.unit || ''} placeholder="Contoh: Pack" onChange={(e) => setModal({ ...modal, data: { ...modal.data, unit: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]" /></div>
+                <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Kemasan Sekunder</label><input value={modal.data.secondary || ''} placeholder="Contoh: Karung atau Dus" onChange={(e) => setModal({ ...modal, data: { ...modal.data, secondary: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]" /></div>
+                <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Isi per Kemasan Sekunder</label><input type="number" min="0" step="1" value={modal.data.secondaryQty ?? 0} placeholder="Contoh: 8" onChange={(e) => setModal({ ...modal, data: { ...modal.data, secondaryQty: Number(e.target.value) } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]" /><div className="text-[10px] text-[#566173] mt-1">Jumlah {modal.data.unit || 'kemasan primer'} dalam 1 {modal.data.secondary || 'kemasan sekunder'}.</div></div>
+                <div className="rounded-lg border border-[#1f3657] bg-[#0d1728] px-3 py-2.5 text-xs text-[#93c5fd] self-end">{Number(modal.data.weight || 0) > 0 && Number(modal.data.secondaryQty || 0) > 0 ? `1 ${modal.data.secondary || 'kemasan sekunder'} = ${formatNum(modal.data.secondaryQty)} ${modal.data.unit || 'unit'} = ${formatNum(Number(modal.data.weight) * Number(modal.data.secondaryQty))} kg` : 'Isi berat/unit dan isi kemasan sekunder untuk melihat konversi.'}</div>
               </div>
               <div className="flex justify-end gap-2 mt-6">
                 <button onClick={() => setModal(null)} className="px-4 py-2.5 rounded-lg border border-[#242f3d] text-sm hover:bg-[#141a24]">Batal</button>

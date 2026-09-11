@@ -4,7 +4,7 @@ import { useData } from '../context/DataContext';
 import { apiError } from '../lib/api';
 import { toast } from 'sonner';
 
-const TEMPLATE = 'sku;nama;kategori;satuan;harga_beli;supplier;lokasi;stok_minimum;berat_unit;kemasan_sekunder\nB0010001X;CONTOH BERAS MEDIUM 5 KG;Beras;Pcs;0;Nama Supplier;Gudang I;0;5;Karung\n';
+const TEMPLATE = 'sku;nama;kategori;satuan;harga_beli;supplier;lokasi;stok_minimum;berat_unit;kemasan_sekunder;isi_kemasan_sekunder\nB0010001X;CONTOH BERAS MEDIUM 5 KG;Beras;Pack;0;Nama Supplier;Gudang I;0;5;Karung;8\n';
 
 const ImportData = () => {
   const { importCsv, canManageMasterData } = useData();
@@ -84,6 +84,7 @@ const ImportData = () => {
               'Kolom wajib minimal: sku dan nama',
               'Kolom jumlah stok tidak digunakan',
               'SKU yang sama diperbarui tanpa mengubah stok',
+              'Isi kemasan sekunder diisi dalam jumlah pack primer, misalnya 8 pack per karung',
               'Supplier baru otomatis ditambahkan',
             ].map((text) => (
               <li key={text} className="flex items-start gap-2"><CheckCircle2 size={16} className="text-[#22c55e] mt-0.5 shrink-0" /> {text}</li>

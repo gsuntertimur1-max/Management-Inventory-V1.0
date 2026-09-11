@@ -1,6 +1,7 @@
 import React from 'react';
 import { useData } from '../context/DataContext';
 import { catColor, formatNum, formatRp } from '../mock';
+import { packagingText, totalWeight } from '../lib/packaging';
 
 const TumpukanStok = () => {
   const { products } = useData();
@@ -39,6 +40,7 @@ const TumpukanStok = () => {
                         <span className="label-mono text-[9px]">{p.location}</span>
                         <span className="font-mono text-xs text-[#aab4c4]">{formatNum(p.stock)} {p.unit}</span>
                       </div>
+                      {(packagingText(p.stock, p, formatNum) || Number(p.weight || 0) > 0) && <div className="text-[10px] text-[#6b7688] mt-1">{packagingText(p.stock, p, formatNum)}{packagingText(p.stock, p, formatNum) && Number(p.weight || 0) > 0 ? ' · ' : ''}{Number(p.weight || 0) > 0 ? `${formatNum(totalWeight(p.stock, p))} kg` : ''}</div>}
                       <div className="h-1.5 rounded-full bg-[#151d28] mt-2 overflow-hidden"><div className="h-full rounded-full" style={{ width: `${Math.min((p.stock / (p.min * 4 || 100)) * 100, 100)}%`, background: catColor(p.category) }} /></div>
                     </div>
                   ))}

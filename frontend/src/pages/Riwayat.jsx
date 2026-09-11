@@ -4,6 +4,7 @@ import { useData } from '../context/DataContext';
 import { apiError, downloadApiFile } from '../lib/api';
 import { formatNum, formatDate } from '../mock';
 import { toast } from 'sonner';
+import { packagingText, totalWeight } from '../lib/packaging';
 
 const Riwayat = () => {
   const { transactions } = useData();
@@ -76,7 +77,7 @@ const Riwayat = () => {
                   <td className="py-3 pr-4"><span className="text-[10px] font-mono px-2 py-0.5 rounded" style={{ background: t.type === 'MASUK' ? 'rgba(34,197,94,.15)' : 'rgba(239,68,68,.15)', color: t.type === 'MASUK' ? '#22c55e' : '#ef4444' }}>{t.type}</span></td>
                   <td className="py-3 pr-4"><span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#1a222e] text-[#8b93a1]">{t.kondisi}</span></td>
                   <td className="py-3 pr-4"><div className="font-medium">{t.product}</div><div className="label-mono text-[10px]">{t.sku}</div></td>
-                  <td className={`py-3 pr-4 font-mono font-semibold ${t.change > 0 ? 'text-[#22c55e]' : 'text-[#ef4444]'}`}>{t.change > 0 ? '+' : ''}{formatNum(t.change)} {t.unit || ''}</td>
+                  <td className={`py-3 pr-4 font-mono font-semibold ${t.change > 0 ? 'text-[#22c55e]' : 'text-[#ef4444]'}`}><div>{t.change > 0 ? '+' : ''}{formatNum(t.change)} {t.unit || ''}</div>{(packagingText(Math.abs(t.change), t, formatNum) || Number(t.weight || 0) > 0) && <div className="mt-1 text-[10px] font-sans font-normal text-[#8b93a1]">{packagingText(Math.abs(t.change), t, formatNum)}{packagingText(Math.abs(t.change), t, formatNum) && Number(t.weight || 0) > 0 ? ' · ' : ''}{Number(t.weight || 0) > 0 ? `${formatNum(t.total_weight || totalWeight(Math.abs(t.change), t))} kg` : ''}</div>}</td>
                   <td className="py-3 pr-4 font-mono text-xs whitespace-nowrap">{t.exp || '—'}</td>
                   <td className="py-3 pr-4 text-[#c7d0dc]">{t.penerima}</td>
                   <td className="py-3 pr-4 text-[#8b93a1] text-xs">{t.operator}</td>

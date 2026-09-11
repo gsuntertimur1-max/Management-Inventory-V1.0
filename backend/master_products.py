@@ -17,6 +17,7 @@ class MasterProductBody(BaseModel):
     unit: str = "Pcs"
     weight: float = Field(default=0, ge=0)
     secondary: str = ""
+    secondaryQty: float = Field(default=0, ge=0)
 
 
 def clean_master(body: MasterProductBody) -> dict:
@@ -24,6 +25,13 @@ def clean_master(body: MasterProductBody) -> dict:
     doc["name"] = doc["name"].strip()
     doc["sku"] = doc["sku"].strip()
     doc["unit"] = doc["unit"].strip() or "Pcs"
+    doc["secondary"] = doc["secondary"].strip()
+    if doc["secondary"] and doc["secondaryQty"] <= 0:
+        raise HTTPException(status_code=400, detail="Isi kemasan sekunder harus lebih dari 0")
+    if doc["secondaryQty"] > 0 and not doc["secondary"]:
+        raise HTTPException(status_code=400, detail="Nama kemasan sekunder wajib diisi")
+    if doc["secondaryQty"] > 0 and abs(doc["secondaryQty"] - round(doc["secondaryQty"])) > 1e-6:
+        raise HTTPException(status_code=400, detail="Isi kemasan sekunder harus berupa jumlah pack utuh")
     if not doc["name"]:
         raise HTTPException(status_code=400, detail="Nama produk wajib diisi")
     if not doc["sku"]:

@@ -77,6 +77,14 @@ def _validate_exp(value: str) -> str:
     return value
 
 
+def _validate_pack_qty(product: dict, qty: float) -> None:
+    if float(product.get("secondaryQty", 0) or 0) > 0 and abs(qty - round(qty)) > 1e-6:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Jumlah {product.get('name', 'produk')} harus berupa kemasan primer/pack utuh",
+        )
+
+
 def _po_status(items: list[dict]) -> str:
     ordered = sum(float(item.get("qty", 0) or 0) for item in items)
     received = sum(float(item.get("receivedQty", item.get("received_qty", 0)) or 0) for item in items)
@@ -155,6 +163,7 @@ async def create_purchase_order(body: PurchaseOrderInput, user: dict = Depends(r
         product = await db.products.find_one({"id": item.productId}, {"_id": 0})
         if not product:
             raise HTTPException(status_code=404, detail="Produk pada PO tidak ditemukan")
+        _validate_pack_qty(product, float(item.qty))
 
         items.append({
             "productId": product["id"],
@@ -163,6 +172,9 @@ async def create_purchase_order(body: PurchaseOrderInput, user: dict = Depends(r
             "qty": float(item.qty),
             "receivedQty": 0.0,
             "unit": product.get("unit", ""),
+            "weight": float(product.get("weight", 0) or 0),
+            "secondary": product.get("secondary", ""),
+            "secondaryQty": float(product.get("secondaryQty", 0) or 0),
             "cost": float(product.get("cost", 0) or 0),
         })
 
@@ -203,6 +215,7 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
         product = await db.products.find_one({"id": item.productId}, {"_id": 0})
         if not product:
             raise HTTPException(status_code=404, detail="Produk penerimaan tidak ditemukan")
+        _validate_pack_qty(product, float(item.qty))
         products.append(product)
         requested_by_product[item.productId] += float(item.qty)
         _validate_exp(item.exp)
@@ -271,6 +284,10 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
                 "sku": product.get("sku", ""),
                 "change": float(item.qty),
                 "unit": product.get("unit", ""),
+                "weight": float(product.get("weight", 0) or 0),
+                "total_weight": float(product.get("weight", 0) or 0) * float(item.qty),
+                "secondary": product.get("secondary", ""),
+                "secondaryQty": float(product.get("secondaryQty", 0) or 0),
                 "exp": exp,
                 "penerima": party,
                 "polisi": body.polisi,
@@ -346,7 +363,17 @@ async def import_master_csv(file: UploadFile = File(...), user: dict = Depends(r
             "unit": (row.get("satuan") or "Pcs").strip() or "Pcs",
             "weight": _number(row.get("berat_unit"), 0),
             "secondary": (row.get("kemasan_sekunder") or "").strip(),
+            "secondaryQty": _number(row.get("isi_kemasan_sekunder"), 0),
         }
+        if master["secondary"] and master["secondaryQty"] <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Isi kemasan sekunder untuk SKU {sku} harus lebih dari 0",
+            )
+        if master["secondaryQty"] > 0 and not master["secondary"]:
+            raise HTTPException(status_code=400, detail=f"Kemasan sekunder untuk SKU {sku} wajib diisi")
+        if master["secondaryQty"] > 0 and abs(master["secondaryQty"] - round(master["secondaryQty"])) > 1e-6:
+            raise HTTPException(status_code=400, detail=f"Isi kemasan sekunder untuk SKU {sku} harus berupa pack utuh")
         if master["supplier"]:
             supplier_names.add(master["supplier"])
 
@@ -404,13 +431,16 @@ async def export_transactions_with_expiry(user: dict = Depends(get_current_user)
     headers = [
         "Waktu", "No. Referensi", "No. PO", "Antrian", "Tipe", "Kondisi",
         "Produk", "SKU", "Jumlah", "Satuan", "Tanggal Kedaluwarsa",
+        "Berat Total (kg)", "Kemasan Sekunder", "Isi/Kemasan Sekunder",
         "Pihak Terkait", "No. Polisi", "Dicatat Oleh", "Keterangan",
     ]
     rows = [
         [
             t.get("time", ""), t.get("ref", ""), t.get("po_no", ""), t.get("antrian", ""),
             t.get("type", ""), t.get("kondisi", ""), t.get("product", ""), t.get("sku", ""),
-            t.get("change", 0), t.get("unit", ""), t.get("exp", ""), t.get("penerima", ""),
+            t.get("change", 0), t.get("unit", ""), t.get("exp", ""),
+            t.get("total_weight", abs(t.get("change", 0) or 0) * (t.get("weight", 0) or 0)),
+            t.get("secondary", ""), t.get("secondaryQty", 0), t.get("penerima", ""),
             t.get("polisi", ""), t.get("operator", ""), t.get("keterangan", ""),
         ]
         for t in transactions

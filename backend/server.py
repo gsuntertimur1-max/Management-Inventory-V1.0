@@ -360,6 +360,7 @@ class ProductBody(BaseModel):
     unit: str = 'Pcs'
     weight: float = Field(default=0, ge=0)
     secondary: str = ''
+    secondaryQty: float = Field(default=0, ge=0)
 
 
 class ProductUpdate(BaseModel):
@@ -376,6 +377,7 @@ class ProductUpdate(BaseModel):
     unit: Optional[str] = None
     weight: Optional[float] = Field(default=None, ge=0)
     secondary: Optional[str] = None
+    secondaryQty: Optional[float] = Field(default=None, ge=0)
 
 
 class SupplierBody(BaseModel):
@@ -847,7 +849,8 @@ async def export_products(user: dict = Depends(get_current_user)):
     headers = [
         "Nama Produk", "SKU", "Kategori", "Stok Baik", "Stok Rusak", "Satuan",
         "Harga Modal", "Nilai Total", "Supplier", "Lokasi", "Stok Minimum",
-        "Berat/Unit (kg)", "Kedaluwarsa"
+        "Berat/Unit (kg)", "Kemasan Sekunder", "Isi/Kemasan Sekunder",
+        "Berat/Kemasan Sekunder (kg)", "Kedaluwarsa"
     ]
     rows = [
         [
@@ -855,7 +858,8 @@ async def export_products(user: dict = Depends(get_current_user)):
             p.get("stock", 0), p.get("damaged", 0), p.get("unit", ""),
             p.get("cost", 0), (p.get("stock", 0) or 0) * (p.get("cost", 0) or 0),
             p.get("supplier", ""), p.get("location", ""), p.get("min", 0),
-            p.get("weight", 0), p.get("exp", "")
+            p.get("weight", 0), p.get("secondary", ""), p.get("secondaryQty", 0),
+            (p.get("weight", 0) or 0) * (p.get("secondaryQty", 0) or 0), p.get("exp", "")
         ]
         for p in products
     ]
