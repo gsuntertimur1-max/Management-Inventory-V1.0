@@ -38,6 +38,7 @@ class ReceiptItemInput(BaseModel):
     productId: str
     qty: float = Field(gt=0)
     exp: str = ""
+    stackCode: str = ""
 
 
 class ReceiptInput(BaseModel):
@@ -269,6 +270,11 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
                 "previousExp": previous_exp,
                 "expChanged": bool(update_doc.get("$set")),
             })
+
+            stack_code = item.stackCode.strip().upper()
+            if body.kondisi == "BAIK" and stack_code:
+                from backend.stack_allocations import allocate_stock_to_stack
+                await allocate_stock_to_stack(product, stack_code, float(item.qty), user.get("name", ""))
 
             txns.append({
                 "id": new_id(),

@@ -2,9 +2,10 @@ import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from backend.server import db, get_current_user, new_id, now_iso, require_write
+from backend.server import build_xlsx, db, get_current_user, new_id, now_iso, require_write
 
 router = APIRouter(prefix="/api")
 
@@ -25,6 +26,34 @@ def valid_stack_codes() -> set[str]:
 
 
 VALID_STACK_CODES = valid_stack_codes()
+
+
+async def allocate_stock_to_stack(product: dict, stack_code: str, qty: float, operator: str = "") -> None:
+    stack_code = stack_code.strip().upper()
+    if stack_code not in VALID_STACK_CODES:
+        raise HTTPException(status_code=400, detail="Lokasi tumpukan penerimaan tidak valid")
+    per_secondary = float(product.get("secondaryQty", 0) or 0)
+    if per_secondary <= 0 or not product.get("secondary"):
+        raise HTTPException(status_code=400, detail=f"Kemasan sekunder {product.get('name', '')} belum diatur")
+    existing = await db.stack_allocations.find_one({"productId": product["id"], "stackCode": stack_code}, {"_id": 0})
+    if existing:
+        total = float(existing.get("primaryQty", 0) or 0) + qty
+        await db.stack_allocations.update_one({"id": existing["id"]}, {"$set": {
+            "primaryQty": total, "secondaryCount": int(total // per_secondary),
+            "primaryRemainder": total % per_secondary, "length": 0, "width": 0, "height": 0,
+            "arrangementAdjusted": True, "updatedAt": now_iso(),
+        }})
+        return
+    await db.stack_allocations.insert_one({
+        "id": new_id(), "productId": product["id"], "sku": product.get("sku", ""),
+        "productName": product.get("name", ""), "unit": product.get("unit", ""),
+        "weight": float(product.get("weight", 0) or 0), "secondary": product.get("secondary", ""),
+        "secondaryQty": per_secondary, "stackCode": stack_code, "warehouse": stack_code.split('/')[0],
+        "zone": re.sub(r"\d", "", stack_code.split('/')[1]), "length": 0, "width": 0, "height": 0,
+        "secondaryCount": int(qty // per_secondary), "primaryRemainder": qty % per_secondary,
+        "primaryQty": qty, "note": f"Penerimaan oleh {operator}" if operator else "Penerimaan",
+        "arrangementAdjusted": True, "createdAt": now_iso(), "updatedAt": now_iso(),
+    })
 
 
 class StackAllocationBody(BaseModel):
@@ -142,8 +171,21 @@ async def reconcile_product_allocations(product_id: str) -> None:
         excess = 0
 
 
+async def migrate_default_locations() -> None:
+    """Tempatkan stok lama yang sudah mempunyai kode tumpukan default yang valid."""
+    products = await db.products.find({"location": {"$in": sorted(VALID_STACK_CODES)}}, {"_id": 0}).to_list(5000)
+    for product in products:
+        if not product.get("secondary") or float(product.get("secondaryQty", 0) or 0) <= 0:
+            continue
+        allocations = await db.stack_allocations.find({"productId": product["id"]}, {"_id": 0, "primaryQty": 1}).to_list(1000)
+        unallocated = float(product.get("stock", 0) or 0) - sum(float(x.get("primaryQty", 0) or 0) for x in allocations)
+        if unallocated > 1e-9:
+            await allocate_stock_to_stack(product, product["location"], unallocated, "Migrasi stok lama")
+
+
 @router.get("/stack-allocations")
 async def list_stack_allocations(user: dict = Depends(get_current_user)):
+    await migrate_default_locations()
     return await db.stack_allocations.find({}, {"_id": 0}).sort(
         [("stackCode", 1), ("productName", 1)]
     ).to_list(10000)
@@ -181,3 +223,21 @@ async def delete_stack_allocation(allocation_id: str, user: dict = Depends(requi
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Alokasi tumpukan tidak ditemukan")
     return {"ok": True}
+
+
+@router.get("/export/stack-card.xlsx")
+async def export_stack_card(stackCode: str, user: dict = Depends(get_current_user)):
+    code = stackCode.strip().upper()
+    if code not in VALID_STACK_CODES:
+        raise HTTPException(status_code=400, detail="Kode tumpukan tidak valid")
+    items = await db.stack_allocations.find({"stackCode": code}, {"_id": 0}).sort("productName", 1).to_list(1000)
+    headers = ["KARTU TUMPUKAN", code, "", "", "", "", "", ""]
+    rows = [["No", "SKU", "Nama Komoditas", "Susunan P×L×T", "Kemasan Sekunder", "Jumlah Primer", "Satuan", "Berat (kg)"]]
+    for index, item in enumerate(items, 1):
+        arrangement = "Perlu dihitung ulang" if item.get("arrangementAdjusted") else f"{item.get('length', 0)}×{item.get('width', 0)}×{item.get('height', 0)}"
+        rows.append([index, item.get("sku", ""), item.get("productName", ""), arrangement,
+                     f"{item.get('secondaryCount', 0)} {item.get('secondary', '')}", item.get("primaryQty", 0),
+                     item.get("unit", ""), float(item.get("primaryQty", 0) or 0) * float(item.get("weight", 0) or 0)])
+    output = build_xlsx(headers, rows, "Kartu Tumpukan")
+    return StreamingResponse(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                             headers={"Content-Disposition": f'attachment; filename="kartu_tumpukan_{code.replace("/", "-")}.xlsx"'})

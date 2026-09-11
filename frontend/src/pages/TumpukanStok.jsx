@@ -1,8 +1,9 @@
 import React, { useMemo, useState } from 'react';
-import { DoorOpen, Edit3, PackagePlus, Trash2, Warehouse } from 'lucide-react';
+import { DoorOpen, Download, Edit3, PackagePlus, Trash2, Warehouse } from 'lucide-react';
 import { toast } from 'sonner';
 import { useData } from '../context/DataContext';
 import { apiError } from '../lib/api';
+import { downloadApiFile } from '../lib/api';
 import { formatNum } from '../mock';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 
@@ -46,7 +47,7 @@ const TumpukanStok = () => {
   const occupied = new Set(stackAllocations.map((item) => item.stackCode)).size;
   const totalAllocated = stackAllocations.reduce((n, item) => n + Number(item.primaryQty || 0), 0);
   const unallocated = products.reduce((n, item) => n + Math.max(Number(item.stock || 0) - Number(allocated[item.id] || 0), 0), 0);
-  const zones = warehouse === 'MP' ? ['A', 'B'] : ['A', 'B', 'C'];
+  const zones = warehouse === 'MP' ? ['B', 'A'] : ['C', 'B', 'A'];
 
   return <div className="space-y-5" data-testid="stack-map-page">
     <div className="flex flex-col xl:flex-row xl:items-end xl:justify-between gap-4">
@@ -69,7 +70,7 @@ const TumpukanStok = () => {
       </section>
 
       <aside className="card-surface p-5 h-fit xl:sticky xl:top-24">
-        <div className="flex justify-between"><div><div className="label-mono text-[10px]">Tumpukan dipilih</div><h2 className="font-display text-2xl font-bold mt-1">{selected}</h2></div>{canWrite && <button onClick={() => setModal({ mode: 'add', data: blank(selected) })} className="btn-primary h-fit px-3 py-2 rounded-lg text-sm flex gap-2"><PackagePlus size={16} />Tambah</button>}</div>
+        <div className="flex justify-between"><div><div className="label-mono text-[10px]">Tumpukan dipilih</div><h2 className="font-display text-2xl font-bold mt-1">{selected}</h2></div><div className="flex gap-2"><button title="Download kartu tumpukan" onClick={() => downloadApiFile(`/export/stack-card.xlsx?stackCode=${encodeURIComponent(selected)}`, `kartu_tumpukan_${selected.replace('/', '-')}.xlsx`).catch((e) => toast.error(apiError(e)))} className="h-fit p-2 rounded-lg border border-[#242f3d] text-[#60a5fa]"><Download size={17} /></button>{canWrite && <button onClick={() => setModal({ mode: 'add', data: blank(selected) })} className="btn-primary h-fit px-3 py-2 rounded-lg text-sm flex gap-2"><PackagePlus size={16} />Tambah</button>}</div></div>
         <div className="mt-5 space-y-3">{(grouped[selected] || []).length === 0 ? <div className="border border-dashed border-[#29364a] rounded-xl p-8 text-center text-sm text-[#8b93a1]">Belum ada komoditas.</div> : (grouped[selected] || []).map((item) => <div key={item.id} className="rounded-xl border border-[#1d2a3a] bg-[#0b0f17] p-4">
           <div className="flex justify-between gap-2"><div><div className="font-semibold">{item.productName}</div><div className="label-mono text-[10px] mt-1">{item.sku}</div></div>{canWrite && <div className="flex"><button title="Ubah" onClick={() => openEdit(item)} className="p-2 text-[#60a5fa]"><Edit3 size={15} /></button><button title="Hapus" onClick={() => remove(item)} className="p-2 text-[#ef4444]"><Trash2 size={15} /></button></div>}</div>
           {item.arrangementAdjusted ? <div className="mt-3 rounded-lg bg-[#3b2a0b] p-2 text-xs text-[#fbbf24]">Stok berkurang karena pengeluaran. Perbarui susunan fisik.</div> : <div className="mt-3 font-mono text-sm">{item.length} × {item.width} × {item.height} = {formatNum(item.secondaryCount)} {item.secondary}</div>}

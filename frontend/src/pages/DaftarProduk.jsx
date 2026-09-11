@@ -12,6 +12,7 @@ const empty = {
   name: '', sku: '', category: 'F&B / Bahan Makanan', cost: 0,
   location: '', supplier: '', min: 0, unit: 'Pack', weight: 0, secondary: '', secondaryQty: 0,
 };
+const STACKS = [...Array.from({ length: 8 }, (_, i) => String(i + 17)).flatMap((unit) => ['A', 'B', 'C'].flatMap((zone) => Array.from({ length: 4 }, (_, i) => `${unit}/${zone}${String(i + 1).padStart(2, '0')}`))), ...['A', 'B'].flatMap((zone) => Array.from({ length: 8 }, (_, i) => `MP/${zone}${String(i + 1).padStart(2, '0')}`))];
 
 const masterPayload = (data) => ({
   name: data.name || '',
@@ -156,12 +157,13 @@ const DaftarProduk = () => {
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {[['name', 'Nama Produk', 'text'], ['sku', 'SKU', 'text'], ['cost', 'Harga Modal (Rp)', 'number'], ['min', 'Stok Minimum', 'number'], ['location', 'Lokasi', 'text'], ['weight', 'Berat/Unit (kg)', 'number']].map(([k, l, t]) => (
+                {[['name', 'Nama Produk', 'text'], ['sku', 'SKU', 'text'], ['cost', 'Harga Modal (Rp)', 'number'], ['min', 'Stok Minimum', 'number'], ['weight', 'Berat/Unit (kg)', 'number']].map(([k, l, t]) => (
                   <div key={k}>
                     <label className="text-xs font-medium mb-1 block text-[#8b93a1]">{l}</label>
                     <input data-testid={`product-form-${k}`} type={t} value={modal.data[k] ?? ''} onChange={(e) => setModal({ ...modal, data: { ...modal.data, [k]: t === 'number' ? Number(e.target.value) : e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]" />
                   </div>
                 ))}
+                <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Lokasi Tumpukan Default</label><select value={modal.data.location || ''} onChange={(e) => setModal({ ...modal, data: { ...modal.data, location: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm"><option value="">Belum ditentukan</option>{STACKS.map((code) => <option key={code} value={code}>{code}</option>)}</select></div>
                 <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Kategori</label><select value={modal.data.category || ''} onChange={(e) => setModal({ ...modal, data: { ...modal.data, category: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]">{CATEGORIES.map((c) => <option key={c.name}>{c.name}</option>)}</select></div>
                 <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Supplier Default</label><select value={modal.data.supplier || ''} onChange={(e) => setModal({ ...modal, data: { ...modal.data, supplier: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]"><option value="">Pilih supplier...</option>{suppliers.map((s) => <option key={s.id}>{s.name}</option>)}</select></div>
                 <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Kemasan Primer / Satuan Dasar</label><input value={modal.data.unit || ''} placeholder="Contoh: Pack" onChange={(e) => setModal({ ...modal, data: { ...modal.data, unit: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]" /></div>

@@ -6,7 +6,8 @@ import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 import { packagingText, quantityFromInput, quantityIsValid, totalWeight } from '../lib/packaging';
 
-const emptyRow = () => ({ productId: '', inputMode: 'QTY', inputValue: 1, qty: 1, exp: '' });
+const STACKS = [...Array.from({ length: 8 }, (_, i) => String(i + 17)).flatMap((unit) => ['A', 'B', 'C'].flatMap((zone) => Array.from({ length: 4 }, (_, i) => `${unit}/${zone}${String(i + 1).padStart(2, '0')}`))), ...['A', 'B'].flatMap((zone) => Array.from({ length: 8 }, (_, i) => `MP/${zone}${String(i + 1).padStart(2, '0')}`))];
+const emptyRow = () => ({ productId: '', inputMode: 'QTY', inputValue: 1, qty: 1, exp: '', stackCode: '' });
 
 const CatatStok = () => {
   const { products, suppliers, purchaseOrders, addReceipt, createOutboundLoad, canInbound, canOutbound } = useData();
@@ -129,7 +130,7 @@ const CatatStok = () => {
       if (type === 'MASUK') {
         const result = await addReceipt({
           poId,
-          items: chosen.map((row) => ({ productId: row.productId, qty: Number(row.qty), exp: row.exp || '' })),
+          items: chosen.map((row) => ({ productId: row.productId, qty: Number(row.qty), exp: row.exp || '', stackCode: row.stackCode || row.product.location || '' })),
           party,
           ref,
           polisi,
@@ -230,7 +231,7 @@ const CatatStok = () => {
                     {product && Number(row.qty || 0) > 0 && <div className="text-[9px] text-[#60a5fa] mt-1">{formatNum(row.qty)} {product.unit} · {formatNum(totalWeight(row.qty, product))} kg{packagingText(row.qty, product, formatNum) ? ` · ${packagingText(row.qty, product, formatNum)}` : ''}</div>}
                   </div>
                   {type === 'MASUK' && (
-                    <div><label className="text-[10px] text-[#6b7688] mb-1 flex items-center gap-1"><CalendarDays size={11} /> Tanggal Kedaluwarsa</label><input type="date" value={row.exp || ''} onChange={(e) => setRow(index, { exp: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" /><div className="text-[9px] text-[#566173] mt-1">Kosongkan jika tidak ada expired.</div></div>
+                    <div><label className="text-[10px] text-[#6b7688] mb-1 flex items-center gap-1"><CalendarDays size={11} /> Kedaluwarsa / Lokasi</label><input type="date" value={row.exp || ''} onChange={(e) => setRow(index, { exp: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm" /><select value={row.stackCode || product?.location || ''} onChange={(e) => setRow(index, { stackCode: e.target.value })} className="w-full mt-1 bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2 text-xs"><option value="">Pilih lokasi...</option>{STACKS.map((code) => <option key={code}>{code}</option>)}</select></div>
                   )}
                   <button type="button" onClick={() => delRow(index)} disabled={rows.length === 1} className="w-10 h-[42px] rounded-lg border border-[#242f3d] flex items-center justify-center text-[#ef4444] disabled:opacity-30"><Trash2 size={15} /></button>
                 </div>
