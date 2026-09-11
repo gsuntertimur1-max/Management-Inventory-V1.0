@@ -97,6 +97,12 @@ export const DataProvider = ({ children }) => {
     return data;
   };
 
+  const refreshOutboundLoads = useCallback(async () => {
+    const { data } = await api.get('/outbound-loads');
+    setState((prev) => ({ ...prev, outboundLoads: data }));
+    return data;
+  }, []);
+
   const startOutboundLoad = async (id) => {
     const { data } = await api.post(`/outbound-loads/${id}/start`);
     setState((prev) => ({
@@ -173,7 +179,7 @@ export const DataProvider = ({ children }) => {
       canManageSettings: hasPermission(user?.role, 'settings'),
       login, logout, ...state, fetchAll,
       addProduct, updateProduct, deleteProduct, addTransaction, addReceipt,
-      createOutboundLoad, startOutboundLoad, completeOutboundLoad, updateSJStatus,
+      createOutboundLoad, refreshOutboundLoads, startOutboundLoad, completeOutboundLoad, updateSJStatus,
       addSupplier, addPO, addUser, updateUser, deleteUser, changeUserPassword, updateSettings, resetData, importCsv,
     }}>
       {children}
