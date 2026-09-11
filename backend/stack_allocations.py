@@ -18,7 +18,7 @@ def valid_stack_codes() -> set[str]:
         for number in range(1, 5)
     }
     mp_codes = {
-        f"MP/{zone}{number:02d}"
+        f"MP1/{zone}{number:02d}"
         for zone in ("A", "B")
         for number in range(1, 9)
     }
@@ -173,6 +173,11 @@ async def reconcile_product_allocations(product_id: str) -> None:
 
 async def migrate_default_locations() -> None:
     """Tempatkan stok lama yang sudah mempunyai kode tumpukan default yang valid."""
+    legacy = await db.stack_allocations.find({"stackCode": {"$regex": "^MP/"}}, {"_id": 0}).to_list(1000)
+    for item in legacy:
+        new_code = item["stackCode"].replace("MP/", "MP1/", 1)
+        await db.stack_allocations.update_one({"id": item["id"]}, {"$set": {"stackCode": new_code, "warehouse": "MP1"}})
+    await db.products.update_many({"location": {"$regex": "^MP/"}}, [{"$set": {"location": {"$replaceOne": {"input": "$location", "find": "MP/", "replacement": "MP1/"}}}}])
     products = await db.products.find({"location": {"$in": sorted(VALID_STACK_CODES)}}, {"_id": 0}).to_list(5000)
     for product in products:
         if not product.get("secondary") or float(product.get("secondaryQty", 0) or 0) <= 0:
