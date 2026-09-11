@@ -70,6 +70,7 @@ class StackAllocationBody(BaseModel):
     height: int = Field(ge=1, le=1000)
     arrangements: List[StackArrangement] = Field(default_factory=list, max_length=10)
     extraSecondary: int = Field(default=0, ge=0, le=1000000)
+    extraPrimary: int = Field(default=0, ge=0, le=1000000)
     note: str = ""
 
 
@@ -92,7 +93,7 @@ async def _build_allocation(body: StackAllocationBody, allocation_id: Optional[s
 
     arrangements = [item.model_dump() for item in body.arrangements] or [{"hamparan": body.length, "kaki": body.width, "height": body.height}]
     secondary_count = sum(item["hamparan"] * item["kaki"] * item["height"] for item in arrangements) + body.extraSecondary
-    primary_qty = secondary_count * per_secondary
+    primary_qty = secondary_count * per_secondary + body.extraPrimary
     query = {"productId": body.productId}
     if allocation_id:
         query["id"] = {"$ne": allocation_id}
@@ -133,6 +134,8 @@ async def _build_allocation(body: StackAllocationBody, allocation_id: Optional[s
         "height": body.height,
         "arrangements": arrangements,
         "extraSecondary": body.extraSecondary,
+        "extraPrimary": body.extraPrimary,
+        "primaryRemainder": body.extraPrimary,
         "secondaryCount": secondary_count,
         "primaryQty": primary_qty,
         "note": body.note.strip(),
@@ -198,6 +201,14 @@ async def migrate_default_locations() -> None:
             await db.stack_allocations.update_one({"id": minyak["id"]}, {"$set": {
                 "arrangements": [{"hamparan": 35, "kaki": 19, "height": 6}],
                 "extraSecondary": 10, "secondaryCount": 4000, "primaryQty": corrected_qty,
+            }})
+    minyak_2l = await db.stack_allocations.find_one({"stackCode": "19/A02", "productName": {"$regex": r"MINYAK.*2\s*L", "$options": "i"}}, {"_id": 0})
+    if minyak_2l and not minyak_2l.get("extraPrimary"):
+        product = await db.products.find_one({"id": minyak_2l["productId"]}, {"_id": 0})
+        corrected_qty = float(minyak_2l.get("primaryQty", 0) or 0) + 3
+        if product and corrected_qty <= float(product.get("stock", 0) or 0) + 1e-9:
+            await db.stack_allocations.update_one({"id": minyak_2l["id"]}, {"$set": {
+                "extraPrimary": 3, "primaryRemainder": 3, "primaryQty": corrected_qty,
             }})
     products = await db.products.find({"location": {"$in": sorted(VALID_STACK_CODES)}}, {"_id": 0}).to_list(5000)
     for product in products:
@@ -266,8 +277,9 @@ async def export_stack_card(stackCode: str, user: dict = Depends(get_current_use
         arrangement = "Perlu dihitung ulang" if item.get("arrangementAdjusted") else " + ".join(parts)
         if not item.get("arrangementAdjusted") and item.get("extraSecondary", 0):
             arrangement += f" + {item.get('extraSecondary')} tambahan"
+        loose = f" + {item.get('extraPrimary')} {item.get('unit', '')} lepas" if item.get("extraPrimary", 0) else ""
         rows.append([index, item.get("sku", ""), item.get("productName", ""), arrangement,
-                     f"{item.get('secondaryCount', 0)} {item.get('secondary', '')}", item.get("primaryQty", 0),
+                     f"{item.get('secondaryCount', 0)} {item.get('secondary', '')}{loose}", item.get("primaryQty", 0),
                      item.get("unit", ""), float(item.get("primaryQty", 0) or 0) * float(item.get("weight", 0) or 0)])
     output = build_xlsx(headers, rows, "Kartu Tumpukan")
     return StreamingResponse(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
