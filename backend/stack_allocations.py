@@ -1,5 +1,5 @@
 import re
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -56,12 +56,20 @@ async def allocate_stock_to_stack(product: dict, stack_code: str, qty: float, op
     })
 
 
+class StackArrangement(BaseModel):
+    hamparan: int = Field(ge=1, le=1000)
+    kaki: int = Field(ge=1, le=1000)
+    height: int = Field(ge=1, le=1000)
+
+
 class StackAllocationBody(BaseModel):
     productId: str
     stackCode: str
     length: int = Field(ge=1, le=1000)
     width: int = Field(ge=1, le=1000)
     height: int = Field(ge=1, le=1000)
+    arrangements: List[StackArrangement] = Field(default_factory=list, max_length=10)
+    extraSecondary: int = Field(default=0, ge=0, le=1000000)
     note: str = ""
 
 
@@ -82,7 +90,8 @@ async def _build_allocation(body: StackAllocationBody, allocation_id: Optional[s
             detail="Atur kemasan sekunder dan isi per kemasan pada master produk terlebih dahulu",
         )
 
-    secondary_count = body.length * body.width * body.height
+    arrangements = [item.model_dump() for item in body.arrangements] or [{"hamparan": body.length, "kaki": body.width, "height": body.height}]
+    secondary_count = sum(item["hamparan"] * item["kaki"] * item["height"] for item in arrangements) + body.extraSecondary
     primary_qty = secondary_count * per_secondary
     query = {"productId": body.productId}
     if allocation_id:
@@ -122,6 +131,8 @@ async def _build_allocation(body: StackAllocationBody, allocation_id: Optional[s
         "length": body.length,
         "width": body.width,
         "height": body.height,
+        "arrangements": arrangements,
+        "extraSecondary": body.extraSecondary,
         "secondaryCount": secondary_count,
         "primaryQty": primary_qty,
         "note": body.note.strip(),
@@ -178,6 +189,16 @@ async def migrate_default_locations() -> None:
         new_code = item["stackCode"].replace("MP/", "MP1/", 1)
         await db.stack_allocations.update_one({"id": item["id"]}, {"$set": {"stackCode": new_code, "warehouse": "MP1"}})
     await db.products.update_many({"location": {"$regex": "^MP/"}}, [{"$set": {"location": {"$replaceOne": {"input": "$location", "find": "MP/", "replacement": "MP1/"}}}}])
+    minyak = await db.stack_allocations.find_one({"stackCode": "19/A01", "productName": {"$regex": "MINYAK", "$options": "i"}}, {"_id": 0})
+    if minyak and int(minyak.get("length", 0) or 0) == 35 and int(minyak.get("width", 0) or 0) == 19 and int(minyak.get("height", 0) or 0) == 6 and not minyak.get("extraSecondary"):
+        product = await db.products.find_one({"id": minyak["productId"]}, {"_id": 0})
+        per_secondary = float(minyak.get("secondaryQty", 0) or 0)
+        corrected_qty = 4000 * per_secondary
+        if product and corrected_qty <= float(product.get("stock", 0) or 0) + 1e-9:
+            await db.stack_allocations.update_one({"id": minyak["id"]}, {"$set": {
+                "arrangements": [{"hamparan": 35, "kaki": 19, "height": 6}],
+                "extraSecondary": 10, "secondaryCount": 4000, "primaryQty": corrected_qty,
+            }})
     products = await db.products.find({"location": {"$in": sorted(VALID_STACK_CODES)}}, {"_id": 0}).to_list(5000)
     for product in products:
         if not product.get("secondary") or float(product.get("secondaryQty", 0) or 0) <= 0:
@@ -239,7 +260,12 @@ async def export_stack_card(stackCode: str, user: dict = Depends(get_current_use
     headers = ["KARTU TUMPUKAN", code, "", "", "", "", "", ""]
     rows = [["No", "SKU", "Nama Komoditas", "Susunan P×L×T", "Kemasan Sekunder", "Jumlah Primer", "Satuan", "Berat (kg)"]]
     for index, item in enumerate(items, 1):
-        arrangement = "Perlu dihitung ulang" if item.get("arrangementAdjusted") else f"{item.get('length', 0)}×{item.get('width', 0)}×{item.get('height', 0)}"
+        parts = [f"{x.get('hamparan', 0)}×{x.get('kaki', 0)}×{x.get('height', 0)}" for x in item.get("arrangements", [])]
+        if not parts:
+            parts = [f"{item.get('length', 0)}×{item.get('width', 0)}×{item.get('height', 0)}"]
+        arrangement = "Perlu dihitung ulang" if item.get("arrangementAdjusted") else " + ".join(parts)
+        if not item.get("arrangementAdjusted") and item.get("extraSecondary", 0):
+            arrangement += f" + {item.get('extraSecondary')} tambahan"
         rows.append([index, item.get("sku", ""), item.get("productName", ""), arrangement,
                      f"{item.get('secondaryCount', 0)} {item.get('secondary', '')}", item.get("primaryQty", 0),
                      item.get("unit", ""), float(item.get("primaryQty", 0) or 0) * float(item.get("weight", 0) or 0)])
