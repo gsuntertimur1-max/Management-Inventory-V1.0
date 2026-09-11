@@ -11,6 +11,7 @@ body {
     -moz-osx-font-smoothing: grayscale;
     background-color: #070a10;
     color: #e7ebf2;
+    overflow-x: hidden;
 }
 
 code, .font-mono {
@@ -97,6 +98,22 @@ code, .font-mono {
 .nav-link:hover { color: #e7ebf2; background: rgba(37,99,235,0.08); }
 .nav-link.active { color: #60a5fa; background: rgba(37,99,235,0.14); }
 
+.mobile-nav-link {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    width: 100%;
+    min-height: 3rem;
+    padding: 0.75rem 0.9rem;
+    border-radius: 0.75rem;
+    color: #aab4c4;
+    font-size: 0.925rem;
+    font-weight: 500;
+    transition: color .18s ease, background-color .18s ease;
+}
+.mobile-nav-link:hover { color: #e7ebf2; background: rgba(37,99,235,0.08); }
+.mobile-nav-link.active { color: #60a5fa; background: rgba(37,99,235,0.16); }
+
 .btn-primary {
     background: #2563eb;
     color: #fff;
@@ -111,3 +128,21 @@ code, .font-mono {
 
 @keyframes fadeUp { from { opacity:0; transform: translateY(10px);} to {opacity:1; transform:none;} }
 .fade-up { animation: fadeUp .4s ease both; }
+
+@media (max-width: 639px) {
+    .app-main h1.text-4xl { font-size: 1.75rem; line-height: 1.15; }
+    .app-main h2.text-xl { font-size: 1.1rem; line-height: 1.35; }
+    .app-main .card-surface.p-8 { padding: 1.25rem; }
+    .app-main .card-surface.p-6 { padding: 1rem; }
+    .app-main .stat-card.p-5 { padding: 1rem; }
+    .app-main .stat-card .text-3xl { font-size: 1.65rem; }
+    .app-main .stat-card > div:first-child { margin-bottom: 1.25rem; }
+    .app-main .min-w-\[240px\],
+    .app-main .min-w-\[200px\] { min-width: 100%; }
+    .app-main table { min-width: 720px; }
+    .app-main .overflow-x-auto {
+        width: 100%;
+        -webkit-overflow-scrolling: touch;
+        overscroll-behavior-inline: contain;
+    }
+}
