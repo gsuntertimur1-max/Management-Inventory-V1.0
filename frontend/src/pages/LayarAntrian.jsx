@@ -1,24 +1,107 @@
-import React from 'react';
-import { Clock, Loader } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Clock, Loader, Maximize2, Minimize2, RefreshCw, Volume2, VolumeX } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { formatNum } from '../mock';
 
 const LayarAntrian = () => {
-  const { outboundLoads } = useData();
+  const { outboundLoads, refreshOutboundLoads } = useData();
+  const screenRef = useRef(null);
+  const announcedQueueRef = useRef(null);
+  const [presentationMode, setPresentationMode] = useState(false);
+  const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState(new Date());
+  const [refreshing, setRefreshing] = useState(false);
   const active = outboundLoads
     .filter((load) => load.status !== 'Selesai')
     .sort((a, b) => (a.antrian || '').localeCompare(b.antrian || ''));
   const loading = active.find((load) => load.status === 'Sedang Dimuat');
 
+  const refreshQueue = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await refreshOutboundLoads();
+      setLastUpdated(new Date());
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refreshOutboundLoads]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(refreshQueue, 60000);
+    return () => window.clearInterval(intervalId);
+  }, [refreshQueue]);
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      if (!document.fullscreenElement) setPresentationMode(false);
+    };
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
+  }, []);
+
+  useEffect(() => {
+    const queueNumber = loading?.antrian;
+    if (!voiceEnabled || !queueNumber || announcedQueueRef.current === queueNumber || !('speechSynthesis' in window)) return;
+
+    window.speechSynthesis.cancel();
+    const message = new SpeechSynthesisUtterance(`Nomor antrean ${queueNumber}, silakan menuju area pemuatan.`);
+    message.lang = 'id-ID';
+    message.rate = 0.9;
+    message.volume = 1;
+    const indonesianVoice = window.speechSynthesis.getVoices().find((voice) => voice.lang?.toLowerCase().startsWith('id'));
+    if (indonesianVoice) message.voice = indonesianVoice;
+    window.speechSynthesis.speak(message);
+    announcedQueueRef.current = queueNumber;
+  }, [loading?.antrian, voiceEnabled]);
+
+  const enterPresentation = async () => {
+    setPresentationMode(true);
+    setVoiceEnabled(true);
+    announcedQueueRef.current = null;
+    try {
+      await screenRef.current?.requestFullscreen?.();
+    } catch (error) {
+      // Mode presentasi CSS tetap digunakan bila browser tidak mendukung Fullscreen API.
+    }
+  };
+
+  const exitPresentation = async () => {
+    setPresentationMode(false);
+    if (document.fullscreenElement) await document.exitFullscreen?.();
+  };
+
+  const toggleVoice = () => {
+    if (voiceEnabled && 'speechSynthesis' in window) window.speechSynthesis.cancel();
+    announcedQueueRef.current = null;
+    setVoiceEnabled((enabled) => !enabled);
+  };
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between gap-6">
+    <div ref={screenRef} className={`${presentationMode ? 'fixed inset-0 z-[60] overflow-y-auto bg-[#070a10] p-4 sm:p-8' : ''} space-y-6`}>
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5 lg:gap-6">
         <div>
           <div className="label-mono mb-2">Monitor Pemuatan</div>
           <h1 className="font-display text-4xl font-bold">Layar Antrian Pemuatan</h1>
           <p className="text-[#8b93a1] mt-2">Nomor antrian reset setiap hari dan hanya menampilkan proses yang belum selesai.</p>
         </div>
-        <div className="text-right"><div className="label-mono">Sedang Dilayani</div><div className="font-display text-5xl font-bold text-[#60a5fa]">{loading ? loading.antrian : '—'}</div></div>
+        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+          <button type="button" onClick={toggleVoice} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-[#242f3d] px-3.5 py-2.5 text-sm text-[#c7d0dc] hover:bg-[#141a24]">
+            {voiceEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
+            {voiceEnabled ? 'Suara aktif' : 'Aktifkan suara'}
+          </button>
+          <button type="button" onClick={refreshQueue} disabled={refreshing} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-[#242f3d] px-3.5 py-2.5 text-sm text-[#c7d0dc] hover:bg-[#141a24] disabled:opacity-60">
+            <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''} /> Perbarui
+          </button>
+          <button type="button" onClick={presentationMode ? exitPresentation : enterPresentation} className="btn-primary inline-flex min-h-11 items-center gap-2 rounded-xl px-3.5 py-2.5 text-sm font-semibold">
+            {presentationMode ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+            {presentationMode ? 'Keluar fullscreen' : 'Tampilkan fullscreen'}
+          </button>
+        </div>
+      </div>
+
+      <div className="flex items-end justify-between gap-4 border-y border-[#161d29] py-4">
+        <div className="text-xs text-[#6b7688]">Diperbarui otomatis setiap 1 menit · Terakhir {lastUpdated.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</div>
+        <div className="text-right shrink-0"><div className="label-mono">Sedang Dilayani</div><div className="font-display text-4xl sm:text-5xl font-bold text-[#60a5fa]">{loading ? loading.antrian : '—'}</div></div>
       </div>
 
       {loading && (
