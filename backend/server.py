@@ -162,9 +162,6 @@ ROLE_VIEWER = "Pemantau"
 ROLE_ALIASES = {
     "Superadmin": ROLE_SUPERADMIN,
     "Admin": ROLE_ADMIN,
-    # Keep the old database value (Pemantau) working while exposing the
-    # workflow name Viewer to new and existing users.
-    "Viewer": ROLE_VIEWER,
 }
 
 ROLE_LABELS = {
@@ -172,7 +169,7 @@ ROLE_LABELS = {
     ROLE_ADMIN: "Admin",
     ROLE_OPERATOR: "Operator",
     ROLE_QC: "QC",
-    ROLE_VIEWER: "Viewer",
+    ROLE_VIEWER: "Pemantau",
 }
 
 
@@ -182,8 +179,8 @@ def canonical_role(role: Optional[str]) -> str:
 
 
 ROLE_PERMISSIONS = {
-    ROLE_SUPERADMIN: {"masterWrite", "inbound", "mutasi", "outbound", "rebagging", "qc", "users", "settings"},
-    ROLE_ADMIN: {"inbound", "mutasi", "outbound"},
+    ROLE_SUPERADMIN: {"masterWrite", "inbound", "outbound", "rebagging", "qc", "users", "settings"},
+    ROLE_ADMIN: {"masterWrite", "inbound", "outbound", "rebagging"},
     ROLE_OPERATOR: {"rebagging"},
     ROLE_QC: {"qc"},
     ROLE_VIEWER: set(),
@@ -195,10 +192,7 @@ def has_role_permission(role: Optional[str], permission: str) -> bool:
     if permission == "currentWrite":
         return canonical in {ROLE_SUPERADMIN, ROLE_ADMIN}
     if permission == "operations":
-        return any(
-            has_role_permission(canonical, item)
-            for item in ("inbound", "mutasi", "outbound")
-        )
+        return canonical in {ROLE_SUPERADMIN, ROLE_ADMIN}
     return permission in ROLE_PERMISSIONS.get(canonical, set())
 
 
@@ -207,36 +201,11 @@ def role_label(role: Optional[str]) -> str:
     return ROLE_LABELS.get(canonical, canonical)
 
 
-async def require_permission(permission: str, user: dict = Depends(get_current_user)) -> dict:
-    if not has_role_permission(user.get("role"), permission):
-        raise HTTPException(
-            status_code=403,
-            detail=f"Peran {role_label(user.get('role'))} tidak memiliki hak untuk proses {permission}",
-        )
-    return user
-
-
-async def require_master_write(user: dict = Depends(get_current_user)) -> dict:
-    return await require_permission("masterWrite", user)
-
-
-async def require_inbound(user: dict = Depends(get_current_user)) -> dict:
-    return await require_permission("inbound", user)
-
-
-async def require_outbound(user: dict = Depends(get_current_user)) -> dict:
-    return await require_permission("outbound", user)
-
-
-async def require_mutasi(user: dict = Depends(get_current_user)) -> dict:
-    return await require_permission("mutasi", user)
-
-
-async def require_inbound_view(user: dict = Depends(get_current_user)) -> dict:
-    """Read-only data needed by the inbound screen (Admin/Superadmin)."""
-    if not has_role_permission(user.get("role"), "inbound"):
-        raise HTTPException(status_code=403, detail="Menu inbound tidak tersedia untuk peran ini")
-    return user
+# The current Railway branch has no separate Rebagging/QC endpoints yet. The
+# generic write dependency therefore covers only the currently exposed master,
+# inbound, and outbound operations. Future modules should use the dedicated
+# permission helpers above instead of widening this set.
+WRITE_ROLES = {ROLE_SUPERADMIN, ROLE_ADMIN}
 
 
 async def require_write(user: dict = Depends(get_current_user)) -> dict:
@@ -362,14 +331,14 @@ class UserCreate(BaseModel):
     name: str
     username: str
     email: str = ''
-    role: Literal['Administrator', 'Supervisor', 'Operator', 'QC', 'Pemantau', 'Viewer', 'Superadmin', 'Admin'] = 'Operator'
+    role: Literal['Administrator', 'Supervisor', 'Operator', 'QC', 'Pemantau', 'Superadmin', 'Admin'] = 'Operator'
     password: str
 
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None
     email: Optional[str] = None
-    role: Optional[Literal['Administrator', 'Supervisor', 'Operator', 'QC', 'Pemantau', 'Viewer', 'Superadmin', 'Admin']] = None
+    role: Optional[Literal['Administrator', 'Supervisor', 'Operator', 'QC', 'Pemantau', 'Superadmin', 'Admin']] = None
     active: Optional[bool] = None
 
 
@@ -672,7 +641,7 @@ async def list_products(user: dict = Depends(get_current_user)):
 
 
 @api_router.post("/products")
-async def create_product(body: ProductBody, user: dict = Depends(require_master_write)):
+async def create_product(body: ProductBody, user: dict = Depends(require_write)):
     doc = body.model_dump()
     doc["sku"] = doc["sku"].strip()
     if not doc["sku"]:
@@ -685,7 +654,7 @@ async def create_product(body: ProductBody, user: dict = Depends(require_master_
 
 
 @api_router.put("/products/{product_id}")
-async def update_product(product_id: str, body: ProductUpdate, user: dict = Depends(require_master_write)):
+async def update_product(product_id: str, body: ProductUpdate, user: dict = Depends(require_write)):
     patch = body.model_dump(exclude_unset=True, exclude_none=True)
     if "sku" in patch:
         patch["sku"] = patch["sku"].strip()
@@ -702,7 +671,7 @@ async def update_product(product_id: str, body: ProductUpdate, user: dict = Depe
 
 
 @api_router.delete("/products/{product_id}")
-async def delete_product(product_id: str, user: dict = Depends(require_master_write)):
+async def delete_product(product_id: str, user: dict = Depends(require_write)):
     result = await db.products.delete_one({"id": product_id})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
@@ -711,12 +680,12 @@ async def delete_product(product_id: str, user: dict = Depends(require_master_wr
 
 # ---------- suppliers ----------
 @api_router.get("/suppliers")
-async def list_suppliers(user: dict = Depends(require_inbound_view)):
+async def list_suppliers(user: dict = Depends(get_current_user)):
     return await db.suppliers.find({}, {"_id": 0}).sort("name", 1).to_list(1000)
 
 
 @api_router.post("/suppliers")
-async def create_supplier(body: SupplierBody, user: dict = Depends(require_master_write)):
+async def create_supplier(body: SupplierBody, user: dict = Depends(require_write)):
     doc = body.model_dump()
     doc["id"] = new_id()
     await db.suppliers.insert_one(dict(doc))
@@ -724,7 +693,7 @@ async def create_supplier(body: SupplierBody, user: dict = Depends(require_maste
 
 
 @api_router.put("/suppliers/{supplier_id}")
-async def update_supplier(supplier_id: str, body: SupplierBody, user: dict = Depends(require_master_write)):
+async def update_supplier(supplier_id: str, body: SupplierBody, user: dict = Depends(require_write)):
     result = await db.suppliers.update_one({"id": supplier_id}, {"$set": body.model_dump()})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Supplier tidak ditemukan")
@@ -732,7 +701,7 @@ async def update_supplier(supplier_id: str, body: SupplierBody, user: dict = Dep
 
 
 @api_router.delete("/suppliers/{supplier_id}")
-async def delete_supplier(supplier_id: str, user: dict = Depends(require_master_write)):
+async def delete_supplier(supplier_id: str, user: dict = Depends(require_write)):
     result = await db.suppliers.delete_one({"id": supplier_id})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Supplier tidak ditemukan")
@@ -746,7 +715,7 @@ async def list_transactions(user: dict = Depends(get_current_user)):
 
 
 @api_router.post("/transactions")
-async def create_transaction(body: TxnBody, user: dict = Depends(require_mutasi)):
+async def create_transaction(body: TxnBody, user: dict = Depends(require_write)):
     if body.type not in ("MASUK", "KELUAR"):
         raise HTTPException(status_code=400, detail="Jenis transaksi tidak valid")
     if body.kondisi not in ("BAIK", "RUSAK"):
@@ -837,12 +806,12 @@ async def create_transaction(body: TxnBody, user: dict = Depends(require_mutasi)
 
 
 @api_router.get("/surat-jalan")
-async def list_surat_jalan(user: dict = Depends(require_outbound)):
+async def list_surat_jalan(user: dict = Depends(get_current_user)):
     return await db.surat_jalan.find({}, {"_id": 0}).sort("time", -1).to_list(1000)
 
 
 @api_router.put("/surat-jalan/{sj_id}/status")
-async def update_sj_status(sj_id: str, body: SJStatusBody, user: dict = Depends(require_outbound)):
+async def update_sj_status(sj_id: str, body: SJStatusBody, user: dict = Depends(require_write)):
     result = await db.surat_jalan.update_one({"id": sj_id}, {"$set": {"status": body.status}})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Surat jalan tidak ditemukan")
@@ -851,12 +820,12 @@ async def update_sj_status(sj_id: str, body: SJStatusBody, user: dict = Depends(
 
 # ---------- purchase orders ----------
 @api_router.get("/purchase-orders")
-async def list_pos(user: dict = Depends(require_inbound_view)):
+async def list_pos(user: dict = Depends(get_current_user)):
     return await db.purchase_orders.find({}, {"_id": 0}).sort("date", -1).to_list(1000)
 
 
 @api_router.post("/purchase-orders")
-async def create_po(body: POBody, user: dict = Depends(require_master_write)):
+async def create_po(body: POBody, user: dict = Depends(require_write)):
     year = operational_now().strftime("%Y")
     prefix = f"PO-{year}-"
     floor = await max_suffix(db.purchase_orders, "no", prefix)
@@ -942,7 +911,7 @@ async def export_transactions_current_month(user: dict = Depends(get_current_use
 
 # ---------- import & admin ----------
 @api_router.post("/import/csv")
-async def import_csv(file: UploadFile = File(...), user: dict = Depends(require_master_write)):
+async def import_csv(file: UploadFile = File(...), user: dict = Depends(require_write)):
     content = (await file.read()).decode("utf-8-sig", errors="replace")
     rows = parse_seed_rows(content)
     if not rows:

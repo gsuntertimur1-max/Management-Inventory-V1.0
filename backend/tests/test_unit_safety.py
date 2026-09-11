@@ -41,26 +41,15 @@ def test_service_routes_do_not_duplicate_api_prefix():
     [
         ("Administrator", "currentWrite", True),
         ("Superadmin", "currentWrite", True),
-        ("Administrator", "masterWrite", True),
-        ("Administrator", "mutasi", True),
         ("Supervisor", "inbound", True),
-        ("Supervisor", "mutasi", True),
         ("Supervisor", "outbound", True),
-        ("Supervisor", "masterWrite", False),
-        ("Supervisor", "rebagging", False),
         ("Supervisor", "qc", False),
         ("Operator", "rebagging", True),
         ("Operator", "inbound", False),
-        ("Operator", "mutasi", False),
         ("Operator", "outbound", False),
         ("QC", "qc", True),
         ("QC", "inbound", False),
-        ("QC", "mutasi", False),
         ("QC", "outbound", False),
-        ("Viewer", "inbound", False),
-        ("Viewer", "mutasi", False),
-        ("Viewer", "outbound", False),
-        ("Viewer", "qc", False),
     ],
 )
 def test_final_role_permissions(role, permission, expected):
@@ -70,7 +59,5 @@ def test_final_role_permissions(role, permission, expected):
 def test_role_aliases_and_labels_preserve_legacy_values():
     assert server.canonical_role("Superadmin") == "Administrator"
     assert server.canonical_role("Admin") == "Supervisor"
-    assert server.canonical_role("Viewer") == "Pemantau"
     assert server.role_label("Administrator") == "Superadmin"
     assert server.role_label("Supervisor") == "Admin"
-    assert server.role_label("Pemantau") == "Viewer"

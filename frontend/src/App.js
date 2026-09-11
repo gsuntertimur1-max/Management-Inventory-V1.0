@@ -56,9 +56,9 @@ function AppRoutes() {
       <Route path="/catat" element={<Protected permission="operations"><CatatStok /></Protected>} />
       <Route path="/pengeluaran" element={<Protected permission="outbound"><Pengeluaran /></Protected>} />
       <Route path="/riwayat" element={<Protected><Riwayat /></Protected>} />
-      <Route path="/po" element={<Protected permission="masterWrite"><PurchaseOrder /></Protected>} />
-      <Route path="/supplier" element={<Protected permission="masterWrite"><Supplier /></Protected>} />
-      <Route path="/antrian" element={<Protected permission="outbound"><LayarAntrian /></Protected>} />
+      <Route path="/po" element={<Protected><PurchaseOrder /></Protected>} />
+      <Route path="/supplier" element={<Protected><Supplier /></Protected>} />
+      <Route path="/antrian" element={<Protected><LayarAntrian /></Protected>} />
       <Route path="/pengguna" element={<Protected permission="users"><Pengguna /></Protected>} />
       <Route path="/pengaturan" element={<Protected permission="settings"><Pengaturan /></Protected>} />
       <Route path="*" element={<Navigate to="/" replace />} />
