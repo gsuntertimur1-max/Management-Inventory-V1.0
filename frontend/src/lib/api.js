@@ -37,6 +37,16 @@ export const downloadApiFile = async (path, fallbackName = 'download.xlsx') => {
   return filename;
 };
 
+export const printApiFile = async (path) => {
+  const response = await api.get(path, { responseType: 'blob' });
+  const url = URL.createObjectURL(response.data);
+  const frame = document.createElement('iframe');
+  frame.style.position = 'fixed'; frame.style.right = '0'; frame.style.bottom = '0'; frame.style.width = '0'; frame.style.height = '0'; frame.style.border = '0';
+  frame.src = url;
+  document.body.appendChild(frame);
+  frame.onload = () => { frame.contentWindow?.focus(); frame.contentWindow?.print(); setTimeout(() => { frame.remove(); URL.revokeObjectURL(url); }, 1200); };
+};
+
 export const apiError = (e) => {
   const detail = e?.response?.data?.detail;
   if (typeof detail === 'string') return detail;

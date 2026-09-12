@@ -7,7 +7,7 @@ import { useNavigate } from 'react-router-dom';
 import { packagingText, quantityFromInput, quantityIsValid, totalWeight } from '../lib/packaging';
 
 const STACKS = [...Array.from({ length: 8 }, (_, i) => String(i + 17)).flatMap((unit) => ['A', 'B', 'C'].flatMap((zone) => Array.from({ length: 4 }, (_, i) => `${unit}/${zone}${String(i + 1).padStart(2, '0')}`))), ...['A', 'B'].flatMap((zone) => Array.from({ length: 8 }, (_, i) => `MP1/${zone}${String(i + 1).padStart(2, '0')}`))];
-const emptyRow = () => ({ productId: '', inputMode: 'QTY', inputValue: 1, qty: 1, exp: '', stackCode: '' });
+const emptyRow = () => ({ productId: '', inputMode: 'QTY', inputValue: 1, qty: 1, exp: '', stackCode: '', documentNo: '' });
 
 const CatatStok = () => {
   const { products, suppliers, purchaseOrders, addReceipt, createOutboundLoad, canInbound, canOutbound } = useData();
@@ -23,6 +23,7 @@ const CatatStok = () => {
   const [ket, setKet] = useState('');
   const [documentType, setDocumentType] = useState('SO');
   const [transferScope, setTransferScope] = useState('');
+  const [documentRefs, setDocumentRefs] = useState(['']);
   const [saving, setSaving] = useState(false);
 
   const activePOs = useMemo(
@@ -43,6 +44,7 @@ const CatatStok = () => {
     setKet('');
     setDocumentType('SO');
     setTransferScope('');
+    setDocumentRefs(['']);
   };
 
   const chooseType = (nextType) => {
@@ -117,6 +119,10 @@ const CatatStok = () => {
       toast.error(type === 'MASUK' ? 'Pilih supplier pengirim' : 'Isi penerima barang');
       return;
     }
+    if (type === 'KELUAR' && (documentRefs.some((item) => !item.trim()) || chosen.some((row) => !(row.documentNo || documentRefs[0])))) {
+      toast.error('Lengkapi semua nomor SO/CT/TM/Memo dan pilih dokumen pada setiap komoditas');
+      return;
+    }
 
     if (type === 'MASUK' && selectedPO) {
       for (const row of chosen) {
@@ -146,15 +152,16 @@ const CatatStok = () => {
         navigate('/riwayat');
       } else {
         const load = await createOutboundLoad({
-          items: chosen.map((row) => ({ productId: row.productId, qty: Number(row.qty) })),
+          items: chosen.map((row) => ({ productId: row.productId, qty: Number(row.qty), documentNo: row.documentNo || documentRefs[0] })),
           party: party.trim(),
-          ref,
+          ref: documentRefs[0],
           polisi,
           pengambil,
           kondisi,
           keterangan: ket,
           documentType,
           transferScope,
+          documents: documentRefs.filter(Boolean),
         });
         toast.success(`Antrian ${load.antrian} dibuat. Stok belum berkurang sampai pemuatan selesai.`);
         navigate('/pengeluaran');
@@ -206,6 +213,7 @@ const CatatStok = () => {
             <div className="mb-5 p-4 rounded-xl border border-[#5a3b15] bg-[#1a1208]">
               <div className="flex gap-3"><Truck size={18} className="text-[#f59e0b] shrink-0 mt-0.5" /><div><div className="text-sm font-semibold text-[#fbbf24]">Tahap Persiapan Pemuatan</div><p className="text-xs text-[#a99675] mt-1">Pilih jenis dokumen. CT dan Memo dapat dilanjutkan menjadi rangkaian CR/SO setelah pemuatan selesai.</p></div></div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4"><div><label className="text-xs text-[#a99675] block mb-1">Jenis Dokumen</label><select value={documentType} onChange={(e) => { setDocumentType(e.target.value); if (e.target.value !== 'TM') setTransferScope(''); }} className="w-full bg-[#0b0f17] border border-[#59431f] rounded-lg px-3 py-2.5 text-sm"><option value="SO">SO — Penjualan</option><option value="TM">TM — Transfer Move</option><option value="CT">CT — Konsinyasi</option><option value="MEMO">Memo — Pengeluaran Memo</option></select></div>{documentType === 'TM' && <div><label className="text-xs text-[#a99675] block mb-1">Cakupan Transfer</label><select value={transferScope} onChange={(e) => setTransferScope(e.target.value)} className="w-full bg-[#0b0f17] border border-[#59431f] rounded-lg px-3 py-2.5 text-sm"><option value="">Pilih cakupan...</option><option value="LOKAL">Antar Gudang Lokal</option><option value="REGIONAL">Regional</option><option value="NASIONAL">Nasional</option></select></div>}</div>
+              <div className="mt-3"><div className="flex items-center justify-between mb-1"><label className="text-xs text-[#a99675]">Nomor Dokumen (satu kendaraan dapat membawa beberapa dokumen)</label><button type="button" onClick={() => setDocumentRefs((prev) => [...prev, ''])} className="text-xs text-[#60a5fa]">+ Tambah dokumen</button></div>{documentRefs.map((doc, index) => <div key={index} className="flex gap-2 mt-2"><input value={doc} onChange={(e) => { const next = [...documentRefs]; next[index] = e.target.value; setDocumentRefs(next); }} placeholder={documentType === 'SO' ? 'SO/xxxx/mm/09001' : `${documentType}/...`} className="flex-1 bg-[#0b0f17] border border-[#59431f] rounded-lg px-3 py-2.5 text-sm" />{documentRefs.length > 1 && <button type="button" onClick={() => setDocumentRefs((prev) => prev.filter((_, i) => i !== index))} className="px-3 rounded-lg border border-[#59431f] text-[#f59e0b]">×</button>}</div>)}</div>
             </div>
           )}
 
@@ -239,6 +247,7 @@ const CatatStok = () => {
                   {type === 'MASUK' && (
                     <div><label className="text-[10px] text-[#6b7688] mb-1 flex items-center gap-1"><CalendarDays size={11} /> Kedaluwarsa / Lokasi</label><input type="date" value={row.exp || ''} onChange={(e) => setRow(index, { exp: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm" /><select value={row.stackCode || product?.location || ''} onChange={(e) => setRow(index, { stackCode: e.target.value })} className="w-full mt-1 bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2 text-xs"><option value="">Pilih lokasi...</option>{STACKS.map((code) => <option key={code}>{code}</option>)}</select></div>
                   )}
+                  {type === 'KELUAR' && <div><label className="text-[10px] text-[#6b7688] mb-1 block">Dokumen</label><select value={row.documentNo || documentRefs[0] || ''} onChange={(e) => setRow(index, { documentNo: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2.5 text-xs"><option value="">Pilih...</option>{documentRefs.filter(Boolean).map((doc) => <option key={doc}>{doc}</option>)}</select></div>}
                   <button type="button" onClick={() => delRow(index)} disabled={rows.length === 1} className="w-10 h-[42px] rounded-lg border border-[#242f3d] flex items-center justify-center text-[#ef4444] disabled:opacity-30"><Trash2 size={15} /></button>
                 </div>
               );
@@ -248,7 +257,7 @@ const CatatStok = () => {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div><label className="text-sm font-medium mb-1.5 block">{type === 'MASUK' ? 'Supplier Pengirim' : 'Penerima / Tujuan'}</label>{type === 'MASUK' ? <select value={party} disabled={Boolean(selectedPO)} onChange={(e) => setParty(e.target.value)} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm"><option value="">Pilih supplier...</option>{suppliers.map((supplier) => <option key={supplier.id}>{supplier.name}</option>)}</select> : <input value={party} onChange={(e) => setParty(e.target.value)} placeholder="Nama penerima / tujuan" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm" />}</div>
-            <div><label className="text-sm font-medium mb-1.5 block">{type === 'MASUK' ? 'No. Referensi' : `Nomor Dokumen ${documentType}`}</label><input value={ref} readOnly={Boolean(selectedPO)} onChange={(e) => setRef(e.target.value)} placeholder={type === 'MASUK' ? 'DO / BAST / referensi lain' : documentType === 'SO' ? 'SO/8775/09/2026/09001' : `${documentType}/...`} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm read-only:opacity-70" /></div>
+            <div><label className="text-sm font-medium mb-1.5 block">{type === 'MASUK' ? 'No. Referensi' : 'Dokumen Utama'}</label><input value={type === 'KELUAR' ? (documentRefs.filter(Boolean).join(', ') || 'Diisi pada daftar dokumen di atas') : ref} readOnly={type === 'KELUAR' || Boolean(selectedPO)} onChange={(e) => setRef(e.target.value)} placeholder="DO / BAST / referensi lain" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm read-only:opacity-70" /></div>
             <div><label className="text-sm font-medium mb-1.5 block">Nomor Plat Kendaraan</label><input value={polisi} onChange={(e) => setPolisi(e.target.value)} placeholder="B 1441 PQF" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm" /></div>
             {type === 'KELUAR' ? (
               <div><label className="text-sm font-medium mb-1.5 block">Nama Pengambil / Sopir</label><input value={pengambil} onChange={(e) => setPengambil(e.target.value)} placeholder="Contoh: KOYUM" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm" /></div>

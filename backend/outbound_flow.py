@@ -31,6 +31,7 @@ def _validate_pack_qty(product: dict, qty: float) -> None:
 class OutboundItemInput(BaseModel):
     productId: str
     qty: float = Field(gt=0)
+    documentNo: str = ""
 
 
 class OutboundCreateInput(BaseModel):
@@ -43,6 +44,7 @@ class OutboundCreateInput(BaseModel):
     keterangan: str = ""
     documentType: Literal["SO", "TM", "CT", "MEMO"] = "SO"
     transferScope: Literal["", "LOKAL", "REGIONAL", "NASIONAL"] = ""
+    documents: List[str] = Field(default_factory=list, max_length=20)
 
 
 class ReturnItemInput(BaseModel):
@@ -117,16 +119,21 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
     party = body.party.strip()
     if not party:
         raise HTTPException(status_code=400, detail="Penerima barang wajib diisi")
-    ref = body.ref.strip()
-    if not ref:
+    refs = []
+    for candidate in [body.ref, *body.documents]:
+        value = str(candidate or "").strip()
+        if value and value not in refs:
+            refs.append(value)
+    if not refs:
         raise HTTPException(status_code=400, detail=f"Nomor dokumen {body.documentType} wajib diisi")
     expected = {"SO": "SO/", "TM": "TM", "CT": "CT", "MEMO": "MEMO"}[body.documentType]
-    if not ref.upper().startswith(expected):
+    if any(not ref.upper().startswith(expected) for ref in refs):
         raise HTTPException(status_code=400, detail=f"Nomor dokumen tidak sesuai jenis {body.documentType}")
     if body.documentType == "TM" and not body.transferScope:
         raise HTTPException(status_code=400, detail="Pilih cakupan Transfer Move")
-    if await db.outbound_loads.find_one({"$or": [{"ref": ref}, {"document_links.no": ref}]}):
-        raise HTTPException(status_code=409, detail="Nomor dokumen sudah digunakan")
+    for ref in refs:
+        if await db.outbound_loads.find_one({"$or": [{"ref": ref}, {"documents": ref}, {"document_links.no": ref}]}):
+            raise HTTPException(status_code=409, detail=f"Nomor dokumen {ref} sudah digunakan")
 
     requested = defaultdict(float)
     item_order = []
@@ -136,7 +143,6 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         requested[item.productId] += float(item.qty)
 
     products = {}
-    load_items = []
     for product_id in item_order:
         qty = requested[product_id]
         product = await db.products.find_one({"id": product_id}, {"_id": 0})
@@ -158,19 +164,15 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
                 ),
             )
 
+    load_items = []
+    for item in body.items:
+        product = products[item.productId]
+        item_ref = item.documentNo.strip() or refs[0]
+        if item_ref not in refs:
+            raise HTTPException(status_code=400, detail=f"Dokumen komoditas {item_ref} belum didaftarkan")
+        qty = float(item.qty)
         weight = float(product.get("weight", 0) or 0)
-        load_items.append({
-            "productId": product_id,
-            "sku": product.get("sku", ""),
-            "name": product.get("name", ""),
-            "qty": qty,
-            "unit": product.get("unit", ""),
-            "weight": weight,
-            "berat": weight * qty,
-            "secondary": product.get("secondary", ""),
-            "secondaryQty": float(product.get("secondaryQty", 0) or 0),
-            "location": product.get("location", ""),
-        })
+        load_items.append({"productId": item.productId, "documentNo": item_ref, "sku": product.get("sku", ""), "name": product.get("name", ""), "qty": qty, "unit": product.get("unit", ""), "weight": weight, "berat": weight * qty, "secondary": product.get("secondary", ""), "secondaryQty": float(product.get("secondaryQty", 0) or 0), "location": product.get("location", "")})
 
     ordered_products = [products[product_id] for product_id in item_order]
     unit_loading, queue_prefix = _loading_unit_from_products(ordered_products)
@@ -211,7 +213,8 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         "completed_at": "",
         "party": party,
         "penerima": party,
-        "ref": ref,
+        "ref": refs[0],
+        "documents": refs,
         "polisi": body.polisi.strip(),
         "pengambil": body.pengambil.strip(),
         "unit_loading": unit_loading,
@@ -346,6 +349,7 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
             "ref": load.get("ref", ""),
             "document_type": load.get("document_type", "SO"),
             "transfer_scope": load.get("transfer_scope", ""),
+            "documents": load.get("documents", [load.get("ref", "")]),
             "items": [
                 {
                     "name": item.get("name", ""),
@@ -354,6 +358,7 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
                     "unit": item.get("unit", ""),
                     "berat": float(item.get("berat", 0) or 0),
                     "location": item.get("location", ""),
+                    "documentNo": item.get("documentNo", load.get("ref", "")),
                     "secondary": item.get("secondary", ""),
                     "secondaryQty": float(item.get("secondaryQty", 0) or 0),
                     "sec": (

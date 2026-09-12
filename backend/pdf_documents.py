@@ -15,7 +15,8 @@ from reportlab.platypus import LongTable, PageBreak, Paragraph, SimpleDocTemplat
 from backend.server import db, get_current_user, operational_now
 
 router = APIRouter(prefix="/api")
-LOGO = Path(__file__).resolve().parents[1] / "frontend" / "public" / "logo-bulog-gst.png"
+LOGO = Path(__file__).resolve().parents[1] / "backend" / "assets" / "logo-bulog-gst.png"
+THERMAL_LOGO = Path(__file__).resolve().parents[1] / "backend" / "assets" / "logo-bulog-gst-thermal.png"
 SOFT_HEADER = colors.HexColor("#527D96")
 
 
@@ -106,26 +107,29 @@ def _stack_page(c: canvas.Canvas, doc):
 def _draw_sj_copy(c: canvas.Canvas, sj: dict, x: float, y: float, width: float):
     pad = 4 * mm; left = x + pad; right = x + width - pad
     if LOGO.exists(): c.drawImage(str(LOGO), right - 28 * mm, y - 17 * mm, width=28 * mm, height=13 * mm, preserveAspectRatio=True, mask="auto")
-    c.setFont("Helvetica-Bold", 7); c.drawString(left, y - 20 * mm, "09001 - KANWIL DKI JAKARTA BANTEN")
-    c.line(left, y - 22 * mm, right, y - 22 * mm); c.setFont("Helvetica-Bold", 15); c.drawCentredString(x + width / 2, y - 28 * mm, "SURAT JALAN MANUAL")
-    c.setFillColor(colors.HexColor("#dddddd")); c.rect(left, y - 35 * mm, right-left, 5 * mm, fill=1, stroke=0); c.setFillColor(colors.black)
+    c.setFillColor(colors.HexColor("#244B63")); c.setFont("Helvetica-Bold", 7); c.drawString(left, y - 20 * mm, "09001 - KANWIL DKI JAKARTA BANTEN")
+    c.setStrokeColor(colors.HexColor("#527D96")); c.setLineWidth(1.2); c.line(left, y - 22 * mm, right, y - 22 * mm); c.setFillColor(colors.HexColor("#244B63")); c.setFont("Helvetica-Bold", 15); c.drawCentredString(x + width / 2, y - 28 * mm, "SURAT JALAN")
+    c.setFillColor(colors.HexColor("#E7EFF3")); c.roundRect(left, y - 35 * mm, right-left, 5 * mm, 1.2 * mm, fill=1, stroke=0); c.setFillColor(colors.black)
     c.setFont("Helvetica", 9); c.drawCentredString(x + width / 2, y - 41 * mm, sj.get("ref") or sj.get("no", ""))
     cy = y - 47 * mm
     def box(label, value, height=13 * mm, label_width=27 * mm):
         nonlocal cy
-        c.rect(left, cy-height, right-left, height); c.setFont("Helvetica", 7); c.drawString(left+2*mm, cy-4*mm, label); c.setFont("Helvetica-Bold", 6.5); c.drawString(left+label_width, cy-4*mm, str(value)[:76]); cy -= height + 2*mm
+        c.rect(left, cy-height, right-left, height); c.setFont("Helvetica", 7); c.drawString(left+2*mm, cy-4*mm, label); c.setFont("Helvetica-Bold", 6.5); c.drawString(left+label_width, cy-4*mm, str(value)[:80]); cy -= height + 2*mm
     box("Penerima", sj.get("penerima", "-"))
     location = " / ".join(dict.fromkeys(str(i.get("location", "")) for i in sj.get("items", []) if i.get("location"))) or sj.get("unit_loading", "-")
-    box("Gudang Asal", f"KOMPLEKS GUDANG SUNTER TIMUR I & II    |    Unit Gudang: {location}")
-    box("Dokumen Sumber", f"{sj.get('ref', '-')}    |    Tanggal: {_date(sj.get('time'))}")
-    row_h = 15 * mm
-    c.setFillColor(colors.HexColor("#eeeeee")); c.rect(left, cy-6*mm, right-left, 6*mm, fill=1, stroke=1); c.setFillColor(colors.black); c.setFont("Helvetica-Bold", 7); c.drawString(left+2*mm, cy-4*mm, "Produk"); c.drawRightString(right-2*mm, cy-4*mm, "Kuantitas / Kuantum")
-    cy -= 6*mm
-    for item in sj.get("items", [])[:4]:
+    box("Gudang Asal", f"KOMPLEKS GUDANG SUNTER TIMUR I & II | Unit: {location}")
+    box("Dokumen Sumber", ", ".join(sj.get("documents") or [sj.get("ref", "-")]))
+    row_h = 14 * mm
+    c.setFillColor(colors.HexColor("#E7EFF3")); c.rect(left, cy-6*mm, right-left, 6*mm, fill=1, stroke=1); c.setFillColor(colors.black); c.setFont("Helvetica-Bold", 7); c.drawString(left+2*mm, cy-4*mm, "Produk"); c.drawRightString(right-2*mm, cy-4*mm, "Kuantitas / Kuantum"); cy -= 6*mm
+    current_doc = ""
+    for item in sj.get("items", [])[:7]:
+        item_doc = item.get("documentNo", "")
+        if item_doc and item_doc != current_doc:
+            c.setFillColor(colors.HexColor("#F3F7F9")); c.rect(left, cy-5*mm, right-left, 5*mm, fill=1, stroke=1); c.setFillColor(colors.HexColor("#244B63")); c.setFont("Helvetica-Bold", 6.5); c.drawString(left+2*mm, cy-3.3*mm, f"Dokumen: {item_doc}"); c.setFillColor(colors.black); cy -= 5*mm; current_doc = item_doc
         c.rect(left, cy-row_h, right-left, row_h); c.setFont("Helvetica-Bold", 6.5); c.drawString(left+2*mm, cy-4*mm, str(item.get("name", ""))[:54]); c.setFont("Helvetica", 5.8); c.drawString(left+2*mm, cy-8*mm, f"SKU {item.get('sku','')} | Lokasi {item.get('location','-')}"); c.setFont("Helvetica-Bold", 7); c.drawRightString(right-2*mm, cy-5*mm, f"{_num(item.get('qty'))} {item.get('unit','')} | {_num(item.get('berat'))} Kg"); c.drawRightString(right-2*mm, cy-10*mm, item.get("sec", "")); cy -= row_h
     box("Catatan/Nopol/No Kontainer", f"{sj.get('polisi', '-')}; {sj.get('pengambil', '')}", 10*mm, 58*mm)
     c.setFont("Helvetica", 7); c.drawCentredString(left+45*mm, cy-3*mm, "Pengangkut"); c.drawCentredString(right-45*mm, cy-3*mm, "Yang Menyerahkan,"); c.setFont("Helvetica-Bold", 6.5); c.drawCentredString(right-45*mm, cy-8*mm, "KOMPLEKS GUDANG SUNTER TIMUR I & II"); c.line(left+25*mm, cy-28*mm, left+65*mm, cy-28*mm); c.drawCentredString(right-45*mm, cy-28*mm, sj.get("operator", "PETUGAS GUDANG") or "PETUGAS GUDANG")
-    cy -= 36*mm; c.setFont("Helvetica-Bold", 12); c.drawString(left, cy, "Delivery Tracking"); c.setFont("Helvetica", 5.8); c.rect(left, cy-13*mm, right-left, 11*mm); c.drawString(left+2*mm, cy-6*mm, "Dicetak oleh : KOMPLEKS GUDANG SUNTER TIMUR I & II"); c.drawString(left+2*mm, cy-10*mm, f"Pada Waktu : {_date(operational_now().isoformat(), True)}")
+    footer_y = 18 * mm; c.setStrokeColor(colors.HexColor("#527D96")); c.line(left, footer_y + 11*mm, right, footer_y + 11*mm); c.setFillColor(colors.HexColor("#244B63")); c.setFont("Helvetica-Bold", 8); c.drawString(left, footer_y + 5*mm, "Delivery Tracking"); c.setFillColor(colors.black); c.setFont("Helvetica", 5.8); c.drawString(left, footer_y, "Dicetak oleh: KOMPLEKS GUDANG SUNTER TIMUR I & II"); c.drawRightString(right, footer_y, f"Tanggal cetak: {_date(operational_now().isoformat(), True)}")
 
 
 @router.get("/export/surat-jalan/{sj_id}.pdf")
@@ -143,11 +147,12 @@ async def export_bon_muat_pdf(load_id: str, user: dict = Depends(get_current_use
     load = await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
     if not load: raise HTTPException(status_code=404, detail="Bon Muat tidak ditemukan")
     buffer = io.BytesIO(); width, height = 80*mm, 190*mm; c = canvas.Canvas(buffer, pagesize=(width, height)); mid = width/2
-    if LOGO.exists(): c.drawImage(str(LOGO), 42*mm, height-20*mm, width=34*mm, height=15*mm, preserveAspectRatio=True, mask="auto")
+    if THERMAL_LOGO.exists(): c.drawImage(str(THERMAL_LOGO), 42*mm, height-20*mm, width=34*mm, height=15*mm, preserveAspectRatio=True, mask="auto")
     y=height-26*mm; c.setFont("Helvetica-Bold", 10); c.drawCentredString(mid, y, "BON PEMUATAN"); y-=5*mm; c.setFont("Helvetica", 6.5); c.drawCentredString(mid, y, "GBB SUNTER TIMUR I & II"); y-=7*mm; c.setDash(2,2); c.line(4*mm,y,width-4*mm,y); c.setDash(); y-=6*mm
     c.setFont("Helvetica-Bold", 7); c.drawCentredString(mid,y,"NOMOR BON MUAT"); y-=5*mm; c.setFont("Helvetica-Bold", 10); c.drawCentredString(mid,y,load.get("bon_no","-")); y-=7*mm; c.setFont("Helvetica-Bold", 7); c.drawCentredString(mid,y,"NOMOR ANTRIAN"); y-=11*mm; c.setFont("Helvetica-Bold", 27); c.drawCentredString(mid,y,load.get("antrian","-")); y-=8*mm
     c.setDash(2,2); c.line(4*mm,y,width-4*mm,y); c.setDash(); y-=6*mm; c.setFont("Helvetica", 7)
-    fields=[("Tanggal",_date(load.get("started_at") or load.get("created_at"),True)),("Dokumen",f"{load.get('document_type','SO')} - {load.get('ref','-')}"),("Tujuan",load.get("party","-")),("No. Polisi",load.get("polisi","-")),("Pengambil",load.get("pengambil","-")),("Pemuatan",load.get("unit_loading","-"))]
+    docs = ", ".join(load.get("documents") or [load.get("ref", "-")])
+    fields=[("Tanggal",_date(load.get("started_at") or load.get("created_at"),True)),("Dokumen",f"{load.get('document_type','SO')} - {docs}"),("Tujuan",load.get("party","-")),("No. Polisi",load.get("polisi","-")),("Pengambil",load.get("pengambil","-")),("Pemuatan",load.get("unit_loading","-"))]
     for label,value in fields: c.setFont("Helvetica",6.5); c.drawString(5*mm,y,label); c.setFont("Helvetica-Bold",6.5); c.drawString(23*mm,y,str(value)[:45]); y-=5*mm
     y-=2*mm; c.setDash(2,2); c.line(4*mm,y,width-4*mm,y); c.setDash(); y-=6*mm; c.setFont("Helvetica-Bold",7); c.drawString(5*mm,y,"BARANG"); y-=5*mm
     for item in load.get("items",[]): c.setFont("Helvetica-Bold",6.5); c.drawString(5*mm,y,str(item.get("name",""))[:48]); y-=4*mm; c.setFont("Helvetica",6.5); c.drawString(7*mm,y,f"{_num(item.get('qty'))} {item.get('unit','')} | {_num(item.get('berat'))} Kg"); y-=6*mm
