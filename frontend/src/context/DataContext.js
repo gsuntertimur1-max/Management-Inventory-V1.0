@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import api, { setToken, apiError } from '../lib/api';
 import { hasPermission, roleLabel } from '../lib/permissions';
+import { DEFAULT_CATEGORIES } from '../mock';
 
 const DataContext = createContext(null);
 export const useData = () => useContext(DataContext);
@@ -8,6 +9,7 @@ export const useData = () => useContext(DataContext);
 const DEFAULT_SETTINGS = {
   warehouse: 'Gudang Sunter Timur I & II',
   address: 'Jl. Sunter Agung, Jakarta Utara',
+  categories: DEFAULT_CATEGORIES,
   lowAlert: true,
   expAlert: true,
   autoQueue: true,

@@ -264,12 +264,13 @@ def suppliers_from_products(products: List[dict]) -> List[dict]:
 
 async def seed_master(force: bool = False):
     if force:
-        await db.stack_allocations.delete_many({})
-        await db.transactions.delete_many({})
-        await db.surat_jalan.delete_many({})
-        await db.purchase_orders.delete_many({})
-        await db.products.delete_many({})
-        await db.suppliers.delete_many({})
+        # Reset penuh: semua master dan dokumen operasional dikosongkan agar SKU baru tidak bercampur.
+        for collection in (
+            db.stack_allocations, db.stack_history, db.stack_treatments, db.transactions,
+            db.surat_jalan, db.purchase_orders, db.outbound_loads, db.products,
+            db.suppliers, db.counters,
+        ):
+            await collection.delete_many({})
     text = (ROOT_DIR / 'seed_data.csv').read_text(encoding='utf-8')
     rows = parse_seed_rows(text)
     if await db.products.count_documents({}) == 0:
@@ -424,10 +425,31 @@ class POBody(BaseModel):
     date: str = ''
 
 
+DEFAULT_CATEGORY_ITEMS = [
+    {"name": "Beras", "color": "#f59e0b", "active": True},
+    {"name": "Minyak", "color": "#eab308", "active": True},
+    {"name": "Gula", "color": "#ec4899", "active": True},
+    {"name": "Tepung", "color": "#a855f7", "active": True},
+    {"name": "Sarden", "color": "#3b82f6", "active": True},
+    {"name": "Teh", "color": "#22c55e", "active": True},
+    {"name": "Margarin", "color": "#f97316", "active": True},
+    {"name": "Kecap", "color": "#8b5cf6", "active": True},
+    {"name": "Kopi", "color": "#b45309", "active": True},
+    {"name": "Susu", "color": "#22d3ee", "active": True},
+]
+
+
+class CategorySetting(BaseModel):
+    name: str
+    color: str = '#64748b'
+    active: bool = True
+
+
 class SettingsBody(BaseModel):
     warehouse: str = 'Gudang Sunter Timur I & II'
     address: str = 'Jl. Sunter Agung, Jakarta Utara'
     warehouseHead: str = 'Irsa Maulian Nugraha'
+    categories: List[CategorySetting] = Field(default_factory=lambda: [CategorySetting(**item) for item in DEFAULT_CATEGORY_ITEMS])
     lowAlert: bool = True
     expAlert: bool = True
     autoQueue: bool = True
@@ -556,12 +578,40 @@ async def logout(request: Request, response: Response):
 @api_router.get("/settings")
 async def get_settings(user: dict = Depends(get_current_user)):
     doc = await db.settings.find_one({"_id": "app"}, {"_id": 0})
-    return {**DEFAULT_SETTINGS, **(doc or {})}
+    result = {**DEFAULT_SETTINGS, **(doc or {})}
+    result["categories"] = [dict(item) for item in result.get("categories", [])]
+    # Kategori lama yang telah terpakai tetap ditampilkan supaya tidak kehilangan konteks produk.
+    names = {str(item.get("name", "")).strip().lower() for item in result.get("categories", [])}
+    used_categories = await db.products.distinct("category", {"category": {"$ne": ""}})
+    for name in used_categories:
+        cleaned = str(name or "").strip()
+        if cleaned and cleaned.lower() not in names:
+            result["categories"].append({"name": cleaned, "color": "#64748b", "active": True})
+            names.add(cleaned.lower())
+    return result
 
 
 @api_router.put("/settings")
 async def update_settings(body: SettingsBody, admin: dict = Depends(require_admin)):
     payload = body.model_dump()
+    normalized_categories = []
+    names = set()
+    for item in payload.get("categories", []):
+        name = str(item.get("name", "")).strip()
+        color = str(item.get("color", "#64748b")).strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Nama kategori wajib diisi")
+        if name.lower() in names:
+            raise HTTPException(status_code=400, detail=f"Kategori {name} tercatat lebih dari sekali")
+        if not color.startswith("#") or len(color) not in (4, 7):
+            raise HTTPException(status_code=400, detail=f"Warna kategori {name} tidak valid")
+        names.add(name.lower())
+        normalized_categories.append({"name": name, "color": color, "active": bool(item.get("active", True))})
+    used_categories = {str(item).strip().lower() for item in await db.products.distinct("category", {"category": {"$ne": ""}}) if str(item).strip()}
+    missing = used_categories - names
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Kategori masih dipakai produk dan tidak dapat dihapus: {', '.join(sorted(missing))}")
+    payload["categories"] = normalized_categories
     payload["updated_at"] = now_iso()
     payload["updated_by"] = admin["name"]
     await db.settings.update_one({"_id": "app"}, {"$set": payload}, upsert=True)
@@ -943,7 +993,7 @@ async def import_csv(file: UploadFile = File(...), user: dict = Depends(require_
 @api_router.post("/admin/reset-data")
 async def reset_data(admin: dict = Depends(require_admin)):
     await seed_master(force=True)
-    return {"ok": True}
+    return {"ok": True, "message": "Data operasional direset. Master produk dan supplier dimuat dari CSV seed bila tersedia."}
 
 
 @api_router.get("/")

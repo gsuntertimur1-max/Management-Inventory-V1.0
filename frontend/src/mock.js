@@ -1,6 +1,6 @@
 // Kategori & util format untuk Bulog Gudang Sunter Timur I & II
 
-export const CATEGORIES = [
+export const DEFAULT_CATEGORIES = [
   { name: 'Beras', color: '#f59e0b' },
   { name: 'Minyak', color: '#eab308' },
   { name: 'Gula', color: '#ec4899' },
@@ -13,7 +13,9 @@ export const CATEGORIES = [
   { name: 'Susu', color: '#22d3ee' },
 ];
 
-export const catColor = (name) => (CATEGORIES.find((c) => c.name === name)?.color || '#64748b');
+// Alias lama dipertahankan agar komponen yang belum memakai master kategori tetap aman.
+export const CATEGORIES = DEFAULT_CATEGORIES;
+export const catColor = (name, categories = DEFAULT_CATEGORIES) => (categories.find((c) => c.name === name)?.color || '#64748b');
 
 export const formatRp = (n) => 'Rp ' + Math.round(n || 0).toLocaleString('id-ID');
 export const formatRpShort = (n) => {

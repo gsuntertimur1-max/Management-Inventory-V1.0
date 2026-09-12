@@ -2,11 +2,12 @@ import React, { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, X, Phone, Mail, MapPin, User } from 'lucide-react';
 import { useData } from '../context/DataContext';
-import { catColor, formatNum } from '../mock';
+import { catColor, formatNum, DEFAULT_CATEGORIES } from '../mock';
 import { toast } from 'sonner';
 
 const Supplier = () => {
-  const { suppliers, products, addSupplier, canManageMasterData } = useData();
+  const { suppliers, products, settings, addSupplier, canManageMasterData } = useData();
+  const categories = settings?.categories?.length ? settings.categories : DEFAULT_CATEGORIES;
   const [modal, setModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ name: '', pic: '', phone: '', email: '', address: '', category: 'Beras' });
@@ -70,7 +71,7 @@ const Supplier = () => {
                 <div className="font-display font-bold text-lg pr-2">{supplier.name}</div>
                 <span
                   className="text-[10px] px-2 py-0.5 rounded-full whitespace-nowrap"
-                  style={{ background: `${catColor(supplier.category)}1f`, color: catColor(supplier.category) }}
+                  style={{ background: `${catColor(supplier.category, categories)}1f`, color: catColor(supplier.category, categories) }}
                 >
                   {supplier.category}
                 </span>

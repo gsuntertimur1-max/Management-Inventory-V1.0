@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Box, Layers, AlertTriangle, Sparkles, Activity, Search, ClipboardList, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { useData } from '../context/DataContext';
-import { formatRp, formatRpShort, formatNum, formatDate, catColor, CATEGORIES } from '../mock';
+import { formatRp, formatRpShort, formatNum, formatDate, catColor, DEFAULT_CATEGORIES } from '../mock';
 
 const StatCard = ({ icon: Icon, label, value, sub, color }) => (
   <div className="card-surface stat-card p-5">
@@ -15,6 +15,7 @@ const StatCard = ({ icon: Icon, label, value, sub, color }) => (
 
 const Dashboard = () => {
   const { products, transactions, settings } = useData();
+  const categories = settings?.categories?.length ? settings.categories : DEFAULT_CATEGORIES;
   const navigate = useNavigate();
   const [q, setQ] = useState('');
 
@@ -56,7 +57,7 @@ const Dashboard = () => {
   }, [transactions]);
   const maxVol = Math.max(...chart.map((c) => c.vol), 1);
 
-  const byCat = CATEGORIES.map((c) => ({ ...c, count: products.filter((p) => p.category === c.name).length, val: products.filter((p) => p.category === c.name).reduce((a, p) => a + p.stock * p.cost, 0) })).filter((c) => c.count > 0);
+  const byCat = categories.map((c) => ({ ...c, count: products.filter((p) => p.category === c.name).length, val: products.filter((p) => p.category === c.name).reduce((a, p) => a + p.stock * p.cost, 0) })).filter((c) => c.count > 0);
   const totCat = byCat.reduce((a, c) => a + c.val, 0) || 1;
 
   const filtered = products.filter((p) => p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase())).sort((a, b) => a.name.localeCompare(b.name));
@@ -156,7 +157,7 @@ const Dashboard = () => {
                 <tr key={p.id} className="tbl-row border-b border-[#131a24]">
                   <td className="py-3 pr-4 font-medium">{p.name}</td>
                   <td className="py-3 pr-4 font-mono text-xs text-[#8b93a1]">{p.sku}</td>
-                  <td className="py-3 pr-4"><span className="text-xs px-2 py-0.5 rounded-full" style={{ background: `${catColor(p.category)}1f`, color: catColor(p.category) }}>{p.category}</span></td>
+                  <td className="py-3 pr-4"><span className="text-xs px-2 py-0.5 rounded-full" style={{ background: `${catColor(p.category, categories)}1f`, color: catColor(p.category, categories) }}>{p.category}</span></td>
                   <td className="py-3 pr-4 font-mono">{formatNum(p.stock)} {p.unit}</td>
                   <td className="py-3 pr-4 font-mono">{p.damaged || 0}</td>
                   <td className="py-3 pr-4 font-mono">{formatRp(p.stock * p.cost)}</td>
