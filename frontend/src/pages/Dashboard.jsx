@@ -1,8 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Box, Layers, AlertTriangle, Sparkles, Activity, Search, ClipboardList, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { Layers, AlertTriangle, Search, ClipboardList, ArrowUpRight, ArrowDownRight, Link2 } from 'lucide-react';
 import { useData } from '../context/DataContext';
-import { formatRp, formatRpShort, formatNum, formatDate, catColor, DEFAULT_CATEGORIES } from '../mock';
+import { formatRpShort, formatNum, formatDate, DEFAULT_CATEGORIES } from '../mock';
 
 const StatCard = ({ icon: Icon, label, value, sub, color }) => (
   <div className="card-surface stat-card p-5">
@@ -14,19 +14,13 @@ const StatCard = ({ icon: Icon, label, value, sub, color }) => (
 );
 
 const Dashboard = () => {
-  const { products, transactions, settings } = useData();
+  const { products, transactions, outboundLoads, settings } = useData();
   const categories = settings?.categories?.length ? settings.categories : DEFAULT_CATEGORIES;
   const navigate = useNavigate();
   const [q, setQ] = useState('');
 
   const totalUnits = products.reduce((a, p) => a + p.stock, 0);
   const totalDamaged = products.reduce((a, p) => a + (p.damaged || 0), 0);
-  const totalValue = products.reduce((a, p) => a + p.stock * p.cost, 0);
-  const thirtyDaysAgo = new Date();
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-  const activity30 = transactions
-    .filter((t) => new Date(t.time) >= thirtyDaysAgo)
-    .reduce((a, t) => a + Math.abs(t.change), 0);
   const lowStock = products.filter((p) => p.stock <= p.min);
 
   const expiringProducts = useMemo(() => {
@@ -61,6 +55,24 @@ const Dashboard = () => {
   const totCat = byCat.reduce((a, c) => a + c.val, 0) || 1;
 
   const filtered = products.filter((p) => p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase())).sort((a, b) => a.name.localeCompare(b.name));
+  const remainingDocumentItems = (load) => (load.items || []).map((source) => {
+    let settled = 0;
+    (load.document_links || []).forEach((link) => (link.items || []).forEach((item) => {
+      if (item.productId !== source.productId) return;
+      settled += ['CR', 'RETUR'].includes(link.type)
+        ? Number(item.goodQty || 0) + Number(item.damagedQty || 0)
+        : Number(item.qty || 0);
+    }));
+    return { ...source, remaining: Math.max(Number(source.qty || 0) - settled, 0) };
+  }).filter((item) => item.remaining > 0);
+  const pendingDocuments = outboundLoads
+    .filter((load) => ['CT', 'MEMO'].includes(load.document_type) && load.status === 'Selesai')
+    .map((load) => ({ ...load, pendingItems: remainingDocumentItems(load) }))
+    .filter((load) => load.pendingItems.length > 0);
+  const documentAge = (value) => {
+    const days = Math.max(0, Math.floor((Date.now() - new Date(value || Date.now()).getTime()) / 86400000));
+    return days === 0 ? 'Hari ini' : `${days} hari`;
+  };
 
   return (
     <div className="space-y-6">
@@ -72,14 +84,9 @@ const Dashboard = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={Box} label="Total Ragam Produk" value={formatNum(products.length)} sub="SKU aktif terdaftar" color="#3b82f6" />
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <StatCard icon={Layers} label="Total Unit Fisik Stok" value={formatNum(totalUnits)} sub="Kuantitas seluruh gudang" color="#a855f7" />
         <StatCard icon={AlertTriangle} label="Stok Rusak (Damage)" value={formatNum(totalDamaged)} sub="Unit kondisi rusak" color="#ef4444" />
-        <StatCard icon={Sparkles} label="Total Nilai Inventori" value={formatRpShort(totalValue)} sub="Harga modal × jumlah stok" color="#22c55e" />
-      </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={Activity} label="Aktivitas 30 Hari" value={formatNum(activity30)} sub="Unit masuk & keluar" color="#eab308" />
       </div>
 
       {(settings?.lowAlert ?? true) && (
@@ -141,6 +148,14 @@ const Dashboard = () => {
         </div>
       )}
 
+      <div className="card-surface p-6 border border-[#1f3657]">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div><div className="label-mono text-[10px] text-[#93c5fd]">Dokumen masih terbuka</div><h2 className="font-display text-xl font-bold mt-1">CT / Memo Belum Diselesaikan</h2></div>
+          <button onClick={() => navigate('/pengeluaran')} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#2563eb] text-[#60a5fa]"><Link2 size={13} /> Buka Pengeluaran</button>
+        </div>
+        {pendingDocuments.length === 0 ? <p className="text-sm text-[#8b93a1]">Tidak ada CT atau Memo terbuka. Semua dokumen sudah memiliki penyelesaian CR, SO, atau Retur.</p> : <div className="overflow-x-auto"><table className="w-full text-sm tbl"><thead><tr className="text-left border-b border-[#1a222e]"><th className="py-2.5 pr-4">Dokumen</th><th className="py-2.5 pr-4">Tujuan / Lokasi</th><th className="py-2.5 pr-4">Sisa Belum Diselesaikan</th><th className="py-2.5">Status</th></tr></thead><tbody>{pendingDocuments.map((load) => <tr key={load.id} className="border-b border-[#131a24]"><td className="py-3 pr-4"><div className="font-mono font-semibold text-[#93c5fd]">{load.document_type} · {load.ref}</div>{load.request_document && <div className="text-[11px] text-[#fbbf24] mt-1">Dasar: {load.request_document}</div>}<div className="text-[11px] text-[#6b7688] mt-1">Terbuka {documentAge(load.completed_at || load.created_at)}</div></td><td className="py-3 pr-4"><div>{load.consignment_destination || load.party || '—'}</div><div className="text-xs text-[#6b7688] mt-1">{load.consignment_zone || load.unit_loading || '—'}</div></td><td className="py-3 pr-4 text-xs">{load.pendingItems.map((item) => <div key={item.productId}>{item.name} · <span className="font-mono font-semibold">{formatNum(item.remaining)} {item.unit}</span></div>)}</td><td className="py-3 text-xs text-[#fbbf24]">{load.document_status || 'Menunggu CR/SO'}</td></tr>)}</tbody></table></div>}
+      </div>
+
       <div className="card-surface p-6">
         <h2 className="font-display text-xl font-bold mb-4">Sisa Stok per Barang (A → Z)</h2>
         <div className="relative mb-4 max-w-md">
@@ -149,18 +164,15 @@ const Dashboard = () => {
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm tbl">
-            <thead><tr className="text-left border-b border-[#1a222e]">{['Nama Barang', 'SKU', 'Kategori', 'Sisa Stok', 'Rusak', 'Nilai Stok', 'Lokasi'].map((h) => <th key={h} className="py-2.5 pr-4 font-semibold">{h}</th>)}</tr></thead>
+            <thead><tr className="text-left border-b border-[#1a222e]">{['Nama Barang', 'Sisa Stok', 'Rusak', 'Lokasi'].map((h) => <th key={h} className="py-2.5 pr-4 font-semibold">{h}</th>)}</tr></thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={7} className="py-8 text-center text-[#6b7688]">Belum ada produk terdaftar. Tambah produk atau import data SKU.</td></tr>
+                <tr><td colSpan={4} className="py-8 text-center text-[#6b7688]">Belum ada produk terdaftar. Tambah produk atau import data SKU.</td></tr>
               ) : filtered.map((p) => (
                 <tr key={p.id} className="tbl-row border-b border-[#131a24]">
                   <td className="py-3 pr-4 font-medium">{p.name}</td>
-                  <td className="py-3 pr-4 font-mono text-xs text-[#8b93a1]">{p.sku}</td>
-                  <td className="py-3 pr-4"><span className="text-xs px-2 py-0.5 rounded-full" style={{ background: `${catColor(p.category, categories)}1f`, color: catColor(p.category, categories) }}>{p.category}</span></td>
                   <td className="py-3 pr-4 font-mono">{formatNum(p.stock)} {p.unit}</td>
                   <td className="py-3 pr-4 font-mono">{p.damaged || 0}</td>
-                  <td className="py-3 pr-4 font-mono">{formatRp(p.stock * p.cost)}</td>
                   <td className="py-3 pr-4 text-[#8b93a1]">{p.location}</td>
                 </tr>
               ))}
