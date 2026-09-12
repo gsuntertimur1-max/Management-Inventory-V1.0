@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Layers, AlertTriangle, Search, ClipboardList, ArrowUpRight, ArrowDownRight, Link2 } from 'lucide-react';
 import { useData } from '../context/DataContext';
-import { formatRpShort, formatNum, formatDate, DEFAULT_CATEGORIES } from '../mock';
+import { formatNum, formatDate } from '../mock';
 
 const StatCard = ({ icon: Icon, label, value, sub, color }) => (
   <div className="card-surface stat-card p-5">
@@ -15,7 +15,6 @@ const StatCard = ({ icon: Icon, label, value, sub, color }) => (
 
 const Dashboard = () => {
   const { products, transactions, outboundLoads, settings } = useData();
-  const categories = settings?.categories?.length ? settings.categories : DEFAULT_CATEGORIES;
   const navigate = useNavigate();
   const [q, setQ] = useState('');
 
@@ -40,20 +39,6 @@ const Dashboard = () => {
       .sort((a, b) => a.daysToExpiry - b.daysToExpiry);
   }, [products]);
 
-  const chart = useMemo(() => {
-    const days = [];
-    for (let i = 6; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i); days.push(d); }
-    return days.map((d) => {
-      const key = `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      const vol = transactions.filter((t) => { const td = new Date(t.time); return td.getMonth() === d.getMonth() && td.getDate() === d.getDate(); }).reduce((a, t) => a + Math.abs(t.change), 0);
-      return { key, vol };
-    });
-  }, [transactions]);
-  const maxVol = Math.max(...chart.map((c) => c.vol), 1);
-
-  const byCat = categories.map((c) => ({ ...c, count: products.filter((p) => p.category === c.name).length, val: products.filter((p) => p.category === c.name).reduce((a, p) => a + p.stock * p.cost, 0) })).filter((c) => c.count > 0);
-  const totCat = byCat.reduce((a, c) => a + c.val, 0) || 1;
-
   const filtered = products.filter((p) => p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase())).sort((a, b) => a.name.localeCompare(b.name));
   const remainingDocumentItems = (load) => (load.items || []).map((source) => {
     let settled = 0;
@@ -69,6 +54,26 @@ const Dashboard = () => {
     .filter((load) => ['CT', 'MEMO'].includes(load.document_type) && load.status === 'Selesai')
     .map((load) => ({ ...load, pendingItems: remainingDocumentItems(load) }))
     .filter((load) => load.pendingItems.length > 0);
+  const consignmentStock = Object.values(outboundLoads
+    .filter((load) => load.document_type === 'CT' && ['Gudang Bazar', 'Gudang E-commerce'].includes(load.consignment_destination) && load.status === 'Selesai')
+    .reduce((result, load) => {
+      remainingDocumentItems(load).forEach((item) => {
+        const key = `${load.consignment_destination}|${item.productId || item.sku}`;
+        const row = result[key] || {
+          sku: item.sku || '—',
+          name: item.name || '—',
+          unit: item.unit || 'pack/pcs',
+          location: load.consignment_destination,
+          qty: 0,
+          weight: 0,
+        };
+        row.qty += Number(item.remaining || 0);
+        row.weight += Number(item.remaining || 0) * Number(item.weight || 0);
+        result[key] = row;
+      });
+      return result;
+    }, {}))
+    .sort((a, b) => a.name.localeCompare(b.name, 'id') || (a.location === 'Gudang Bazar' ? -1 : 1) - (b.location === 'Gudang Bazar' ? -1 : 1));
   const documentAge = (value) => {
     const days = Math.max(0, Math.floor((Date.now() - new Date(value || Date.now()).getTime()) / 86400000));
     return days === 0 ? 'Hari ini' : `${days} hari`;
@@ -181,31 +186,13 @@ const Dashboard = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="card-surface p-6 lg:col-span-2">
-          <h2 className="font-display text-lg font-bold mb-6">Perputaran 7 Hari Terakhir</h2>
-          <div className="flex items-end justify-between gap-3 h-52">
-            {chart.map((c) => (
-              <div key={c.key} className="flex-1 flex flex-col items-center gap-2 h-full justify-end">
-                <div className="w-full rounded-t-md bar" style={{ height: `${(c.vol / maxVol) * 100}%`, minHeight: c.vol > 0 ? '4px' : '0', background: 'linear-gradient(180deg,#3b82f6,#1d4ed8)' }} />
-                <div className="label-mono text-[9px]">{c.key}</div>
-              </div>
-            ))}
-          </div>
+      <div className="card-surface p-6 border border-[#1f3657]">
+        <div className="mb-4">
+          <div className="label-mono text-[10px] text-[#93c5fd]">Konsinyasi Unit 18</div>
+          <h2 className="font-display text-xl font-bold mt-1">Total Produk Gudang Bazar & E-commerce</h2>
+          <p className="text-sm text-[#8b93a1] mt-1">Akumulasi stok CT yang belum diselesaikan melalui CR atau SO. Nomor tumpukan tidak ditampilkan.</p>
         </div>
-        <div className="card-surface p-6">
-          <h2 className="font-display text-lg font-bold mb-4">Stok per Kategori</h2>
-          {byCat.length === 0 ? <p className="text-sm text-[#8b93a1]">Belum ada produk terdaftar.</p> : (
-            <div className="space-y-3">
-              {byCat.map((c) => (
-                <div key={c.name}>
-                  <div className="flex justify-between text-xs mb-1"><span>{c.name}</span><span className="font-mono text-[#8b93a1]">{formatRpShort(c.val)}</span></div>
-                  <div className="h-2 rounded-full bg-[#0b0f17] overflow-hidden"><div className="h-full rounded-full" style={{ width: `${(c.val / totCat) * 100}%`, background: c.color }} /></div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        {consignmentStock.length === 0 ? <p className="text-sm text-[#8b93a1]">Belum ada stok konsinyasi aktif di Gudang Bazar atau Gudang E-commerce.</p> : <div className="overflow-x-auto"><table className="w-full text-sm tbl"><thead><tr className="text-left border-b border-[#1a222e]"><th className="py-2.5 pr-4">SKU</th><th className="py-2.5 pr-4">Nama Komoditi</th><th className="py-2.5 pr-4">Kuantum (pack/pcs)</th><th className="py-2.5 pr-4">Kuantum (berat)</th><th className="py-2.5">Lokasi</th></tr></thead><tbody>{consignmentStock.map((item) => <tr key={`${item.location}-${item.sku}`} className="tbl-row border-b border-[#131a24]"><td className="py-3 pr-4 font-mono text-xs text-[#93c5fd]">{item.sku}</td><td className="py-3 pr-4 font-medium">{item.name}</td><td className="py-3 pr-4 font-mono">{formatNum(item.qty)} {item.unit}</td><td className="py-3 pr-4 font-mono">{item.weight > 0 ? `${formatNum(item.weight)} kg` : '—'}</td><td className="py-3 font-medium">{item.location === 'Gudang Bazar' ? 'Bazar' : 'E-commerce'}</td></tr>)}</tbody></table></div>}
       </div>
 
       <div className="card-surface p-6">
