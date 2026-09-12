@@ -21,17 +21,20 @@ const Pengaturan = () => {
   const isAdmin = canManageSettings;
   const [warehouse, setWarehouse] = useState(settings?.warehouse || 'Gudang Sunter Timur I & II');
   const [address, setAddress] = useState(settings?.address || 'Jl. Sunter Agung, Jakarta Utara');
+  const [warehouseHead, setWarehouseHead] = useState(settings?.warehouseHead || 'Irsa Maulian Nugraha');
   const [savingProfile, setSavingProfile] = useState(false);
   const [savingToggle, setSavingToggle] = useState('');
 
   useEffect(() => {
     setWarehouse(settings?.warehouse || 'Gudang Sunter Timur I & II');
     setAddress(settings?.address || 'Jl. Sunter Agung, Jakarta Utara');
-  }, [settings?.warehouse, settings?.address]);
+    setWarehouseHead(settings?.warehouseHead || 'Irsa Maulian Nugraha');
+  }, [settings?.warehouse, settings?.address, settings?.warehouseHead]);
 
   const payload = (override = {}) => ({
     warehouse: settings?.warehouse || 'Gudang Sunter Timur I & II',
     address: settings?.address || 'Jl. Sunter Agung, Jakarta Utara',
+    warehouseHead: settings?.warehouseHead || 'Irsa Maulian Nugraha',
     lowAlert: settings?.lowAlert ?? true,
     expAlert: settings?.expAlert ?? true,
     autoQueue: settings?.autoQueue ?? true,
@@ -45,7 +48,7 @@ const Pengaturan = () => {
     }
     setSavingProfile(true);
     try {
-      await updateSettings(payload({ warehouse: warehouse.trim(), address: address.trim() }));
+      await updateSettings(payload({ warehouse: warehouse.trim(), address: address.trim(), warehouseHead: warehouseHead.trim() }));
       toast.success('Profil gudang tersimpan');
     } catch (e) {
       toast.error(apiError(e));
@@ -100,6 +103,17 @@ const Pengaturan = () => {
                 disabled={!isAdmin}
                 className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb] disabled:opacity-60"
               />
+            </div>
+            <div>
+              <label className="text-xs font-medium mb-1 block text-[#8b93a1]">Nama Kepala Gudang</label>
+              <input
+                value={warehouseHead}
+                onChange={(e) => setWarehouseHead(e.target.value)}
+                disabled={!isAdmin}
+                placeholder="Nama kepala gudang"
+                className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb] disabled:opacity-60"
+              />
+              <p className="text-[11px] text-[#6b7688] mt-1">Nama ini digunakan pada tanda tangan kartu tumpukan dan surat jalan.</p>
             </div>
             {isAdmin && (
               <button

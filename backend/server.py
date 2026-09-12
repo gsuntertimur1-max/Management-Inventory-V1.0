@@ -427,6 +427,7 @@ class POBody(BaseModel):
 class SettingsBody(BaseModel):
     warehouse: str = 'Gudang Sunter Timur I & II'
     address: str = 'Jl. Sunter Agung, Jakarta Utara'
+    warehouseHead: str = 'Irsa Maulian Nugraha'
     lowAlert: bool = True
     expAlert: bool = True
     autoQueue: bool = True
