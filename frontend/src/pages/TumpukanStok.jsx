@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { DoorOpen, Download, Edit3, Minus, PackagePlus, Plus, Trash2, Warehouse } from 'lucide-react';
+import { CalendarDays, DoorOpen, Download, Edit3, Minus, PackagePlus, Plus, ShieldCheck, Trash2, Warehouse } from 'lucide-react';
 import { toast } from 'sonner';
 import { useData } from '../context/DataContext';
 import { apiError } from '../lib/api';
@@ -13,11 +13,12 @@ const codesFor = (wh) => (wh === 'MP1' ? ['A', 'B'] : ['A', 'B', 'C'])
 const blank = (stackCode) => ({ productId: '', stackCode, length: 1, width: 1, height: 1, arrangements: [{ hamparan: 1, kaki: 1, height: 1 }], extraSecondary: 0, extraPrimary: 0, note: '' });
 
 const TumpukanStok = () => {
-  const { products, stackAllocations, canWrite, addStackAllocation, updateStackAllocation, deleteStackAllocation } = useData();
+  const { products, stackAllocations, stackTreatments, canWrite, addStackAllocation, updateStackAllocation, deleteStackAllocation, addStackTreatment } = useData();
   const [warehouse, setWarehouse] = useState('17');
   const [selected, setSelected] = useState('17/A01');
   const [modal, setModal] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [treatmentModal, setTreatmentModal] = useState(null);
   const grouped = useMemo(() => stackAllocations.reduce((map, item) => ({ ...map, [item.stackCode]: [...(map[item.stackCode] || []), item] }), {}), [stackAllocations]);
   const allocated = useMemo(() => stackAllocations.reduce((map, item) => ({ ...map, [item.productId]: (map[item.productId] || 0) + Number(item.primaryQty || 0) }), {}), [stackAllocations]);
   const product = products.find((item) => item.id === modal?.data.productId);
@@ -49,6 +50,14 @@ const TumpukanStok = () => {
   const totalAllocated = stackAllocations.reduce((n, item) => n + Number(item.primaryQty || 0), 0);
   const unallocated = products.reduce((n, item) => n + Math.max(Number(item.stock || 0) - Number(allocated[item.id] || 0), 0), 0);
   const zones = warehouse === 'MP1' ? ['B', 'A'] : ['C', 'B', 'A'];
+  const lastSpraying = stackTreatments.find((item) => item.type === 'SPRAYING' && item.warehouse === warehouse);
+  const lastFumigation = stackTreatments.find((item) => item.type !== 'SPRAYING' && item.stackCode === selected);
+  const openTreatment = (type) => {
+    const startDate = new Date().toISOString().slice(0, 10);
+    const end = new Date(`${startDate}T00:00:00`); end.setDate(end.getDate() + (type === 'FUMIGASI_SULFUR' ? 3 : type === 'FUMIGASI' ? 10 : 0));
+    setTreatmentModal({ type, warehouse, stackCode: selected, startDate, endDate: type === 'SPRAYING' ? '' : end.toISOString().slice(0, 10), note: '' });
+  };
+  const saveTreatment = async () => { setBusy(true); try { await addStackTreatment(treatmentModal); toast.success('Catatan pengendalian hama disimpan'); setTreatmentModal(null); } catch (e) { toast.error(apiError(e)); } finally { setBusy(false); } };
 
   return <div className="space-y-5" data-testid="stack-map-page">
     <div className="flex flex-col xl:flex-row xl:items-end xl:justify-between gap-4">
@@ -77,6 +86,12 @@ const TumpukanStok = () => {
           {item.arrangementAdjusted ? <div className="mt-3 rounded-lg bg-[#3b2a0b] p-2 text-xs text-[#fbbf24]">Stok berkurang karena pengeluaran. Perbarui susunan fisik.</div> : <div className="mt-3 space-y-1 font-mono text-sm">{(item.arrangements?.length ? item.arrangements : [{ hamparan: item.length, kaki: item.width, height: item.height }]).map((row, index) => <div key={index}>{row.hamparan} × {row.kaki} × {row.height} = {formatNum(row.hamparan * row.kaki * row.height)}</div>)}{Number(item.extraSecondary || 0) > 0 && <div>+ {formatNum(item.extraSecondary)} {item.secondary} tambahan</div>}<div className="pt-1 text-[#93c5fd]">Total {formatNum(item.secondaryCount)} {item.secondary}</div></div>}
           {Number(item.extraPrimary || 0) > 0 && <div className="mt-1 text-sm text-[#fbbf24]">+ {formatNum(item.extraPrimary)} {item.unit} lepas tanpa {item.secondary}</div>}<div className="mt-2 text-sm text-[#60a5fa]">{formatNum(item.primaryQty)} {item.unit}{Number(item.weight || 0) > 0 ? ` · ${formatNum(Number(item.primaryQty) * Number(item.weight))} kg` : ''}</div>{item.note && <div className="mt-2 text-xs text-[#8b93a1]">{item.note}</div>}
         </div>)}</div>
+        <div className="mt-5 border-t border-[#202a38] pt-5">
+          <div className="flex items-center gap-2 font-semibold"><ShieldCheck size={17} className="text-[#60a5fa]" />Pengendalian Hama</div>
+          <div className="mt-3 grid grid-cols-2 gap-2 text-xs"><div className="rounded-lg bg-[#0b0f17] p-3"><div className="text-[#6b7688]">Spraying terakhir · GBB {warehouse}</div><div className="mt-1 font-mono">{lastSpraying?.startDate || 'Belum tercatat'}</div></div><div className="rounded-lg bg-[#0b0f17] p-3"><div className="text-[#6b7688]">Fumigasi terakhir · {selected}</div><div className="mt-1 font-mono">{lastFumigation?.startDate || 'Belum tercatat'}</div></div></div>
+          <p className="mt-2 text-[11px] text-[#6b7688]">Spraying rutin 1 bulan. Fumigasi beras rutin 3 bulan (10 hari); sulfur 3 hari. Jadwal dapat dipercepat.</p>
+          {canWrite && <div className="mt-3 flex flex-wrap gap-2">{warehouse !== 'MP1' && <button type="button" onClick={() => openTreatment('SPRAYING')} className="px-3 py-2 rounded-lg border border-[#294263] text-xs">Catat spraying</button>}<button type="button" onClick={() => openTreatment('FUMIGASI')} className="px-3 py-2 rounded-lg border border-[#294263] text-xs">Fumigasi beras</button><button type="button" onClick={() => openTreatment('FUMIGASI_SULFUR')} className="px-3 py-2 rounded-lg border border-[#59431f] text-xs text-[#fbbf24]">Fumigasi sulfur</button></div>}
+        </div>
       </aside>
     </div>
 
@@ -88,6 +103,8 @@ const TumpukanStok = () => {
       <input placeholder="Catatan (opsional)" value={modal.data.note} onChange={(e) => setModal({ ...modal, data: { ...modal.data, note: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5" />
       <div className="rounded-xl border border-[#1f3657] bg-[#0d1728] p-4">{product ? <><div className="font-mono text-lg">Total = {formatNum(secCount)} {product.secondary} + {formatNum(modal.data.extraPrimary || 0)} {product.unit} lepas</div><div className="text-[#93c5fd] mt-2">({formatNum(secCount)} × {formatNum(product.secondaryQty)}) + {formatNum(modal.data.extraPrimary || 0)} = <strong>{formatNum(packCount)} {product.unit}</strong></div><div className={`text-xs mt-2 ${packCount <= available ? 'text-[#22c55e]' : 'text-[#ef4444]'}`}>Tersedia untuk ditempatkan: {formatNum(available)} {product.unit}</div></> : <span className="text-sm text-[#6b7688]">Pilih produk untuk menghitung susunan.</span>}</div>
     </div>}<DialogFooter><button disabled={busy} onClick={() => setModal(null)} className="px-4 py-2 border border-[#242f3d] rounded-lg">Batal</button><button disabled={busy || !product || packCount > available} onClick={save} className="btn-primary px-4 py-2 rounded-lg disabled:opacity-50">{busy ? 'Menyimpan...' : 'Simpan'}</button></DialogFooter></DialogContent></Dialog>
+
+    <Dialog open={Boolean(treatmentModal)} onOpenChange={(open) => { if (!open && !busy) setTreatmentModal(null); }}><DialogContent className="max-w-lg border-[#242f3d] bg-[#0d121b] text-[#e7ebf2]"><DialogHeader><DialogTitle>{treatmentModal?.type === 'SPRAYING' ? `Catat Spraying GBB ${warehouse}` : treatmentModal?.type === 'FUMIGASI_SULFUR' ? `Catat Fumigasi Sulfur ${selected}` : `Catat Fumigasi Beras ${selected}`}</DialogTitle><DialogDescription className="text-[#8b93a1]">{treatmentModal?.type === 'SPRAYING' ? 'Catatan berlaku untuk seluruh tumpukan dalam GBB ini.' : 'Hanya komoditas beras pada tumpukan yang dicatat dalam riwayat.'}</DialogDescription></DialogHeader>{treatmentModal && <div className="space-y-4"><div className="grid grid-cols-1 sm:grid-cols-2 gap-3"><div><label className="text-sm flex items-center gap-2 mb-1"><CalendarDays size={14} />Tanggal mulai</label><input type="date" value={treatmentModal.startDate} onChange={(e) => setTreatmentModal({ ...treatmentModal, startDate: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5" /></div>{treatmentModal.type !== 'SPRAYING' && <div><label className="text-sm flex items-center gap-2 mb-1"><CalendarDays size={14} />Buka sungkup</label><input type="date" value={treatmentModal.endDate} onChange={(e) => setTreatmentModal({ ...treatmentModal, endDate: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5" /></div>}</div><textarea rows="3" placeholder="Catatan pelaksanaan, bahan, dosis, petugas, atau alasan percepatan" value={treatmentModal.note} onChange={(e) => setTreatmentModal({ ...treatmentModal, note: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5" /><div className="rounded-lg bg-[#0d1728] p-3 text-xs text-[#93c5fd]">Tanggal bawaan mengikuti durasi rutin. Tanggal tetap dapat diubah untuk pelaksanaan yang dipercepat atau kondisi aktual.</div></div>}<DialogFooter><button disabled={busy} onClick={() => setTreatmentModal(null)} className="px-4 py-2 border border-[#242f3d] rounded-lg">Batal</button><button disabled={busy || !treatmentModal?.startDate || (treatmentModal?.type !== 'SPRAYING' && !treatmentModal?.endDate)} onClick={saveTreatment} className="btn-primary px-4 py-2 rounded-lg disabled:opacity-50">{busy ? 'Menyimpan...' : 'Simpan riwayat'}</button></DialogFooter></DialogContent></Dialog>
   </div>;
 };
 

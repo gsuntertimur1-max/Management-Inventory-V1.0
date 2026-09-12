@@ -22,6 +22,7 @@ const EMPTY = {
   users: [],
   transactions: [],
   stackAllocations: [],
+  stackTreatments: [],
   settings: DEFAULT_SETTINGS,
 };
 
@@ -32,7 +33,7 @@ export const DataProvider = ({ children }) => {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [p, suppliersRes, sj, loads, po, t, stacks, settingsRes, usersRes] = await Promise.all([
+      const [p, suppliersRes, sj, loads, po, t, stacks, treatments, settingsRes, usersRes] = await Promise.all([
         api.get('/products'),
         api.get('/suppliers'),
         api.get('/surat-jalan'),
@@ -40,6 +41,7 @@ export const DataProvider = ({ children }) => {
         api.get('/purchase-orders-v2'),
         api.get('/transactions'),
         api.get('/stack-allocations'),
+        api.get('/stack-treatments'),
         api.get('/settings'),
         hasPermission(user?.role, 'users') ? api.get('/users') : Promise.resolve({ data: [] }),
       ]);
@@ -52,6 +54,7 @@ export const DataProvider = ({ children }) => {
         users: usersRes.data,
         transactions: t.data,
         stackAllocations: stacks.data,
+        stackTreatments: treatments.data,
         settings: { ...DEFAULT_SETTINGS, ...settingsRes.data },
       });
     } catch (e) {
@@ -169,6 +172,7 @@ export const DataProvider = ({ children }) => {
   const addStackAllocation = async (payload) => { await api.post('/stack-allocations', payload); await fetchAll(); };
   const updateStackAllocation = async (id, payload) => { await api.put(`/stack-allocations/${id}`, payload); await fetchAll(); };
   const deleteStackAllocation = async (id) => { await api.delete(`/stack-allocations/${id}`); await fetchAll(); };
+  const addStackTreatment = async (payload) => { await api.post('/stack-treatments', payload); await fetchAll(); };
 
   return (
     <DataContext.Provider value={{
@@ -188,6 +192,7 @@ export const DataProvider = ({ children }) => {
       createOutboundLoad, refreshOutboundLoads, startOutboundLoad, completeOutboundLoad, updateSJStatus,
       addSupplier, addPO, addUser, updateUser, deleteUser, changeUserPassword, updateSettings, resetData, importCsv,
       addStackAllocation, updateStackAllocation, deleteStackAllocation,
+      addStackTreatment,
     }}>
       {children}
     </DataContext.Provider>

@@ -1,5 +1,5 @@
 import re
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -38,13 +38,15 @@ async def allocate_stock_to_stack(product: dict, stack_code: str, qty: float, op
     existing = await db.stack_allocations.find_one({"productId": product["id"], "stackCode": stack_code}, {"_id": 0})
     if existing:
         total = float(existing.get("primaryQty", 0) or 0) + qty
-        await db.stack_allocations.update_one({"id": existing["id"]}, {"$set": {
+        changes = {
             "primaryQty": total, "secondaryCount": int(total // per_secondary),
             "primaryRemainder": total % per_secondary, "length": 0, "width": 0, "height": 0,
             "arrangementAdjusted": True, "updatedAt": now_iso(),
-        }})
+        }
+        await db.stack_allocations.update_one({"id": existing["id"]}, {"$set": changes})
+        await record_stack_history("PENERIMAAN_OTOMATIS", {**existing, **changes}, operator or "Sistem")
         return
-    await db.stack_allocations.insert_one({
+    allocation = {
         "id": new_id(), "productId": product["id"], "sku": product.get("sku", ""),
         "productName": product.get("name", ""), "unit": product.get("unit", ""),
         "weight": float(product.get("weight", 0) or 0), "secondary": product.get("secondary", ""),
@@ -53,7 +55,9 @@ async def allocate_stock_to_stack(product: dict, stack_code: str, qty: float, op
         "secondaryCount": int(qty // per_secondary), "primaryRemainder": qty % per_secondary,
         "primaryQty": qty, "note": f"Penerimaan oleh {operator}" if operator else "Penerimaan",
         "arrangementAdjusted": True, "createdAt": now_iso(), "updatedAt": now_iso(),
-    })
+    }
+    await db.stack_allocations.insert_one(dict(allocation))
+    await record_stack_history("PENERIMAAN_OTOMATIS", allocation, operator or "Sistem")
 
 
 class StackArrangement(BaseModel):
@@ -72,6 +76,22 @@ class StackAllocationBody(BaseModel):
     extraSecondary: int = Field(default=0, ge=0, le=1000000)
     extraPrimary: int = Field(default=0, ge=0, le=1000000)
     note: str = ""
+
+
+class StackTreatmentBody(BaseModel):
+    type: Literal["SPRAYING", "FUMIGASI", "FUMIGASI_SULFUR"]
+    warehouse: str
+    stackCode: str = ""
+    startDate: str
+    endDate: str = ""
+    note: str = ""
+
+
+async def record_stack_history(action: str, allocation: dict, operator: str) -> None:
+    await db.stack_history.insert_one({
+        "id": new_id(), "time": now_iso(), "action": action, "operator": operator,
+        "stackCode": allocation.get("stackCode", ""), "allocation": {k: v for k, v in allocation.items() if k != "_id"},
+    })
 
 
 async def _build_allocation(body: StackAllocationBody, allocation_id: Optional[str] = None) -> dict:
@@ -164,6 +184,7 @@ async def reconcile_product_allocations(product_id: str) -> None:
         current = float(allocation.get("primaryQty", 0) or 0)
         if excess >= current - 1e-9:
             await db.stack_allocations.delete_one({"id": allocation["id"]})
+            await record_stack_history("PENGELUARAN_HABIS", allocation, "Sistem (pengeluaran)")
             excess -= current
             continue
 
@@ -182,6 +203,14 @@ async def reconcile_product_allocations(product_id: str) -> None:
                 "updatedAt": now_iso(),
             }},
         )
+        await record_stack_history("PENGELUARAN_OTOMATIS", {
+            **allocation,
+            "primaryQty": remaining,
+            "secondaryCount": int(remaining // per_secondary) if per_secondary > 0 else 0,
+            "primaryRemainder": remaining % per_secondary if per_secondary > 0 else remaining,
+            "length": 0, "width": 0, "height": 0,
+            "arrangementAdjusted": True,
+        }, "Sistem (pengeluaran)")
         excess = 0
 
 
@@ -234,6 +263,7 @@ async def create_stack_allocation(body: StackAllocationBody, user: dict = Depend
     allocation["id"] = new_id()
     allocation["createdAt"] = now_iso()
     await db.stack_allocations.insert_one(dict(allocation))
+    await record_stack_history("DIBUAT", allocation, user.get("name", ""))
     return allocation
 
 
@@ -251,15 +281,50 @@ async def update_stack_allocation(
     result = await db.stack_allocations.update_one({"id": allocation_id}, {"$set": allocation})
     if result.matched_count == 0:
         raise HTTPException(status_code=409, detail="Alokasi berubah. Muat ulang lalu coba lagi")
-    return {**allocation, "id": allocation_id}
+    updated = {**allocation, "id": allocation_id}
+    await record_stack_history("DIUBAH", updated, user.get("name", ""))
+    return updated
 
 
 @router.delete("/stack-allocations/{allocation_id}")
 async def delete_stack_allocation(allocation_id: str, user: dict = Depends(require_write)):
+    existing = await db.stack_allocations.find_one({"id": allocation_id}, {"_id": 0})
     result = await db.stack_allocations.delete_one({"id": allocation_id})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Alokasi tumpukan tidak ditemukan")
+    await record_stack_history("DIHAPUS", existing, user.get("name", ""))
     return {"ok": True}
+
+
+@router.get("/stack-treatments")
+async def list_stack_treatments(user: dict = Depends(get_current_user)):
+    return await db.stack_treatments.find({}, {"_id": 0}).sort("startDate", -1).to_list(10000)
+
+
+@router.post("/stack-treatments")
+async def create_stack_treatment(body: StackTreatmentBody, user: dict = Depends(require_write)):
+    warehouse = body.warehouse.strip().upper()
+    stack_code = body.stackCode.strip().upper()
+    if warehouse not in {str(x) for x in range(17, 25)} | {"MP1"}:
+        raise HTTPException(status_code=400, detail="GBB tidak valid")
+    if not body.startDate.strip():
+        raise HTTPException(status_code=400, detail="Tanggal pelaksanaan wajib diisi")
+    if body.type == "SPRAYING" and warehouse == "MP1":
+        raise HTTPException(status_code=400, detail="Spraying GBB hanya berlaku untuk GBB 17–24")
+    if body.type != "SPRAYING" and not body.endDate.strip():
+        raise HTTPException(status_code=400, detail="Tanggal buka sungkup wajib diisi")
+    products = []
+    if body.type != "SPRAYING":
+        if stack_code not in VALID_STACK_CODES:
+            raise HTTPException(status_code=400, detail="Pilih tumpukan untuk fumigasi")
+        allocations = await db.stack_allocations.find({"stackCode": stack_code}, {"_id": 0}).to_list(1000)
+        products = [{"productId": x.get("productId"), "name": x.get("productName"), "qty": x.get("primaryQty"), "unit": x.get("unit")} for x in allocations if "BERAS" in str(x.get("productName", "")).upper()]
+        if not products:
+            raise HTTPException(status_code=400, detail="Fumigasi hanya dapat dicatat pada tumpukan yang berisi beras")
+    doc = body.model_dump()
+    doc.update({"id": new_id(), "warehouse": warehouse, "stackCode": stack_code if body.type != "SPRAYING" else "", "products": products, "createdAt": now_iso(), "operator": user.get("name", "")})
+    await db.stack_treatments.insert_one(dict(doc))
+    return doc
 
 
 @router.get("/export/stack-card.xlsx")
@@ -281,6 +346,21 @@ async def export_stack_card(stackCode: str, user: dict = Depends(get_current_use
         rows.append([index, item.get("sku", ""), item.get("productName", ""), arrangement,
                      f"{item.get('secondaryCount', 0)} {item.get('secondary', '')}{loose}", item.get("primaryQty", 0),
                      item.get("unit", ""), float(item.get("primaryQty", 0) or 0) * float(item.get("weight", 0) or 0)])
+    rows.append([])
+    rows.append(["RIWAYAT PERUBAHAN SUSUNAN"])
+    rows.append(["Waktu", "Aksi", "Produk", "Perkalian", "Jumlah Primer", "Operator"])
+    history = await db.stack_history.find({"stackCode": code}, {"_id": 0}).sort("time", -1).to_list(5000)
+    for entry in history:
+        snap = entry.get("allocation", {})
+        calculation = " + ".join(f"{x.get('hamparan')}×{x.get('kaki')}×{x.get('height')}" for x in snap.get("arrangements", []))
+        rows.append([entry.get("time", ""), entry.get("action", ""), snap.get("productName", ""), calculation, snap.get("primaryQty", 0), entry.get("operator", "")])
+    rows.append([])
+    rows.append(["RIWAYAT SPRAYING DAN FUMIGASI"])
+    rows.append(["Jenis", "GBB", "Tumpukan", "Mulai", "Selesai/Buka Sungkup", "Komoditas Beras", "Catatan", "Petugas"])
+    warehouse = code.split("/", 1)[0]
+    treatments = await db.stack_treatments.find({"$or": [{"stackCode": code}, {"type": "SPRAYING", "warehouse": warehouse}]}, {"_id": 0}).sort("startDate", -1).to_list(5000)
+    for entry in treatments:
+        rows.append([entry.get("type", ""), entry.get("warehouse", ""), entry.get("stackCode", "") or "Semua", entry.get("startDate", ""), entry.get("endDate", ""), ", ".join(x.get("name", "") for x in entry.get("products", [])), entry.get("note", ""), entry.get("operator", "")])
     output = build_xlsx(headers, rows, "Kartu Tumpukan")
     return StreamingResponse(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                              headers={"Content-Disposition": f'attachment; filename="kartu_tumpukan_{code.replace("/", "-")}.xlsx"'})
