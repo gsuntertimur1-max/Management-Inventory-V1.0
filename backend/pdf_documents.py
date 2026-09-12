@@ -81,7 +81,7 @@ async def export_stack_card_pdf(stackCode: str, user: dict = Depends(get_current
     widths = [8, 18, 15, 20, 22, 50, 18, 16, 22, 22, 31, 52]
     table = LongTable(data, colWidths=[x * mm for x in widths], repeatRows=1)
     table.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), SOFT_HEADER), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("GRID", (0, 0), (-1, -1), .35, colors.HexColor("#777777")), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5)]))
-    story += [table, Spacer(1, 10 * mm), Table([["", Paragraph(f"Jakarta, {_date(operational_now().isoformat())}<br/><br/>Kepala GBB Sunter Timur I &amp; II<br/><br/><br/><b>{warehouse_head}</b>", ParagraphStyle("sign", parent=small, alignment=TA_CENTER, fontSize=8, leading=14))]], colWidths=[190 * mm, 65 * mm])]
+    story += [table, Spacer(1, 10 * mm), Table([["", Paragraph(f"Jakarta, {_date(operational_now().isoformat())}<br/><br/>Kepala Gudang Sunter Timur I &amp; II<br/><br/><br/><b>{warehouse_head}</b>", ParagraphStyle("sign", parent=small, alignment=TA_CENTER, fontSize=8, leading=14))]], colWidths=[190 * mm, 65 * mm])]
     story += [PageBreak(), Paragraph("RIWAYAT PERUBAHAN SUSUNAN", title)]
     hdata = [["WAKTU", "AKSI", "PRODUK", "PERHITUNGAN", "JUMLAH PRIMER", "PETUGAS"]]
     for entry in history:
@@ -109,7 +109,7 @@ def _stack_page(c: canvas.Canvas, doc):
 def _draw_sj_copy(c: canvas.Canvas, sj: dict, x: float, y: float, width: float, warehouse_head: str):
     pad = 4 * mm; left = x + pad; right = x + width - pad
     if LOGO.exists(): c.drawImage(str(LOGO), left, y - 17 * mm, width=28 * mm, height=13 * mm, preserveAspectRatio=True, mask="auto")
-    c.setFillColor(colors.HexColor("#244B63")); c.setFont("Helvetica-Bold", 7); c.drawString(left, y - 20 * mm, "09001 - KANWIL DKI JAKARTA BANTEN")
+    c.setFillColor(colors.HexColor("#244B63")); c.setFont("Helvetica-Bold", 7); c.drawString(left + 31 * mm, y - 20 * mm, "09001 - KANWIL DKI JAKARTA BANTEN")
     c.setStrokeColor(colors.HexColor("#527D96")); c.setLineWidth(1.2); c.line(left, y - 22 * mm, right, y - 22 * mm); c.setFillColor(colors.HexColor("#244B63")); c.setFont("Helvetica-Bold", 15); c.drawCentredString(x + width / 2, y - 28 * mm, "SURAT JALAN")
     c.setFillColor(colors.HexColor("#E7EFF3")); c.roundRect(left, y - 35 * mm, right-left, 5 * mm, 1.2 * mm, fill=1, stroke=0); c.setFillColor(colors.black)
     c.setFont("Helvetica", 9); c.drawCentredString(x + width / 2, y - 41 * mm, sj.get("ref") or sj.get("no", ""))
