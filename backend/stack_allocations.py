@@ -309,8 +309,6 @@ async def create_stack_treatment(body: StackTreatmentBody, user: dict = Depends(
         raise HTTPException(status_code=400, detail="GBB tidak valid")
     if not body.startDate.strip():
         raise HTTPException(status_code=400, detail="Tanggal pelaksanaan wajib diisi")
-    if body.type == "SPRAYING" and warehouse == "MP1":
-        raise HTTPException(status_code=400, detail="Spraying GBB hanya berlaku untuk GBB 17–24")
     if body.type != "SPRAYING" and not body.endDate.strip():
         raise HTTPException(status_code=400, detail="Tanggal buka sungkup wajib diisi")
     products = []
