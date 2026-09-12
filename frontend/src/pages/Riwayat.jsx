@@ -66,12 +66,13 @@ const Riwayat = () => {
 
         <div className="overflow-x-auto">
           <table className="w-full text-sm tbl">
-            <thead><tr className="text-left border-b border-[#1a222e]">{['Waktu', 'No. Referensi', 'No. PO', 'Antrian', 'Tipe', 'Kondisi', 'Produk', 'Perubahan', 'Kadaluarsa', 'Pihak Terkait', 'Dicatat Oleh'].map((h) => <th key={h} className="py-2.5 pr-4 font-semibold whitespace-nowrap">{h}</th>)}</tr></thead>
+            <thead><tr className="text-left border-b border-[#1a222e]">{['Waktu', 'No. Referensi', 'Rangkaian Dokumen', 'No. PO', 'Antrian', 'Tipe', 'Kondisi', 'Produk', 'Perubahan', 'Kadaluarsa', 'Pihak Terkait', 'Dicatat Oleh'].map((h) => <th key={h} className="py-2.5 pr-4 font-semibold whitespace-nowrap">{h}</th>)}</tr></thead>
             <tbody>
-              {filtered.length === 0 ? <tr><td colSpan={11} className="py-8 text-center text-[#6b7688]">Belum ada transaksi. Catat penerimaan atau pengeluaran baru.</td></tr> : filtered.map((t) => (
+              {filtered.length === 0 ? <tr><td colSpan={12} className="py-8 text-center text-[#6b7688]">Belum ada transaksi. Catat penerimaan atau pengeluaran baru.</td></tr> : filtered.map((t) => (
                 <tr key={t.id} className="tbl-row border-b border-[#131a24]">
                   <td className="py-3 pr-4 whitespace-nowrap text-[#8b93a1]">{formatDate(t.time)}</td>
                   <td className="py-3 pr-4 font-mono text-xs">{t.ref || '—'}</td>
+                  <td className="py-3 pr-4 font-mono text-xs whitespace-nowrap"><span className="text-[#93c5fd]">{t.document_type || '—'}</span>{t.parent_document && <span className="text-[#6b7688]"> ← {t.parent_document}</span>}</td>
                   <td className="py-3 pr-4 font-mono text-xs text-[#60a5fa]">{t.po_no || '—'}</td>
                   <td className="py-3 pr-4 font-mono text-xs">{t.antrian || '—'}</td>
                   <td className="py-3 pr-4"><span className="text-[10px] font-mono px-2 py-0.5 rounded" style={{ background: t.type === 'MASUK' ? 'rgba(34,197,94,.15)' : 'rgba(239,68,68,.15)', color: t.type === 'MASUK' ? '#22c55e' : '#ef4444' }}>{t.type}</span></td>

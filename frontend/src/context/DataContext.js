@@ -123,6 +123,8 @@ export const DataProvider = ({ children }) => {
     await fetchAll();
     return data;
   };
+  const createConsignmentReturn = async (id, payload) => { const { data } = await api.post(`/outbound-loads/${id}/return`, payload); await fetchAll(); return data; };
+  const settleOutboundDocument = async (id, payload) => { const { data } = await api.post(`/outbound-loads/${id}/settle`, payload); await fetchAll(); return data; };
 
   const updateSJStatus = async (id, status) => { await api.put(`/surat-jalan/${id}/status`, { status }); await fetchAll(); };
 
@@ -189,7 +191,7 @@ export const DataProvider = ({ children }) => {
       canManageSettings: hasPermission(user?.role, 'settings'),
       login, logout, ...state, fetchAll,
       addProduct, updateProduct, deleteProduct, addTransaction, addReceipt,
-      createOutboundLoad, refreshOutboundLoads, startOutboundLoad, completeOutboundLoad, updateSJStatus,
+      createOutboundLoad, refreshOutboundLoads, startOutboundLoad, completeOutboundLoad, createConsignmentReturn, settleOutboundDocument, updateSJStatus,
       addSupplier, addPO, addUser, updateUser, deleteUser, changeUserPassword, updateSettings, resetData, importCsv,
       addStackAllocation, updateStackAllocation, deleteStackAllocation,
       addStackTreatment,

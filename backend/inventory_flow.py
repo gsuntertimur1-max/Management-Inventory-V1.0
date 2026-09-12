@@ -438,7 +438,8 @@ async def export_transactions_with_expiry(user: dict = Depends(get_current_user)
         "Waktu", "No. Referensi", "No. PO", "Antrian", "Tipe", "Kondisi",
         "Produk", "SKU", "Jumlah", "Satuan", "Tanggal Kedaluwarsa",
         "Berat Total (kg)", "Kemasan Sekunder", "Isi/Kemasan Sekunder",
-        "Pihak Terkait", "No. Polisi", "Dicatat Oleh", "Keterangan",
+        "Pihak Terkait", "No. Polisi", "Jenis Dokumen", "Dokumen Induk",
+        "Jumlah Diselesaikan SO", "Good Kembali", "Damage Kembali", "Dicatat Oleh", "Keterangan",
     ]
     rows = [
         [
@@ -447,7 +448,9 @@ async def export_transactions_with_expiry(user: dict = Depends(get_current_user)
             t.get("change", 0), t.get("unit", ""), t.get("exp", ""),
             t.get("total_weight", abs(t.get("change", 0) or 0) * (t.get("weight", 0) or 0)),
             t.get("secondary", ""), t.get("secondaryQty", 0), t.get("penerima", ""),
-            t.get("polisi", ""), t.get("operator", ""), t.get("keterangan", ""),
+            t.get("polisi", ""), t.get("document_type", ""), t.get("parent_document", ""),
+            t.get("settled_qty", ""), t.get("good_change", ""), t.get("damaged_change", ""),
+            t.get("operator", ""), t.get("keterangan", ""),
         ]
         for t in transactions
     ]

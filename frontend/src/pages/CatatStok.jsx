@@ -21,6 +21,8 @@ const CatatStok = () => {
   const [pengambil, setPengambil] = useState('');
   const [kondisi, setKondisi] = useState('BAIK');
   const [ket, setKet] = useState('');
+  const [documentType, setDocumentType] = useState('SO');
+  const [transferScope, setTransferScope] = useState('');
   const [saving, setSaving] = useState(false);
 
   const activePOs = useMemo(
@@ -39,6 +41,8 @@ const CatatStok = () => {
     setPengambil('');
     setKondisi('BAIK');
     setKet('');
+    setDocumentType('SO');
+    setTransferScope('');
   };
 
   const chooseType = (nextType) => {
@@ -149,6 +153,8 @@ const CatatStok = () => {
           pengambil,
           kondisi,
           keterangan: ket,
+          documentType,
+          transferScope,
         });
         toast.success(`Antrian ${load.antrian} dibuat. Stok belum berkurang sampai pemuatan selesai.`);
         navigate('/pengeluaran');
@@ -197,9 +203,9 @@ const CatatStok = () => {
           )}
 
           {type === 'KELUAR' && (
-            <div className="mb-5 p-4 rounded-xl border border-[#5a3b15] bg-[#1a1208] flex gap-3">
-              <Truck size={18} className="text-[#f59e0b] shrink-0 mt-0.5" />
-              <div><div className="text-sm font-semibold text-[#fbbf24]">Tahap Persiapan Pemuatan</div><p className="text-xs text-[#a99675] mt-1">Simpan form untuk mendapatkan nomor antrian. Bon Muat dicetak saat Mulai Muat. Surat Jalan baru terbit setelah Selesai Muat.</p></div>
+            <div className="mb-5 p-4 rounded-xl border border-[#5a3b15] bg-[#1a1208]">
+              <div className="flex gap-3"><Truck size={18} className="text-[#f59e0b] shrink-0 mt-0.5" /><div><div className="text-sm font-semibold text-[#fbbf24]">Tahap Persiapan Pemuatan</div><p className="text-xs text-[#a99675] mt-1">Pilih jenis dokumen. CT dan Memo dapat dilanjutkan menjadi rangkaian CR/SO setelah pemuatan selesai.</p></div></div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4"><div><label className="text-xs text-[#a99675] block mb-1">Jenis Dokumen</label><select value={documentType} onChange={(e) => { setDocumentType(e.target.value); if (e.target.value !== 'TM') setTransferScope(''); }} className="w-full bg-[#0b0f17] border border-[#59431f] rounded-lg px-3 py-2.5 text-sm"><option value="SO">SO — Penjualan</option><option value="TM">TM — Transfer Move</option><option value="CT">CT — Konsinyasi</option><option value="MEMO">Memo — Pengeluaran Memo</option></select></div>{documentType === 'TM' && <div><label className="text-xs text-[#a99675] block mb-1">Cakupan Transfer</label><select value={transferScope} onChange={(e) => setTransferScope(e.target.value)} className="w-full bg-[#0b0f17] border border-[#59431f] rounded-lg px-3 py-2.5 text-sm"><option value="">Pilih cakupan...</option><option value="LOKAL">Antar Gudang Lokal</option><option value="REGIONAL">Regional</option><option value="NASIONAL">Nasional</option></select></div>}</div>
             </div>
           )}
 
@@ -242,7 +248,7 @@ const CatatStok = () => {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div><label className="text-sm font-medium mb-1.5 block">{type === 'MASUK' ? 'Supplier Pengirim' : 'Penerima / Tujuan'}</label>{type === 'MASUK' ? <select value={party} disabled={Boolean(selectedPO)} onChange={(e) => setParty(e.target.value)} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm"><option value="">Pilih supplier...</option>{suppliers.map((supplier) => <option key={supplier.id}>{supplier.name}</option>)}</select> : <input value={party} onChange={(e) => setParty(e.target.value)} placeholder="Nama penerima / tujuan" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm" />}</div>
-            <div><label className="text-sm font-medium mb-1.5 block">{type === 'MASUK' ? 'No. Referensi' : 'Nomor SO / Referensi'}</label><input value={ref} readOnly={Boolean(selectedPO)} onChange={(e) => setRef(e.target.value)} placeholder={type === 'MASUK' ? 'DO / BAST / referensi lain' : 'SO/8775/09/2026/09001'} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm read-only:opacity-70" /></div>
+            <div><label className="text-sm font-medium mb-1.5 block">{type === 'MASUK' ? 'No. Referensi' : `Nomor Dokumen ${documentType}`}</label><input value={ref} readOnly={Boolean(selectedPO)} onChange={(e) => setRef(e.target.value)} placeholder={type === 'MASUK' ? 'DO / BAST / referensi lain' : documentType === 'SO' ? 'SO/8775/09/2026/09001' : `${documentType}/...`} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm read-only:opacity-70" /></div>
             <div><label className="text-sm font-medium mb-1.5 block">Nomor Plat Kendaraan</label><input value={polisi} onChange={(e) => setPolisi(e.target.value)} placeholder="B 1441 PQF" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm" /></div>
             {type === 'KELUAR' ? (
               <div><label className="text-sm font-medium mb-1.5 block">Nama Pengambil / Sopir</label><input value={pengambil} onChange={(e) => setPengambil(e.target.value)} placeholder="Contoh: KOYUM" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm" /></div>

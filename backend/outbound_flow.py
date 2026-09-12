@@ -15,7 +15,7 @@ from backend.server import (
     operational_now,
     require_write,
 )
-from backend.stack_allocations import reconcile_product_allocations
+from backend.stack_allocations import VALID_STACK_CODES, allocate_stock_to_stack, reconcile_product_allocations
 
 router = APIRouter(prefix="/api")
 
@@ -41,6 +41,32 @@ class OutboundCreateInput(BaseModel):
     pengambil: str = ""
     kondisi: Literal["BAIK", "RUSAK"] = "BAIK"
     keterangan: str = ""
+    documentType: Literal["SO", "TM", "CT", "MEMO"] = "SO"
+    transferScope: Literal["", "LOKAL", "REGIONAL", "NASIONAL"] = ""
+
+
+class ReturnItemInput(BaseModel):
+    productId: str
+    goodQty: float = Field(default=0, ge=0)
+    damagedQty: float = Field(default=0, ge=0)
+    stackCode: str = ""
+
+
+class ConsignmentReturnInput(BaseModel):
+    documentNo: str
+    items: List[ReturnItemInput] = Field(min_length=1)
+    note: str = ""
+
+
+class SettlementItemInput(BaseModel):
+    productId: str
+    qty: float = Field(gt=0)
+
+
+class SettlementInput(BaseModel):
+    documentNo: str
+    items: List[SettlementItemInput] = Field(min_length=1)
+    note: str = ""
 
 
 async def _reserved_qty(product_id: str, kondisi: str, exclude_id: str = "") -> float:
@@ -91,6 +117,16 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
     party = body.party.strip()
     if not party:
         raise HTTPException(status_code=400, detail="Penerima barang wajib diisi")
+    ref = body.ref.strip()
+    if not ref:
+        raise HTTPException(status_code=400, detail=f"Nomor dokumen {body.documentType} wajib diisi")
+    expected = {"SO": "SO/", "TM": "TM", "CT": "CT", "MEMO": "MEMO"}[body.documentType]
+    if not ref.upper().startswith(expected):
+        raise HTTPException(status_code=400, detail=f"Nomor dokumen tidak sesuai jenis {body.documentType}")
+    if body.documentType == "TM" and not body.transferScope:
+        raise HTTPException(status_code=400, detail="Pilih cakupan Transfer Move")
+    if await db.outbound_loads.find_one({"$or": [{"ref": ref}, {"document_links.no": ref}]}):
+        raise HTTPException(status_code=409, detail="Nomor dokumen sudah digunakan")
 
     requested = defaultdict(float)
     item_order = []
@@ -175,12 +211,16 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         "completed_at": "",
         "party": party,
         "penerima": party,
-        "ref": body.ref.strip(),
+        "ref": ref,
         "polisi": body.polisi.strip(),
         "pengambil": body.pengambil.strip(),
         "unit_loading": unit_loading,
         "kondisi": body.kondisi,
         "keterangan": body.keterangan.strip(),
+        "document_type": body.documentType,
+        "transfer_scope": body.transferScope if body.documentType == "TM" else "",
+        "document_links": [],
+        "document_status": "Menunggu Pemuatan",
         "items": load_items,
         "total_unit": total_unit,
         "total_berat": total_berat,
@@ -278,6 +318,8 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
                 "polisi": load.get("polisi", ""),
                 "operator": user.get("name", ""),
                 "keterangan": load.get("keterangan", ""),
+                "document_type": load.get("document_type", "SO"),
+                "parent_document": "",
             })
 
         op_now = operational_now()
@@ -302,6 +344,8 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
             "operator": user.get("name", ""),
             "status": "Selesai",
             "ref": load.get("ref", ""),
+            "document_type": load.get("document_type", "SO"),
+            "transfer_scope": load.get("transfer_scope", ""),
             "items": [
                 {
                     "name": item.get("name", ""),
@@ -339,6 +383,7 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
                 "completed_by": user.get("name", ""),
                 "surat_jalan_id": sj_id,
                 "surat_jalan_no": sj_no,
+                "document_status": "Menunggu CR/SO" if load.get("document_type") == "CT" else "Menunggu SO" if load.get("document_type") == "MEMO" else "Selesai",
             }},
         )
 
@@ -354,3 +399,99 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
 
     updated = await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
     return {"load": updated, "suratJalan": sj}
+
+
+def _linked_totals(load: dict, product_id: str) -> tuple[float, float]:
+    returned = sold = 0.0
+    for link in load.get("document_links", []):
+        for item in link.get("items", []):
+            if item.get("productId") != product_id:
+                continue
+            if link.get("type") == "CR":
+                returned += float(item.get("goodQty", 0) or 0) + float(item.get("damagedQty", 0) or 0)
+            elif link.get("type") == "SO":
+                sold += float(item.get("qty", 0) or 0)
+    return returned, sold
+
+
+@router.post("/outbound-loads/{load_id}/return")
+async def create_consignment_return(load_id: str, body: ConsignmentReturnInput, user: dict = Depends(require_write)):
+    load = await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
+    if not load or load.get("document_type") != "CT" or load.get("status") != "Selesai":
+        raise HTTPException(status_code=400, detail="CR hanya dapat dibuat dari CT yang sudah selesai dimuat")
+    document_no = body.documentNo.strip()
+    if not document_no.upper().startswith("CR"):
+        raise HTTPException(status_code=400, detail="Nomor pengembalian harus berupa dokumen CR")
+    if await db.outbound_loads.find_one({"$or": [{"ref": document_no}, {"document_links.no": document_no}]}):
+        raise HTTPException(status_code=409, detail="Nomor CR sudah digunakan")
+    if len({item.productId for item in body.items}) != len(body.items):
+        raise HTTPException(status_code=400, detail="Produk CR tidak boleh dicatat lebih dari satu baris")
+
+    original = {item.get("productId"): item for item in load.get("items", [])}
+    link_items, stock_changes = [], []
+    try:
+        for item in body.items:
+            source = original.get(item.productId)
+            if not source:
+                raise HTTPException(status_code=400, detail="Produk CR tidak terdapat pada dokumen CT")
+            qty = float(item.goodQty) + float(item.damagedQty)
+            if qty <= 0:
+                continue
+            returned, sold = _linked_totals(load, item.productId)
+            if qty > float(source.get("qty", 0) or 0) - returned - sold + 1e-9:
+                raise HTTPException(status_code=400, detail=f"Jumlah CR {source.get('name', '')} melebihi sisa CT")
+            product = await db.products.find_one({"id": item.productId}, {"_id": 0})
+            if not product:
+                raise HTTPException(status_code=404, detail="Produk pengembalian tidak ditemukan")
+            if item.goodQty and item.stackCode.strip().upper() not in VALID_STACK_CODES:
+                raise HTTPException(status_code=400, detail=f"Pilih lokasi tumpukan untuk barang Good {source.get('name', '')}")
+            if item.goodQty:
+                await db.products.update_one({"id": item.productId}, {"$inc": {"stock": float(item.goodQty)}})
+                stock_changes.append((item.productId, "stock", float(item.goodQty)))
+                if item.stackCode.strip():
+                    await allocate_stock_to_stack(product, item.stackCode, float(item.goodQty), user.get("name", ""))
+            if item.damagedQty:
+                await db.products.update_one({"id": item.productId}, {"$inc": {"damaged": float(item.damagedQty)}})
+                stock_changes.append((item.productId, "damaged", float(item.damagedQty)))
+            link_items.append({"productId": item.productId, "name": source.get("name", ""), "unit": source.get("unit", ""), "goodQty": float(item.goodQty), "damagedQty": float(item.damagedQty), "stackCode": item.stackCode.strip().upper()})
+        if not link_items:
+            raise HTTPException(status_code=400, detail="Isi jumlah barang yang dikembalikan")
+        link = {"id": new_id(), "type": "CR", "no": document_no, "time": now_iso(), "items": link_items, "note": body.note.strip(), "operator": user.get("name", "")}
+        await db.outbound_loads.update_one({"id": load_id}, {"$push": {"document_links": link}, "$set": {"document_status": "CR Tercatat · Menunggu SO"}})
+        txns = [{"id": new_id(), "load_id": load_id, "time": link["time"], "ref": document_no, "type": "MASUK", "kondisi": "PENGEMBALIAN", "document_type": "CR", "parent_document": load.get("ref", ""), "product": x["name"], "change": x["goodQty"] + x["damagedQty"], "good_change": x["goodQty"], "damaged_change": x["damagedQty"], "unit": x["unit"], "penerima": load.get("party", ""), "operator": user.get("name", ""), "keterangan": body.note.strip()} for x in link_items]
+        await db.transactions.insert_many(txns)
+        return link
+    except Exception:
+        for product_id, field, qty in reversed(stock_changes):
+            await db.products.update_one({"id": product_id}, {"$inc": {field: -qty}})
+        raise
+
+
+@router.post("/outbound-loads/{load_id}/settle")
+async def settle_outbound_document(load_id: str, body: SettlementInput, user: dict = Depends(require_write)):
+    load = await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
+    if not load or load.get("document_type") not in {"CT", "MEMO"} or load.get("status") != "Selesai":
+        raise HTTPException(status_code=400, detail="SO lanjutan hanya dapat dibuat dari CT atau Memo yang selesai")
+    document_no = body.documentNo.strip()
+    if not document_no.upper().startswith("SO/"):
+        raise HTTPException(status_code=400, detail="Nomor penyelesaian harus berupa dokumen SO")
+    if await db.outbound_loads.find_one({"$or": [{"ref": document_no}, {"document_links.no": document_no}]}):
+        raise HTTPException(status_code=409, detail="Nomor SO sudah digunakan")
+    if len({item.productId for item in body.items}) != len(body.items):
+        raise HTTPException(status_code=400, detail="Produk SO tidak boleh dicatat lebih dari satu baris")
+    original = {item.get("productId"): item for item in load.get("items", [])}
+    items = []
+    for item in body.items:
+        source = original.get(item.productId)
+        if not source:
+            raise HTTPException(status_code=400, detail="Produk SO tidak terdapat pada dokumen induk")
+        returned, sold = _linked_totals(load, item.productId)
+        if float(item.qty) > float(source.get("qty", 0) or 0) - returned - sold + 1e-9:
+            raise HTTPException(status_code=400, detail=f"Jumlah SO {source.get('name', '')} melebihi sisa dokumen")
+        items.append({"productId": item.productId, "name": source.get("name", ""), "unit": source.get("unit", ""), "qty": float(item.qty)})
+    link = {"id": new_id(), "type": "SO", "no": document_no, "time": now_iso(), "items": items, "note": body.note.strip(), "operator": user.get("name", "")}
+    prospective = {**load, "document_links": [*load.get("document_links", []), link]}
+    complete = all(sum(_linked_totals(prospective, pid)) >= float(source.get("qty", 0) or 0) - 1e-9 for pid, source in original.items())
+    await db.outbound_loads.update_one({"id": load_id}, {"$push": {"document_links": link}, "$set": {"document_status": "Selesai Dokumen" if complete else "SO Sebagian · Belum Selesai"}})
+    await db.transactions.insert_many([{"id": new_id(), "load_id": load_id, "time": link["time"], "ref": document_no, "type": "DOKUMEN", "kondisi": "—", "document_type": "SO", "parent_document": load.get("ref", ""), "product": item["name"], "change": 0, "settled_qty": item["qty"], "unit": item["unit"], "penerima": load.get("party", ""), "operator": user.get("name", ""), "keterangan": body.note.strip()} for item in items])
+    return link

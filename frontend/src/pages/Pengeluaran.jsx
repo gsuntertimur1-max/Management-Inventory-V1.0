@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Printer, MonitorSmartphone, Play, CheckCircle2 } from 'lucide-react';
+import { Printer, MonitorSmartphone, Play, CheckCircle2, RotateCcw, Link2 } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { formatNum, formatDate } from '../mock';
 import { toast } from 'sonner';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
+
+const STACKS = [...Array.from({ length: 8 }, (_, i) => String(i + 17)).flatMap((unit) => ['A', 'B', 'C'].flatMap((zone) => Array.from({ length: 4 }, (_, i) => `${unit}/${zone}${String(i + 1).padStart(2, '0')}`))), ...['A', 'B'].flatMap((zone) => Array.from({ length: 8 }, (_, i) => `MP1/${zone}${String(i + 1).padStart(2, '0')}`))];
 
 const STATUS = {
   'Menunggu': { c: '#eab308', bg: 'rgba(234,179,8,.15)' },
@@ -31,13 +34,33 @@ const printDateWib = (value) => {
 };
 
 const Pengeluaran = () => {
-  const { outboundLoads, suratJalan, startOutboundLoad, completeOutboundLoad } = useData();
+  const { outboundLoads, suratJalan, startOutboundLoad, completeOutboundLoad, createConsignmentReturn, settleOutboundDocument } = useData();
   const navigate = useNavigate();
   const [filter, setFilter] = useState('Semua Status');
   const [busyId, setBusyId] = useState('');
+  const [documentModal, setDocumentModal] = useState(null);
 
   const list = outboundLoads.filter((load) => filter === 'Semua Status' || load.status === filter);
   const findFinalSJ = (load) => suratJalan.find((sj) => sj.id === load.surat_jalan_id || sj.load_id === load.id);
+  const remainingQty = (load, source) => {
+    let used = 0;
+    (load.document_links || []).forEach((link) => (link.items || []).forEach((item) => {
+      if (item.productId !== source.productId) return;
+      used += link.type === 'CR' ? Number(item.goodQty || 0) + Number(item.damagedQty || 0) : Number(item.qty || 0);
+    }));
+    return Math.max(Number(source.qty || 0) - used, 0);
+  };
+  const openLinkedDocument = (load, mode) => setDocumentModal({ load, mode, documentNo: '', note: '', items: (load.items || []).map((item) => mode === 'CR' ? { productId: item.productId, name: item.name, unit: item.unit, goodQty: 0, damagedQty: 0, stackCode: item.location || '', remaining: remainingQty(load, item) } : { productId: item.productId, name: item.name, unit: item.unit, qty: remainingQty(load, item), remaining: remainingQty(load, item) }) });
+  const updateDocumentItem = (index, patch) => setDocumentModal((prev) => ({ ...prev, items: prev.items.map((item, i) => i === index ? { ...item, ...patch } : item) }));
+  const saveLinkedDocument = async () => {
+    if (!documentModal?.documentNo.trim()) return toast.error(`Isi nomor dokumen ${documentModal?.mode}`);
+    setBusyId(documentModal.load.id);
+    try {
+      const payload = { documentNo: documentModal.documentNo, note: documentModal.note, items: documentModal.items.map((item) => documentModal.mode === 'CR' ? { productId: item.productId, goodQty: Number(item.goodQty || 0), damagedQty: Number(item.damagedQty || 0), stackCode: item.stackCode || '' } : { productId: item.productId, qty: Number(item.qty || 0) }).filter((item) => documentModal.mode === 'CR' ? item.goodQty + item.damagedQty > 0 : item.qty > 0) };
+      if (documentModal.mode === 'CR') await createConsignmentReturn(documentModal.load.id, payload); else await settleOutboundDocument(documentModal.load.id, payload);
+      toast.success(`Dokumen ${documentModal.mode} berhasil ditautkan`); setDocumentModal(null);
+    } catch (e) { toast.error(e?.response?.data?.detail || 'Gagal menyimpan dokumen'); } finally { setBusyId(''); }
+  };
 
   const writeBonMuat = (load, targetWindow) => {
     const w = targetWindow || window.open('', '_blank', 'width=420,height=760');
@@ -90,7 +113,7 @@ const Pengeluaran = () => {
       <div class="grid"><div class="k">Pemuatan:</div><div class="v">${escapeHtml(load.unit_loading || '-')}</div></div>
 
       <div class="rule"></div>
-      <div class="grid"><div class="k">Nomor SO:</div><div class="v">${escapeHtml(load.ref || '-')}</div></div>
+      <div class="grid"><div class="k">Dokumen ${escapeHtml(load.document_type || 'SO')}:</div><div class="v">${escapeHtml(load.ref || '-')}</div></div>
       <div class="field"><div class="field-name">Tujuan / A.N:</div><div class="field-value">${escapeHtml(load.party || '-')}</div></div>
       <div class="grid"><div class="k">No. Plat:</div><div class="v">${escapeHtml(load.polisi || '-')}</div></div>
       <div class="grid"><div class="k">Pengambil:</div><div class="v">${escapeHtml(load.pengambil || '-')}</div></div>
@@ -189,7 +212,7 @@ const Pengeluaran = () => {
 
         <div className="overflow-x-auto">
           <table className="w-full text-sm tbl">
-            <thead><tr className="text-left border-b border-[#1a222e]">{['Antrian', 'Bon Muat', 'Waktu', 'Tujuan', 'Pengambil', 'No. Polisi', 'Barang', 'Pemuatan', 'Status', 'Surat Jalan', 'Aksi'].map((h) => <th key={h} className="py-2.5 pr-4 font-semibold whitespace-nowrap">{h}</th>)}</tr></thead>
+            <thead><tr className="text-left border-b border-[#1a222e]">{['Antrian', 'Bon Muat', 'Waktu', 'Tujuan', 'Pengambil', 'No. Polisi', 'Barang', 'Pemuatan', 'Status', 'Dokumen & Rangkaian', 'Aksi'].map((h) => <th key={h} className="py-2.5 pr-4 font-semibold whitespace-nowrap">{h}</th>)}</tr></thead>
             <tbody>
               {list.length === 0 ? <tr><td colSpan={11} className="py-8 text-center text-[#6b7688]">Belum ada antrian pengeluaran.</td></tr> : list.map((load) => {
                 const sj = findFinalSJ(load);
@@ -205,11 +228,11 @@ const Pengeluaran = () => {
                     <td className="py-3 pr-4 text-xs min-w-[250px]">{(load.items || []).map((item, i) => <div key={i} className="text-[#aab4c4]">{item.name} · {formatNum(item.qty)} {item.unit} <span className="text-[#6b7688]">({formatNum(item.berat || 0)} kg)</span></div>)}</td>
                     <td className="py-3 pr-4 whitespace-nowrap">{load.unit_loading || '—'}</td>
                     <td className="py-3 pr-4"><span className="text-xs px-2.5 py-1 rounded-full font-medium whitespace-nowrap" style={{ background: st.bg, color: st.c }}>{load.status}</span></td>
-                    <td className="py-3 pr-4 font-mono text-xs whitespace-nowrap">{load.surat_jalan_no || 'Belum terbit'}</td>
+                    <td className="py-3 pr-4 text-xs min-w-[220px]"><div className="font-mono font-semibold text-[#93c5fd]">{load.document_type || 'SO'} · {load.ref || '—'}</div>{(load.document_links || []).map((link) => <div key={link.id} className="font-mono mt-1 text-[#4ade80]">↳ {link.type} · {link.no}</div>)}<div className="mt-1 text-[#6b7688]">{load.document_status || (load.status === 'Selesai' ? 'Selesai' : 'Menunggu pemuatan')} · SJ {load.surat_jalan_no || 'belum terbit'}</div></td>
                     <td className="py-3 pr-4"><div className="flex flex-wrap gap-2 min-w-[270px]">
                       {load.status === 'Menunggu' && <button disabled={busyId === load.id} onClick={() => startAndPrint(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#2563eb] text-[#60a5fa] hover:bg-[#2563eb]/10 disabled:opacity-50"><Play size={13} /> Mulai Muat & Cetak Bon</button>}
                       {load.status === 'Sedang Dimuat' && <><button onClick={() => writeBonMuat(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#242f3d] hover:bg-[#141a24]"><Printer size={13} /> Cetak Ulang Bon</button><button disabled={busyId === load.id} onClick={() => finishLoading(load)} className="btn-primary inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg disabled:opacity-50"><CheckCircle2 size={13} /> Selesai Muat</button></>}
-                      {load.status === 'Selesai' && <><button onClick={() => writeBonMuat(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#242f3d] hover:bg-[#141a24]"><Printer size={13} /> Bon Muat</button><button onClick={() => printSuratJalan(sj)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#22c55e] text-[#4ade80] hover:bg-[#22c55e]/10"><Printer size={13} /> Surat Jalan</button></>}
+                      {load.status === 'Selesai' && <><button onClick={() => writeBonMuat(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#242f3d] hover:bg-[#141a24]"><Printer size={13} /> Bon Muat</button><button onClick={() => printSuratJalan(sj)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#22c55e] text-[#4ade80] hover:bg-[#22c55e]/10"><Printer size={13} /> Surat Jalan</button>{load.document_type === 'CT' && <button onClick={() => openLinkedDocument(load, 'CR')} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#f59e0b] text-[#fbbf24]"><RotateCcw size={13} /> Catat CR</button>}{['CT', 'MEMO'].includes(load.document_type) && <button onClick={() => openLinkedDocument(load, 'SO')} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#2563eb] text-[#60a5fa]"><Link2 size={13} /> Tautkan SO</button>}</>}
                     </div></td>
                   </tr>
                 );
@@ -218,6 +241,7 @@ const Pengeluaran = () => {
           </table>
         </div>
       </div>
+      <Dialog open={Boolean(documentModal)} onOpenChange={(open) => { if (!open && !busyId) setDocumentModal(null); }}><DialogContent className="max-w-2xl border-[#242f3d] bg-[#0d121b] text-[#e7ebf2]"><DialogHeader><DialogTitle>{documentModal?.mode === 'CR' ? 'Pengembalian Barang Konsinyasi (CR)' : 'Tautkan Dokumen Penjualan (SO)'}</DialogTitle><DialogDescription className="text-[#8b93a1]">Dokumen induk: {documentModal?.load?.document_type} · {documentModal?.load?.ref}. Riwayat dokumen lama tidak akan ditimpa.</DialogDescription></DialogHeader>{documentModal && <div className="space-y-4"><div><label className="text-sm block mb-1">Nomor Dokumen {documentModal.mode}</label><input value={documentModal.documentNo} onChange={(e) => setDocumentModal({ ...documentModal, documentNo: e.target.value })} placeholder={documentModal.mode === 'CR' ? 'CR/...' : 'SO/xxxx/mm/09001'} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5" /></div><div className="space-y-3">{documentModal.items.map((item, index) => <div key={item.productId} className="rounded-lg border border-[#202a38] bg-[#0b0f17] p-3"><div className="flex justify-between gap-3 mb-2"><span className="text-sm font-semibold">{item.name}</span><span className="text-xs text-[#8b93a1]">Sisa {formatNum(item.remaining)} {item.unit}</span></div>{documentModal.mode === 'CR' ? <div className="grid grid-cols-1 sm:grid-cols-3 gap-2"><div><label className="text-xs text-[#8b93a1]">Kembali Good</label><input type="number" min="0" max={item.remaining} value={item.goodQty} onChange={(e) => updateDocumentItem(index, { goodQty: e.target.value })} className="w-full mt-1 bg-[#0d121b] border border-[#242f3d] rounded-lg px-3 py-2" /></div><div><label className="text-xs text-[#8b93a1]">Kembali Damage</label><input type="number" min="0" max={item.remaining} value={item.damagedQty} onChange={(e) => updateDocumentItem(index, { damagedQty: e.target.value })} className="w-full mt-1 bg-[#0d121b] border border-[#242f3d] rounded-lg px-3 py-2" /></div><div><label className="text-xs text-[#8b93a1]">Tumpukan barang Good</label><select value={item.stackCode} onChange={(e) => updateDocumentItem(index, { stackCode: e.target.value })} className="w-full mt-1 bg-[#0d121b] border border-[#242f3d] rounded-lg px-2 py-2"><option value="">Pilih lokasi...</option>{STACKS.map((code) => <option key={code}>{code}</option>)}</select></div></div> : <div><label className="text-xs text-[#8b93a1]">Jumlah terjual</label><input type="number" min="0" max={item.remaining} value={item.qty} onChange={(e) => updateDocumentItem(index, { qty: e.target.value })} className="w-full mt-1 bg-[#0d121b] border border-[#242f3d] rounded-lg px-3 py-2" /></div>}</div>)}</div><textarea rows="2" value={documentModal.note} onChange={(e) => setDocumentModal({ ...documentModal, note: e.target.value })} placeholder="Catatan (opsional)" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5" /></div>}<DialogFooter><button disabled={Boolean(busyId)} onClick={() => setDocumentModal(null)} className="px-4 py-2 border border-[#242f3d] rounded-lg">Batal</button><button disabled={Boolean(busyId)} onClick={saveLinkedDocument} className="btn-primary px-4 py-2 rounded-lg disabled:opacity-50">{busyId ? 'Menyimpan...' : 'Simpan Dokumen'}</button></DialogFooter></DialogContent></Dialog>
     </div>
   );
 };
