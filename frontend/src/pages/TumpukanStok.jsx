@@ -2,7 +2,6 @@ import React, { useMemo, useState } from 'react';
 import { CalendarDays, DoorOpen, Edit3, Minus, PackagePlus, Plus, Printer, ShieldCheck, Trash2, Warehouse } from 'lucide-react';
 import { toast } from 'sonner';
 import { useData } from '../context/DataContext';
-import { apiError } from '../lib/api';
 import { apiError, printApiFile } from '../lib/api';
 import { formatNum } from '../mock';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
