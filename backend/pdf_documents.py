@@ -15,7 +15,8 @@ from reportlab.platypus import LongTable, PageBreak, Paragraph, SimpleDocTemplat
 from backend.server import db, get_current_user, operational_now
 
 router = APIRouter(prefix="/api")
-LOGO = Path(__file__).resolve().parents[1] / "frontend" / "public" / "bulog-sunter.png"
+LOGO = Path(__file__).resolve().parents[1] / "frontend" / "public" / "logo-bulog-gst.png"
+SOFT_HEADER = colors.HexColor("#527D96")
 
 
 def _pdf_response(buffer: io.BytesIO, filename: str) -> StreamingResponse:
@@ -68,7 +69,7 @@ async def export_stack_card_pdf(stackCode: str, user: dict = Depends(get_current
     title = ParagraphStyle("title", parent=styles["Title"], alignment=TA_CENTER, fontName="Helvetica-Bold", fontSize=15, leading=18, spaceAfter=2)
     small = ParagraphStyle("small", parent=styles["BodyText"], fontName="Helvetica", fontSize=6.5, leading=8)
     center = ParagraphStyle("center", parent=small, alignment=TA_CENTER)
-    story = [Paragraph("K A R T U &nbsp; T U M P U K A N", title), Paragraph("GBB Sunter Timur I &amp; II", ParagraphStyle("sub", parent=title, fontSize=9, leading=12, spaceAfter=12)), Paragraph(f"TANGGAL MASUK : {_date(min((x.get('createdAt', '') for x in items), default=''))}", styles["BodyText"]), Spacer(1, 6 * mm)]
+    story = [Paragraph("K A R T U &nbsp; T U M P U K A N", title), Paragraph("GBB Sunter Timur I &amp; II", ParagraphStyle("sub", parent=title, fontSize=9, leading=12, spaceAfter=12)), Spacer(1, 5 * mm)]
     headers = ["NO", "TANGGAL", "GUDANG", "LOKASI", "SKU", "NAMA PRODUK", "NETTO", "KOLLY", "SPRAYING", "FUMIGASI", "KETERANGAN", "PERHITUNGAN TUMPUKAN"]
     data = [[Paragraph(x, center) for x in headers]]
     for index, item in enumerate(items, 1):
@@ -76,30 +77,35 @@ async def export_stack_card_pdf(stackCode: str, user: dict = Depends(get_current
         data.append([Paragraph(str(x), center if i in {0, 1, 2, 3, 4, 6, 7, 8, 9} else small) for i, x in enumerate(row)])
     widths = [8, 18, 15, 20, 22, 50, 18, 16, 22, 22, 31, 52]
     table = LongTable(data, colWidths=[x * mm for x in widths], repeatRows=1)
-    table.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#c90000")), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("GRID", (0, 0), (-1, -1), .35, colors.HexColor("#777777")), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5)]))
+    table.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), SOFT_HEADER), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("GRID", (0, 0), (-1, -1), .35, colors.HexColor("#777777")), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5)]))
     story += [table, Spacer(1, 10 * mm), Table([["", Paragraph(f"Jakarta, {_date(operational_now().isoformat())}<br/><br/>Kepala GBB Sunter Timur I &amp; II<br/><br/><br/><b>Irsa Maulian Nugraha</b>", ParagraphStyle("sign", parent=small, alignment=TA_CENTER, fontSize=8, leading=14))]], colWidths=[190 * mm, 65 * mm])]
     story += [PageBreak(), Paragraph("RIWAYAT PERUBAHAN SUSUNAN", title)]
     hdata = [["WAKTU", "AKSI", "PRODUK", "PERHITUNGAN", "JUMLAH PRIMER", "PETUGAS"]]
     for entry in history:
         snap = entry.get("allocation", {})
         hdata.append([_date(entry.get("time"), True), entry.get("action", ""), snap.get("productName", ""), _arrangement(snap), _num(snap.get("primaryQty", 0)), entry.get("operator", "")])
-    story.append(LongTable(hdata, colWidths=[32 * mm, 34 * mm, 70 * mm, 73 * mm, 30 * mm, 35 * mm], repeatRows=1, style=[("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#c90000")), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 7), ("GRID", (0, 0), (-1, -1), .35, colors.grey), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
+    story.append(LongTable(hdata, colWidths=[32 * mm, 34 * mm, 70 * mm, 73 * mm, 30 * mm, 35 * mm], repeatRows=1, style=[("BACKGROUND", (0, 0), (-1, 0), SOFT_HEADER), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 7), ("GRID", (0, 0), (-1, -1), .35, colors.grey), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
     story += [Spacer(1, 7 * mm), Paragraph("RIWAYAT SPRAYING DAN FUMIGASI", title)]
     tdata = [["JENIS", "LOKASI", "MULAI", "SELESAI / BUKA SUNGKUP", "KOMODITAS BERAS", "CATATAN", "PETUGAS"]]
     for entry in treatments:
         tdata.append([entry.get("type", ""), entry.get("stackCode") or f"{entry.get('warehouse')} - Semua Tumpukan", _date(entry.get("startDate")), _date(entry.get("endDate")), ", ".join(x.get("name", "") for x in entry.get("products", [])), entry.get("note", ""), entry.get("operator", "")])
-    story.append(LongTable(tdata, colWidths=[30 * mm, 38 * mm, 26 * mm, 40 * mm, 57 * mm, 50 * mm, 33 * mm], repeatRows=1, style=[("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#c90000")), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 7), ("GRID", (0, 0), (-1, -1), .35, colors.grey), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
-    doc.build(story, onFirstPage=_page_number, onLaterPages=_page_number)
+    story.append(LongTable(tdata, colWidths=[30 * mm, 38 * mm, 26 * mm, 40 * mm, 57 * mm, 50 * mm, 33 * mm], repeatRows=1, style=[("BACKGROUND", (0, 0), (-1, 0), SOFT_HEADER), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 7), ("GRID", (0, 0), (-1, -1), .35, colors.grey), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
+    doc.build(story, onFirstPage=_stack_page, onLaterPages=_stack_page)
     return _pdf_response(buffer, f"kartu_tumpukan_{code.replace('/', '-')}.pdf")
 
 
-def _page_number(c: canvas.Canvas, doc):
-    c.saveState(); c.setFont("Helvetica", 6); c.setFillColor(colors.grey); c.drawRightString(285 * mm, 6 * mm, f"Halaman {doc.page}"); c.restoreState()
+def _stack_page(c: canvas.Canvas, doc):
+    c.saveState()
+    if LOGO.exists(): c.drawImage(str(LOGO), 252 * mm, 188 * mm, width=32 * mm, height=14 * mm, preserveAspectRatio=True, mask="auto")
+    c.setFont("Helvetica", 6); c.setFillColor(colors.grey)
+    c.drawString(12 * mm, 6 * mm, f"Dicetak: {_date(operational_now().isoformat())}")
+    c.drawRightString(285 * mm, 6 * mm, f"Halaman {doc.page}")
+    c.restoreState()
 
 
 def _draw_sj_copy(c: canvas.Canvas, sj: dict, x: float, y: float, width: float):
     pad = 4 * mm; left = x + pad; right = x + width - pad
-    if LOGO.exists(): c.drawImage(str(LOGO), left, y - 17 * mm, width=25 * mm, height=13 * mm, preserveAspectRatio=True, mask="auto")
+    if LOGO.exists(): c.drawImage(str(LOGO), right - 28 * mm, y - 17 * mm, width=28 * mm, height=13 * mm, preserveAspectRatio=True, mask="auto")
     c.setFont("Helvetica-Bold", 7); c.drawString(left, y - 20 * mm, "09001 - KANWIL DKI JAKARTA BANTEN")
     c.line(left, y - 22 * mm, right, y - 22 * mm); c.setFont("Helvetica-Bold", 15); c.drawCentredString(x + width / 2, y - 28 * mm, "SURAT JALAN MANUAL")
     c.setFillColor(colors.HexColor("#dddddd")); c.rect(left, y - 35 * mm, right-left, 5 * mm, fill=1, stroke=0); c.setFillColor(colors.black)
@@ -137,7 +143,7 @@ async def export_bon_muat_pdf(load_id: str, user: dict = Depends(get_current_use
     load = await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
     if not load: raise HTTPException(status_code=404, detail="Bon Muat tidak ditemukan")
     buffer = io.BytesIO(); width, height = 80*mm, 190*mm; c = canvas.Canvas(buffer, pagesize=(width, height)); mid = width/2
-    if LOGO.exists(): c.drawImage(str(LOGO), 17*mm, height-22*mm, width=46*mm, height=17*mm, preserveAspectRatio=True, mask="auto")
+    if LOGO.exists(): c.drawImage(str(LOGO), 42*mm, height-20*mm, width=34*mm, height=15*mm, preserveAspectRatio=True, mask="auto")
     y=height-26*mm; c.setFont("Helvetica-Bold", 10); c.drawCentredString(mid, y, "BON PEMUATAN"); y-=5*mm; c.setFont("Helvetica", 6.5); c.drawCentredString(mid, y, "GBB SUNTER TIMUR I & II"); y-=7*mm; c.setDash(2,2); c.line(4*mm,y,width-4*mm,y); c.setDash(); y-=6*mm
     c.setFont("Helvetica-Bold", 7); c.drawCentredString(mid,y,"NOMOR BON MUAT"); y-=5*mm; c.setFont("Helvetica-Bold", 10); c.drawCentredString(mid,y,load.get("bon_no","-")); y-=7*mm; c.setFont("Helvetica-Bold", 7); c.drawCentredString(mid,y,"NOMOR ANTRIAN"); y-=11*mm; c.setFont("Helvetica-Bold", 27); c.drawCentredString(mid,y,load.get("antrian","-")); y-=8*mm
     c.setDash(2,2); c.line(4*mm,y,width-4*mm,y); c.setDash(); y-=6*mm; c.setFont("Helvetica", 7)
