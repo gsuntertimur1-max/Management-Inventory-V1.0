@@ -67,7 +67,8 @@ async def export_stack_card_pdf(stackCode: str, user: dict = Depends(get_current
     warehouse_head = settings.get("warehouseHead") or "Irsa Maulian Nugraha"
 
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), leftMargin=12 * mm, rightMargin=12 * mm, topMargin=10 * mm, bottomMargin=11 * mm)
+    # Sisakan area header pada setiap halaman agar logo tidak tertutup tabel riwayat.
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), leftMargin=12 * mm, rightMargin=12 * mm, topMargin=24 * mm, bottomMargin=11 * mm)
     styles = getSampleStyleSheet()
     title = ParagraphStyle("title", parent=styles["Title"], alignment=TA_CENTER, fontName="Helvetica-Bold", fontSize=15, leading=18, spaceAfter=2)
     small = ParagraphStyle("small", parent=styles["BodyText"], fontName="Helvetica", fontSize=6.5, leading=8)
