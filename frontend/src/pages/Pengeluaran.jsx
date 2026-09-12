@@ -5,7 +5,7 @@ import { useData } from '../context/DataContext';
 import { formatNum, formatDate } from '../mock';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
-import { apiError, printApiFile } from '../lib/api';
+import { apiError, downloadApiFile } from '../lib/api';
 
 const STACKS = [...Array.from({ length: 8 }, (_, i) => String(i + 17)).flatMap((unit) => ['A', 'B', 'C'].flatMap((zone) => Array.from({ length: 4 }, (_, i) => `${unit}/${zone}${String(i + 1).padStart(2, '0')}`))), ...['A', 'B'].flatMap((zone) => Array.from({ length: 8 }, (_, i) => `MP1/${zone}${String(i + 1).padStart(2, '0')}`))];
 
@@ -48,8 +48,8 @@ const Pengeluaran = () => {
     return (filter === 'Semua Status' || load.status === filter) && (!needle || searchable.includes(needle));
   });
   const findFinalSJ = (load) => suratJalan.find((sj) => sj.id === load.surat_jalan_id || sj.load_id === load.id);
-  const printBon = (load) => printApiFile(`/export/bon-muat/${load.id}.pdf`).catch((e) => toast.error(apiError(e)));
-  const printSuratJalanPdf = (sj) => sj ? printApiFile(`/export/surat-jalan/${sj.id}.pdf`).catch((e) => toast.error(apiError(e))) : toast.error('Surat Jalan belum tersedia');
+  const downloadBon = (load) => downloadApiFile(`/export/bon-muat/${load.id}.pdf`, `bon_pemuatan_${load.bon_no || load.id}.pdf`).catch((e) => toast.error(apiError(e)));
+  const downloadSuratJalan = (sj) => sj ? downloadApiFile(`/export/surat-jalan/${sj.id}.pdf`, `surat_jalan_${(sj.ref || sj.no || sj.id).replaceAll('/', '-')}.pdf`).catch((e) => toast.error(apiError(e))) : toast.error('Surat Jalan belum tersedia');
   const remainingQty = (load, source) => {
     let used = 0;
     (load.document_links || []).forEach((link) => (link.items || []).forEach((item) => {
@@ -171,8 +171,8 @@ const Pengeluaran = () => {
     setBusyId(load.id);
     try {
       const updated = await startOutboundLoad(load.id);
-      await printApiFile(`/export/bon-muat/${updated.id}.pdf`);
-      toast.success(`Pemuatan ${updated.antrian} dimulai · dialog cetak Bon Pemuatan dibuka`);
+      await downloadApiFile(`/export/bon-muat/${updated.id}.pdf`, `bon_pemuatan_${updated.bon_no || updated.id}.pdf`);
+      toast.success(`Pemuatan ${updated.antrian} dimulai · Bon Pemuatan PDF diunduh`);
     } catch (e) {
       toast.error(apiError(e) || 'Gagal memulai pemuatan');
     } finally {
@@ -232,9 +232,9 @@ const Pengeluaran = () => {
                     <td className="py-3 pr-4"><span className="text-xs px-2.5 py-1 rounded-full font-medium whitespace-nowrap" style={{ background: st.bg, color: st.c }}>{load.status}</span></td>
                     <td className="py-3 pr-4 text-xs min-w-[220px]"><div className="font-mono font-semibold text-[#93c5fd]">{load.document_type || 'SO'} · {load.ref || '—'}</div>{(load.document_links || []).map((link) => <div key={link.id} className="font-mono mt-1 text-[#4ade80]">↳ {link.type} · {link.no}</div>)}<div className="mt-1 text-[#6b7688]">{load.document_status || (load.status === 'Selesai' ? 'Selesai' : 'Menunggu pemuatan')} · SJ {load.surat_jalan_no || 'belum terbit'}</div></td>
                     <td className="py-3 pr-4"><div className="flex flex-wrap gap-2 min-w-[270px]">
-                      {load.status === 'Menunggu' && <button disabled={busyId === load.id} onClick={() => startAndPrint(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#2563eb] text-[#60a5fa] hover:bg-[#2563eb]/10 disabled:opacity-50"><Play size={13} /> Mulai Muat & Cetak Bon</button>}
-                      {load.status === 'Sedang Dimuat' && <><button onClick={() => printBon(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#242f3d] hover:bg-[#141a24]"><Printer size={13} /> Cetak Bon PDF</button><button disabled={busyId === load.id} onClick={() => finishLoading(load)} className="btn-primary inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg disabled:opacity-50"><CheckCircle2 size={13} /> Selesai Muat</button></>}
-                      {load.status === 'Selesai' && <><button onClick={() => printBon(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#242f3d] hover:bg-[#141a24]"><Printer size={13} /> Cetak Bon</button><button onClick={() => printSuratJalanPdf(sj)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#22c55e] text-[#4ade80] hover:bg-[#22c55e]/10"><Printer size={13} /> Cetak Surat Jalan</button>{load.document_type === 'CT' && <button onClick={() => openLinkedDocument(load, 'CR')} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#f59e0b] text-[#fbbf24]"><RotateCcw size={13} /> Catat CR</button>}{['CT', 'MEMO'].includes(load.document_type) && <button onClick={() => openLinkedDocument(load, 'SO')} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#2563eb] text-[#60a5fa]"><Link2 size={13} /> Tautkan SO</button>}</>}
+                      {load.status === 'Menunggu' && <button disabled={busyId === load.id} onClick={() => startAndPrint(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#2563eb] text-[#60a5fa] hover:bg-[#2563eb]/10 disabled:opacity-50"><Play size={13} /> Mulai Muat & Download Bon</button>}
+                      {load.status === 'Sedang Dimuat' && <><button onClick={() => downloadBon(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#242f3d] hover:bg-[#141a24]"><Printer size={13} /> Download Bon PDF</button><button disabled={busyId === load.id} onClick={() => finishLoading(load)} className="btn-primary inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg disabled:opacity-50"><CheckCircle2 size={13} /> Selesai Muat</button></>}
+                      {load.status === 'Selesai' && <><button onClick={() => downloadBon(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#242f3d] hover:bg-[#141a24]"><Printer size={13} /> Download Bon</button><button onClick={() => downloadSuratJalan(sj)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#22c55e] text-[#4ade80] hover:bg-[#22c55e]/10"><Printer size={13} /> Download Surat Jalan</button>{load.document_type === 'CT' && <button onClick={() => openLinkedDocument(load, 'CR')} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#f59e0b] text-[#fbbf24]"><RotateCcw size={13} /> Catat CR</button>}{['CT', 'MEMO'].includes(load.document_type) && <button onClick={() => openLinkedDocument(load, 'SO')} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#2563eb] text-[#60a5fa]"><Link2 size={13} /> Tautkan SO</button>}</>}
                     </div></td>
                   </tr>
                 );
