@@ -14,7 +14,7 @@ const emptyRow = () => ({ productId: '', inputMode: 'QTY', inputValue: 1, qty: 1
 const CatatStok = () => {
   const { products, suppliers, purchaseOrders, addReceipt, createOutboundLoad, canInbound, canOutbound } = useData();
   const navigate = useNavigate();
-  const [type, setType] = useState(canInbound ? 'MASUK' : 'KELUAR');
+  const [type, setType] = useState(canOutbound ? 'KELUAR' : 'MASUK');
   const [rows, setRows] = useState([emptyRow()]);
   const [poId, setPoId] = useState('');
   const [party, setParty] = useState('');
@@ -27,6 +27,7 @@ const CatatStok = () => {
   const [transferScope, setTransferScope] = useState('');
   const [documentRefs, setDocumentRefs] = useState(['']);
   const [requestDocument, setRequestDocument] = useState('');
+  const [memoPurpose, setMemoPurpose] = useState('LAINNYA');
   const [consignmentDestination, setConsignmentDestination] = useState('');
   const [consignmentZone, setConsignmentZone] = useState('');
   const [saving, setSaving] = useState(false);
@@ -51,6 +52,7 @@ const CatatStok = () => {
     setTransferScope('');
     setDocumentRefs(['']);
     setRequestDocument('');
+    setMemoPurpose('LAINNYA');
     setConsignmentDestination('');
     setConsignmentZone('');
   };
@@ -135,6 +137,10 @@ const CatatStok = () => {
       toast.error('Pilih zona konsinyasi Unit 18 untuk Gudang E-commerce/Bazar');
       return;
     }
+    if (type === 'KELUAR' && documentType === 'MEMO' && !requestDocument.trim()) {
+      toast.error('Nomor Nota Dinas (ND) wajib diisi sebagai dasar Memo');
+      return;
+    }
 
     if (type === 'MASUK' && selectedPO) {
       for (const row of chosen) {
@@ -175,6 +181,7 @@ const CatatStok = () => {
           transferScope,
           documents: documentRefs.filter(Boolean),
           requestDocument,
+          memoPurpose,
           consignmentDestination,
           consignmentZone,
         });
@@ -201,7 +208,7 @@ const CatatStok = () => {
     <div className="space-y-6">
       <div>
         <div className="label-mono mb-2">Operasional Gudang</div>
-        <h1 className="font-display text-4xl font-bold">Pencatatan Stok Masuk / Keluar</h1>
+        <h1 className="font-display text-4xl font-bold">Pencatatan Stok Keluar / Masuk</h1>
         <p className="text-[#8b93a1] mt-2 max-w-3xl">Penerimaan langsung menambah stok. Pengeluaran membuat antrian pemuatan terlebih dahulu; stok baru berkurang setelah proses muat selesai.</p>
       </div>
 
@@ -209,8 +216,8 @@ const CatatStok = () => {
         <div className="card-surface p-6 lg:col-span-2">
           <h2 className="font-display text-lg font-bold mb-4">Formulir Transaksi</h2>
           <div className={`grid ${canInbound && canOutbound ? 'grid-cols-2' : 'grid-cols-1'} gap-2 mb-5 p-1 bg-[#0b0f17] rounded-xl border border-[#1a222e]`}>
-            {canInbound && <button onClick={() => chooseType('MASUK')} className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold ${type === 'MASUK' ? 'bg-[#22c55e]/15 text-[#22c55e]' : 'text-[#8b93a1]'}`}><ArrowDownLeft size={16} /> Stok Masuk</button>}
             {canOutbound && <button onClick={() => chooseType('KELUAR')} className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold ${type === 'KELUAR' ? 'bg-[#ef4444]/15 text-[#ef4444]' : 'text-[#8b93a1]'}`}><ArrowUpRight size={16} /> Stok Keluar</button>}
+            {canInbound && <button onClick={() => chooseType('MASUK')} className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold ${type === 'MASUK' ? 'bg-[#22c55e]/15 text-[#22c55e]' : 'text-[#8b93a1]'}`}><ArrowDownLeft size={16} /> Stok Masuk</button>}
           </div>
 
           {type === 'MASUK' && (
@@ -226,10 +233,10 @@ const CatatStok = () => {
 
           {type === 'KELUAR' && (
             <div className="mb-5 p-4 rounded-xl border border-[#5a3b15] bg-[#1a1208]">
-              <div className="flex gap-3"><Truck size={18} className="text-[#f59e0b] shrink-0 mt-0.5" /><div><div className="text-sm font-semibold text-[#fbbf24]">Tahap Persiapan Pemuatan</div><p className="text-xs text-[#a99675] mt-1">Pilih jenis dokumen. CT dan Memo dapat dilanjutkan menjadi rangkaian CR/SO setelah pemuatan selesai.</p></div></div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4"><div><label className="text-xs text-[#a99675] block mb-1">Jenis Dokumen</label><select value={documentType} onChange={(e) => { setDocumentType(e.target.value); if (e.target.value !== 'TM') setTransferScope(''); }} className="w-full bg-[#0b0f17] border border-[#59431f] rounded-lg px-3 py-2.5 text-sm"><option value="SO">SO — Penjualan</option><option value="TM">TM — Transfer Move</option><option value="CT">CT — Konsinyasi</option><option value="MEMO">Memo — Pengeluaran Memo</option></select></div>{documentType === 'TM' && <div><label className="text-xs text-[#a99675] block mb-1">Cakupan Transfer</label><select value={transferScope} onChange={(e) => setTransferScope(e.target.value)} className="w-full bg-[#0b0f17] border border-[#59431f] rounded-lg px-3 py-2.5 text-sm"><option value="">Pilih cakupan...</option><option value="LOKAL">Antar Gudang Lokal</option><option value="REGIONAL">Regional</option><option value="NASIONAL">Nasional</option></select></div>}</div>
+              <div className="flex gap-3"><Truck size={18} className="text-[#f59e0b] shrink-0 mt-0.5" /><div><div className="text-sm font-semibold text-[#fbbf24]">Tahap Persiapan Pemuatan</div><p className="text-xs text-[#a99675] mt-1">CT dapat dilanjutkan menjadi CR/SO. Memo selalu berbasis Nota Dinas (ND) dan dapat dipakai untuk Bazar, E-commerce, peminjaman, maupun keperluan lain.</p></div></div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4"><div><label className="text-xs text-[#a99675] block mb-1">Jenis Dokumen</label><select value={documentType} onChange={(e) => { setDocumentType(e.target.value); if (e.target.value !== 'TM') setTransferScope(''); }} className="w-full bg-[#0b0f17] border border-[#59431f] rounded-lg px-3 py-2.5 text-sm"><option value="SO">SO — Penjualan</option><option value="TM">TM — Transfer Move</option><option value="CT">CT — Konsinyasi</option><option value="MEMO">Memo — Berbasis Nota Dinas</option></select></div>{documentType === 'TM' && <div><label className="text-xs text-[#a99675] block mb-1">Cakupan Transfer</label><select value={transferScope} onChange={(e) => setTransferScope(e.target.value)} className="w-full bg-[#0b0f17] border border-[#59431f] rounded-lg px-3 py-2.5 text-sm"><option value="">Pilih cakupan...</option><option value="LOKAL">Antar Gudang Lokal</option><option value="REGIONAL">Regional</option><option value="NASIONAL">Nasional</option></select></div>}</div>
               <div className="mt-3"><div className="flex items-center justify-between mb-1"><label className="text-xs text-[#a99675]">Nomor Dokumen (satu kendaraan dapat membawa beberapa dokumen)</label><button type="button" onClick={() => setDocumentRefs((prev) => [...prev, ''])} className="text-xs text-[#60a5fa]">+ Tambah dokumen</button></div>{documentRefs.map((doc, index) => <div key={index} className="flex gap-2 mt-2"><input value={doc} onChange={(e) => { const next = [...documentRefs]; next[index] = e.target.value; setDocumentRefs(next); }} placeholder={documentType === 'SO' ? 'SO/xxxx/mm/09001' : `${documentType}/...`} className="flex-1 bg-[#0b0f17] border border-[#59431f] rounded-lg px-3 py-2.5 text-sm" />{documentRefs.length > 1 && <button type="button" onClick={() => setDocumentRefs((prev) => prev.filter((_, i) => i !== index))} className="px-3 rounded-lg border border-[#59431f] text-[#f59e0b]">×</button>}</div>)}</div>
-              {documentType === 'MEMO' && <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3 rounded-lg border border-[#1f3657] bg-[#0d1728] p-3"><div><label className="text-xs text-[#93c5fd] block mb-1">Tujuan Memo</label><select value={consignmentDestination} onChange={(e) => { setConsignmentDestination(e.target.value); if (e.target.value) setParty(e.target.value); }} className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm"><option value="">Pengeluaran Memo umum</option>{CONSIGNMENT_DESTINATIONS.map((name) => <option key={name}>{name}</option>)}</select></div><div><label className="text-xs text-[#93c5fd] block mb-1">Zona Unit 18</label><select value={consignmentZone} onChange={(e) => setConsignmentZone(e.target.value)} disabled={!consignmentDestination} className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm disabled:opacity-50"><option value="">Pilih zona...</option>{CONSIGNMENT_ZONES.map((zone) => <option key={zone}>{zone}</option>)}</select></div><div><label className="text-xs text-[#93c5fd] block mb-1">Dasar Nota Dinas</label><input value={requestDocument} onChange={(e) => setRequestDocument(e.target.value)} placeholder="ND/... (opsional)" className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm" /></div><p className="sm:col-span-3 text-[11px] text-[#8fb8ef]">Untuk Bazar/E-commerce, Memo menjadi dokumen induk stok dan SO ditautkan ke satu Memo/ND tersebut.</p></div>}
+              {documentType === 'MEMO' && <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3 rounded-lg border border-[#1f3657] bg-[#0d1728] p-3"><div><label className="text-xs text-[#93c5fd] block mb-1">Keperluan Memo</label><select value={memoPurpose} onChange={(e) => { const purpose = e.target.value; const destination = purpose === 'BAZAR' ? 'Gudang Bazar' : purpose === 'ECOMMERCE' ? 'Gudang E-commerce' : ''; setMemoPurpose(purpose); setConsignmentDestination(destination); setConsignmentZone(''); if (destination) setParty(destination); }} className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm"><option value="BAZAR">Gudang Bazar</option><option value="ECOMMERCE">Gudang E-commerce</option><option value="PEMINJAMAN">Peminjaman</option><option value="LAINNYA">Keperluan lain</option></select></div><div><label className="text-xs text-[#93c5fd] block mb-1">Zona Unit 18</label><select value={consignmentZone} onChange={(e) => setConsignmentZone(e.target.value)} disabled={!consignmentDestination} className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm disabled:opacity-50"><option value="">{consignmentDestination ? 'Pilih zona...' : 'Tidak diperlukan'}</option>{CONSIGNMENT_ZONES.map((zone) => <option key={zone}>{zone}</option>)}</select></div><div><label className="text-xs text-[#93c5fd] block mb-1">Dasar Nota Dinas <span className="text-[#fbbf24]">*</span></label><input value={requestDocument} onChange={(e) => setRequestDocument(e.target.value)} placeholder="ND/..." className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm" /></div><p className="sm:col-span-3 text-[11px] text-[#8fb8ef]">Memo berlaku untuk berbagai keperluan. Bila tujuannya Bazar/E-commerce, saldo dipisahkan sebagai stok Unit 18 dan kemudian dapat ditautkan ke SO.</p></div>}
             </div>
           )}
 

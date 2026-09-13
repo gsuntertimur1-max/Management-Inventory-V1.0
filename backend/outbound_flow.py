@@ -47,6 +47,7 @@ class OutboundCreateInput(BaseModel):
     transferScope: Literal["", "LOKAL", "REGIONAL", "NASIONAL"] = ""
     documents: List[str] = Field(default_factory=list, max_length=20)
     requestDocument: str = ""
+    memoPurpose: Literal["BAZAR", "ECOMMERCE", "PEMINJAMAN", "LAINNYA"] = "LAINNYA"
     consignmentDestination: str = ""
     consignmentZone: str = ""
 
@@ -142,6 +143,8 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         raise HTTPException(status_code=400, detail=f"Nomor dokumen tidak sesuai jenis {body.documentType}")
     if body.documentType == "TM" and not body.transferScope:
         raise HTTPException(status_code=400, detail="Pilih cakupan Transfer Move")
+    if body.documentType == "MEMO" and not body.requestDocument.strip():
+        raise HTTPException(status_code=400, detail="Nomor Nota Dinas (ND) wajib diisi sebagai dasar Memo")
     if body.consignmentDestination and body.documentType != "MEMO":
         raise HTTPException(status_code=400, detail="Stok Gudang Bazar/E-commerce harus dicatat menggunakan Memo/ND")
     if body.consignmentDestination and body.consignmentDestination not in {"Gudang Bazar", "Gudang E-commerce"}:
@@ -246,6 +249,7 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         "document_type": body.documentType,
         "transfer_scope": body.transferScope if body.documentType == "TM" else "",
         "request_document": body.requestDocument.strip(),
+        "memo_purpose": body.memoPurpose if body.documentType == "MEMO" else "",
         "consignment_destination": body.consignmentDestination.strip(),
         "consignment_zone": body.consignmentZone.strip(),
         "document_links": [],
