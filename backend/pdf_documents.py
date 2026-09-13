@@ -256,7 +256,6 @@ def _weighing_form_pdf(title: str, document_no: str, party: str, polisi: str, cr
             c.setFont("Helvetica", 8); c.drawCentredString((start_x + number_col) / 2, row_y + 2.8 * mm, str(entry.get("no", first_no + index)))
             c.drawCentredString((number_col + end_x) / 2, row_y + 2.8 * mm, _num(entry.get("gross", 0)))
     y -= row_h * 11
-    c.setFont("Helvetica", 7); c.drawString(left, y - 3 * mm, "Bruto dibuat otomatis sebanyak 20 baris dan dapat dikoreksi sesuai timbang aktual.")
     sign_y = 39 * mm
     c.setFont("Helvetica", 8); c.drawCentredString(left + 42 * mm, sign_y + 20 * mm, "Pengangkut / Pengambil")
     c.drawCentredString(right - 42 * mm, sign_y + 20 * mm, "Petugas Gudang")
