@@ -12,7 +12,7 @@ from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
 from reportlab.platypus import LongTable, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from backend.server import db, get_current_user, operational_now
+from backend.server import JAKARTA_TZ, db, get_current_user, operational_now
 from backend.consignment import DESTINATIONS, consignment_stock
 
 router = APIRouter(prefix="/api")
@@ -38,6 +38,7 @@ def _date(value, with_time=False) -> str:
         return "-"
     try:
         parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        parsed = parsed.replace(tzinfo=JAKARTA_TZ) if parsed.tzinfo is None else parsed.astimezone(JAKARTA_TZ)
         return parsed.strftime("%d/%m/%Y, %H:%M" if with_time else "%d/%m/%Y")
     except ValueError:
         return str(value)
