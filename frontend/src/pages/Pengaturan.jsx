@@ -18,7 +18,7 @@ const Toggle = ({ on, onClick, disabled = false }) => (
 );
 
 const Pengaturan = () => {
-  const { user, settings, updateSettings, resetData, canManageSettings } = useData();
+  const { user, settings, updateSettings, resetData, canManageSettings, theme, setTheme } = useData();
   const isAdmin = canManageSettings;
   const [warehouse, setWarehouse] = useState(settings?.warehouse || 'Gudang Sunter Timur I & II');
   const [address, setAddress] = useState(settings?.address || 'Jl. Sunter Agung, Jakarta Utara');
@@ -202,13 +202,21 @@ const Pengaturan = () => {
             <Palette size={18} className="text-[#a855f7]" />
             <h2 className="font-display text-lg font-bold">Tampilan</h2>
           </div>
-          <div className="flex items-center justify-between p-3 rounded-lg bg-[#0b0f17] border border-[#151d28]">
+          <div className="flex items-center justify-between gap-4 p-3 rounded-lg bg-[#0b0f17] border border-[#151d28]">
             <div>
-              <div className="text-sm font-medium">Mode Gelap</div>
-              <div className="text-xs text-[#6b7688]">Tema aktif aplikasi saat ini</div>
+              <div className="text-sm font-medium">Mode terang</div>
+              <div className="text-xs text-[#6b7688]">{theme === 'light' ? 'Tampilan terang sedang digunakan' : 'Gunakan latar terang untuk kenyamanan membaca'}</div>
             </div>
-            <span className="text-xs px-2.5 py-1 rounded-full bg-[#22c55e]/15 text-[#22c55e]">Aktif</span>
+            <Toggle
+              on={theme === 'light'}
+              onClick={() => {
+                const next = theme === 'light' ? 'dark' : 'light';
+                setTheme(next);
+                toast.success(`Mode ${next === 'light' ? 'terang' : 'gelap'} diaktifkan`);
+              }}
+            />
           </div>
+          <p className="text-xs text-[#6b7688] mt-4">Pilihan ini disimpan di browser ini dan tidak mengubah tampilan pengguna lain.</p>
         </div>
 
         <div className="card-surface p-6">

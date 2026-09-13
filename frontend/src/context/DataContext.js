@@ -36,6 +36,16 @@ export const DataProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [checking, setChecking] = useState(true);
   const [state, setState] = useState(EMPTY);
+  const [theme, setThemeState] = useState(() => localStorage.getItem('bulog_theme') || 'dark');
+
+  const setTheme = useCallback((nextTheme) => {
+    setThemeState(nextTheme === 'light' ? 'light' : 'dark');
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem('bulog_theme', theme);
+  }, [theme]);
 
   const fetchAll = useCallback(async () => {
     try {
@@ -205,6 +215,7 @@ export const DataProvider = ({ children }) => {
       canQC: hasPermission(user?.role, 'qc'),
       canManageUsers: hasPermission(user?.role, 'users'),
       canManageSettings: hasPermission(user?.role, 'settings'),
+      theme, setTheme,
       login, logout, ...state, fetchAll,
       addProduct, updateProduct, deleteProduct, addTransaction, addReceipt,
       createOutboundLoad, refreshOutboundLoads, startOutboundLoad, completeOutboundLoad, createConsignmentReturn, settleOutboundDocument, updateSJStatus,
