@@ -205,6 +205,17 @@ html[data-theme='light'] .border-\[\#242f3d\],
 html[data-theme='light'] .border-\[\#202a38\] { border-color: #cbd5e1 !important; }
 html[data-theme='light'] .border-\[\#161d29\] { border-color: #cbd5e1 !important; }
 html[data-theme='light'] .border-\[\#214a3a\] { border-color: #86efac !important; }
+html[data-theme='light'] .hover\:bg-\[\#141a24\]:hover { background-color: #e8eef6 !important; }
+
+/* Layar Antrian memiliki mode presentasi dan tombol yang perlu selalu mengikuti tema aktif. */
+html[data-theme='light'] .queue-fullscreen { background-color: #f3f6fb !important; }
+html[data-theme='light'] .queue-action { background-color: #ffffff; color: #263247 !important; }
+html[data-theme='light'] .queue-action:hover,
+html[data-theme='light'] .queue-action:focus-visible { background-color: #e8eef6 !important; }
+html[data-theme='light'] .queue-loading-card {
+    background: linear-gradient(135deg, #eff6ff, #ffffff) !important;
+    border-color: #bfdbfe !important;
+}
 html[data-theme='light'] .border-\[\#5a3b15\] { border-color: #e5c99c !important; }
 
 @keyframes fadeUp { from { opacity:0; transform: translateY(10px);} to {opacity:1; transform:none;} }

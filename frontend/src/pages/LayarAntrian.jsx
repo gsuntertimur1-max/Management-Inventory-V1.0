@@ -100,7 +100,7 @@ const LayarAntrian = () => {
   };
 
   return (
-    <div ref={screenRef} className={`${presentationMode ? 'fixed inset-0 z-[60] overflow-y-auto bg-[#070a10] p-4 sm:p-8' : ''} space-y-6`}>
+    <div ref={screenRef} className={`${presentationMode ? 'queue-fullscreen fixed inset-0 z-[60] overflow-y-auto bg-[#070a10] p-4 sm:p-8' : ''} space-y-6`}>
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5 lg:gap-6">
         <div>
           <div className="label-mono mb-2">Monitor Pemuatan</div>
@@ -108,11 +108,11 @@ const LayarAntrian = () => {
           <p className="text-[#8b93a1] mt-2">Nomor antrian reset setiap hari dan hanya menampilkan proses yang belum selesai.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-          <button type="button" onClick={toggleVoice} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-[#242f3d] px-3.5 py-2.5 text-sm text-[#c7d0dc] hover:bg-[#141a24]">
+          <button type="button" onClick={toggleVoice} className="queue-action inline-flex min-h-11 items-center gap-2 rounded-xl border border-[#242f3d] px-3.5 py-2.5 text-sm text-[#c7d0dc] hover:bg-[#141a24]">
             {voiceEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
             {voiceEnabled ? 'Suara aktif' : 'Aktifkan suara'}
           </button>
-          <button type="button" onClick={refreshQueue} disabled={refreshing} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-[#242f3d] px-3.5 py-2.5 text-sm text-[#c7d0dc] hover:bg-[#141a24] disabled:opacity-60">
+          <button type="button" onClick={refreshQueue} disabled={refreshing} className="queue-action inline-flex min-h-11 items-center gap-2 rounded-xl border border-[#242f3d] px-3.5 py-2.5 text-sm text-[#c7d0dc] hover:bg-[#141a24] disabled:opacity-60">
             <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''} /> Perbarui
           </button>
           <button type="button" onClick={presentationMode ? exitPresentation : enterPresentation} className="btn-primary inline-flex min-h-11 items-center gap-2 rounded-xl px-3.5 py-2.5 text-sm font-semibold">
@@ -134,7 +134,7 @@ const LayarAntrian = () => {
       </div>
 
       {loading && (
-        <div className="card-surface p-8 relative overflow-hidden" style={{ background: 'linear-gradient(135deg, rgba(37,99,235,0.15), rgba(20,26,37,0.9))' }}>
+        <div className="queue-loading-card card-surface p-8 relative overflow-hidden">
           <div className="flex items-center gap-3 mb-2"><Loader size={20} className="text-[#3b82f6] animate-spin" /><span className="label-mono text-[#60a5fa]">Sedang Dimuat</span></div>
           <div className="font-display text-7xl font-bold mb-2">{loading.antrian}</div>
           <div className="text-xl font-semibold">{loading.party}</div>
