@@ -83,7 +83,7 @@ async def export_consignment_stock_card_pdf(destination: str, user: dict = Depen
     center = ParagraphStyle("cons-center", parent=small, alignment=TA_CENTER)
     short_location = "BAZAR" if location == "Gudang Bazar" else "E-COMMERCE"
     story = [Paragraph("K A R T U &nbsp; S T O K &nbsp; K O N S I N Y A S I", title), Paragraph(f"{short_location} - GBB Sunter Timur I &amp; II", ParagraphStyle("cons-sub", parent=title, fontSize=9, leading=12, spaceAfter=12)), Spacer(1, 5 * mm)]
-    headers = ["NO", "SKU", "NAMA KOMODITI", "PERKALIAN", "KEMASAN SEKUNDER", "KUANTUM PACK/PCS", "KUANTUM BERAT", "MEMO TERKAIT", "ND DASAR"]
+    headers = ["NO", "SKU", "NAMA KOMODITI", "PERKALIAN", "KEMASAN SEKUNDER", "KUANTUM PACK/PCS", "KUANTUM BERAT", "DOKUMEN TERKAIT", "KETERANGAN"]
     data = [[Paragraph(header, center) for header in headers]]
     for index, item in enumerate(items, 1):
         layout = by_product.get(item.get("productId"), {})
@@ -92,7 +92,7 @@ async def export_consignment_stock_card_pdf(destination: str, user: dict = Depen
         arrangement = _consignment_arrangement(layout, item)
         if unmatched > 0:
             arrangement += f"<br/><font color='#9a6700'>Belum terhitung: {_num(unmatched)} {item.get('unit', '')}</font>"
-        row = [index, item.get("sku", ""), item.get("name", ""), arrangement, item.get("secondary", "-") or "-", f"{_num(item.get('qty', 0))} {item.get('unit', '')}", f"{_num(item.get('totalWeight', 0))} kg" if item.get("weight") else "-", ", ".join(item.get("documents", [])) or "-", ", ".join(item.get("requestDocuments", [])) or "-"]
+        row = [index, item.get("sku", ""), item.get("name", ""), arrangement, item.get("secondary", "-") or "-", f"{_num(item.get('qty', 0))} {item.get('unit', '')}", f"{_num(item.get('totalWeight', 0))} kg" if item.get("weight") else "-", ", ".join(item.get("documents", [])) or "-", "ND atau Memo"]
         data.append([Paragraph(str(value), center if col in {0, 1, 4, 5, 6} else small) for col, value in enumerate(row)])
     widths = [8, 22, 48, 64, 28, 32, 30, 42, 42]
     table = LongTable(data, colWidths=[width * mm for width in widths], repeatRows=1)

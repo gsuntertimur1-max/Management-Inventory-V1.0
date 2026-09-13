@@ -43,11 +43,11 @@ class OutboundCreateInput(BaseModel):
     pengambil: str = ""
     kondisi: Literal["BAIK", "RUSAK"] = "BAIK"
     keterangan: str = ""
-    documentType: Literal["SO", "TM", "CT", "MEMO"] = "SO"
+    documentType: Literal["SO", "TM", "CT", "ND", "MEMO"] = "SO"
     transferScope: Literal["", "LOKAL", "REGIONAL", "NASIONAL"] = ""
     documents: List[str] = Field(default_factory=list, max_length=20)
     requestDocument: str = ""
-    memoPurpose: Literal["BAZAR", "ECOMMERCE", "PEMINJAMAN", "LAINNYA"] = "LAINNYA"
+    dispatchPurpose: Literal["BAZAR", "ECOMMERCE", "PEMINJAMAN", "LAINNYA"] = "LAINNYA"
     consignmentDestination: str = ""
     consignmentZone: str = ""
 
@@ -138,15 +138,13 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
             refs.append(value)
     if not refs:
         raise HTTPException(status_code=400, detail=f"Nomor dokumen {body.documentType} wajib diisi")
-    expected = {"SO": "SO/", "TM": "TM", "CT": "CT", "MEMO": "MEMO"}[body.documentType]
+    expected = {"SO": "SO/", "TM": "TM", "CT": "CT", "ND": "ND", "MEMO": "MEMO"}[body.documentType]
     if any(not ref.upper().startswith(expected) for ref in refs):
         raise HTTPException(status_code=400, detail=f"Nomor dokumen tidak sesuai jenis {body.documentType}")
     if body.documentType == "TM" and not body.transferScope:
         raise HTTPException(status_code=400, detail="Pilih cakupan Transfer Move")
-    if body.documentType == "MEMO" and not body.requestDocument.strip():
-        raise HTTPException(status_code=400, detail="Nomor Nota Dinas (ND) wajib diisi sebagai dasar Memo")
-    if body.consignmentDestination and body.documentType != "MEMO":
-        raise HTTPException(status_code=400, detail="Stok Gudang Bazar/E-commerce harus dicatat menggunakan Memo/ND")
+    if body.consignmentDestination and body.documentType not in {"MEMO", "ND"}:
+        raise HTTPException(status_code=400, detail="Stok Gudang Bazar/E-commerce harus dicatat menggunakan Memo atau ND")
     if body.consignmentDestination and body.consignmentDestination not in {"Gudang Bazar", "Gudang E-commerce"}:
         raise HTTPException(status_code=400, detail="Tujuan konsinyasi tidak valid")
     for ref in refs:
@@ -167,7 +165,7 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         if not product:
             raise HTTPException(status_code=404, detail="Produk pengeluaran tidak ditemukan")
         _validate_pack_qty(product, qty)
-        if body.documentType == "MEMO" and body.consignmentDestination:
+        if body.documentType in {"MEMO", "ND"} and body.consignmentDestination:
             if float(product.get("weight", 0) or 0) <= 0:
                 raise HTTPException(status_code=400, detail=f"Berat per pack/pcs {product.get('name', '')} wajib diisi sebelum dikirim ke Bazar/E-commerce")
             if not product.get("secondary") or float(product.get("secondaryQty", 0) or 0) <= 0:
@@ -249,7 +247,7 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         "document_type": body.documentType,
         "transfer_scope": body.transferScope if body.documentType == "TM" else "",
         "request_document": body.requestDocument.strip(),
-        "memo_purpose": body.memoPurpose if body.documentType == "MEMO" else "",
+        "dispatch_purpose": body.dispatchPurpose if body.documentType in {"MEMO", "ND"} else "",
         "consignment_destination": body.consignmentDestination.strip(),
         "consignment_zone": body.consignmentZone.strip(),
         "document_links": [],
@@ -430,7 +428,7 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
                 "completed_by": user.get("name", ""),
                 "surat_jalan_id": sj_id,
                 "surat_jalan_no": sj_no,
-                "document_status": "Menunggu CR/SO" if load.get("document_type") == "CT" else "Menunggu SO/Retur" if load.get("document_type") == "MEMO" else "Selesai",
+                "document_status": "Menunggu CR/SO" if load.get("document_type") == "CT" else "Menunggu SO/Retur" if load.get("document_type") in {"MEMO", "ND"} else "Selesai",
             }},
         )
 
@@ -464,8 +462,8 @@ def _linked_totals(load: dict, product_id: str) -> tuple[float, float]:
 @router.post("/outbound-loads/{load_id}/return")
 async def create_consignment_return(load_id: str, body: ConsignmentReturnInput, user: dict = Depends(require_write)):
     load = await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
-    if not load or load.get("document_type") not in {"CT", "MEMO"} or load.get("status") != "Selesai":
-        raise HTTPException(status_code=400, detail="Pengembalian hanya dapat dibuat dari CT atau Memo yang sudah selesai dimuat")
+    if not load or load.get("document_type") not in {"CT", "MEMO", "ND"} or load.get("status") != "Selesai":
+        raise HTTPException(status_code=400, detail="Pengembalian hanya dapat dibuat dari CT, Memo, atau ND yang sudah selesai dimuat")
     expected_return = "CR" if load.get("document_type") == "CT" else "RETUR"
     if body.returnType != expected_return:
         raise HTTPException(status_code=400, detail=f"Dokumen {load.get('document_type')} harus menggunakan {expected_return}")
@@ -527,8 +525,8 @@ async def create_consignment_return(load_id: str, body: ConsignmentReturnInput, 
 @router.post("/outbound-loads/{load_id}/settle")
 async def settle_outbound_document(load_id: str, body: SettlementInput, user: dict = Depends(require_write)):
     load = await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
-    if not load or load.get("document_type") not in {"CT", "MEMO"} or load.get("status") != "Selesai":
-        raise HTTPException(status_code=400, detail="SO lanjutan hanya dapat dibuat dari CT atau Memo yang selesai")
+    if not load or load.get("document_type") not in {"CT", "MEMO", "ND"} or load.get("status") != "Selesai":
+        raise HTTPException(status_code=400, detail="SO lanjutan hanya dapat dibuat dari CT, Memo, atau ND yang selesai")
     document_no = body.documentNo.strip()
     if not document_no.upper().startswith("SO/"):
         raise HTTPException(status_code=400, detail="Nomor penyelesaian harus berupa dokumen SO")

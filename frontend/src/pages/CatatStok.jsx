@@ -26,8 +26,7 @@ const CatatStok = () => {
   const [documentType, setDocumentType] = useState('SO');
   const [transferScope, setTransferScope] = useState('');
   const [documentRefs, setDocumentRefs] = useState(['']);
-  const [requestDocument, setRequestDocument] = useState('');
-  const [memoPurpose, setMemoPurpose] = useState('LAINNYA');
+  const [dispatchPurpose, setDispatchPurpose] = useState('LAINNYA');
   const [consignmentDestination, setConsignmentDestination] = useState('');
   const [consignmentZone, setConsignmentZone] = useState('');
   const [saving, setSaving] = useState(false);
@@ -51,8 +50,7 @@ const CatatStok = () => {
     setDocumentType('SO');
     setTransferScope('');
     setDocumentRefs(['']);
-    setRequestDocument('');
-    setMemoPurpose('LAINNYA');
+    setDispatchPurpose('LAINNYA');
     setConsignmentDestination('');
     setConsignmentZone('');
   };
@@ -133,12 +131,8 @@ const CatatStok = () => {
       toast.error('Lengkapi semua nomor SO/CT/TM/Memo dan pilih dokumen pada setiap komoditas');
       return;
     }
-    if (type === 'KELUAR' && documentType === 'MEMO' && consignmentDestination && !consignmentZone) {
+    if (type === 'KELUAR' && ['MEMO', 'ND'].includes(documentType) && consignmentDestination && !consignmentZone) {
       toast.error('Pilih zona konsinyasi Unit 18 untuk Gudang E-commerce/Bazar');
-      return;
-    }
-    if (type === 'KELUAR' && documentType === 'MEMO' && !requestDocument.trim()) {
-      toast.error('Nomor Nota Dinas (ND) wajib diisi sebagai dasar Memo');
       return;
     }
 
@@ -180,8 +174,7 @@ const CatatStok = () => {
           documentType,
           transferScope,
           documents: documentRefs.filter(Boolean),
-          requestDocument,
-          memoPurpose,
+          dispatchPurpose,
           consignmentDestination,
           consignmentZone,
         });
@@ -233,10 +226,10 @@ const CatatStok = () => {
 
           {type === 'KELUAR' && (
             <div className="mb-5 p-4 rounded-xl border border-[#5a3b15] bg-[#1a1208]">
-              <div className="flex gap-3"><Truck size={18} className="text-[#f59e0b] shrink-0 mt-0.5" /><div><div className="text-sm font-semibold text-[#fbbf24]">Tahap Persiapan Pemuatan</div><p className="text-xs text-[#a99675] mt-1">CT dapat dilanjutkan menjadi CR/SO. Memo selalu berbasis Nota Dinas (ND) dan dapat dipakai untuk Bazar, E-commerce, peminjaman, maupun keperluan lain.</p></div></div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4"><div><label className="text-xs text-[#a99675] block mb-1">Jenis Dokumen</label><select value={documentType} onChange={(e) => { setDocumentType(e.target.value); if (e.target.value !== 'TM') setTransferScope(''); }} className="w-full bg-[#0b0f17] border border-[#59431f] rounded-lg px-3 py-2.5 text-sm"><option value="SO">SO — Penjualan</option><option value="TM">TM — Transfer Move</option><option value="CT">CT — Konsinyasi</option><option value="MEMO">Memo — Berbasis Nota Dinas</option></select></div>{documentType === 'TM' && <div><label className="text-xs text-[#a99675] block mb-1">Cakupan Transfer</label><select value={transferScope} onChange={(e) => setTransferScope(e.target.value)} className="w-full bg-[#0b0f17] border border-[#59431f] rounded-lg px-3 py-2.5 text-sm"><option value="">Pilih cakupan...</option><option value="LOKAL">Antar Gudang Lokal</option><option value="REGIONAL">Regional</option><option value="NASIONAL">Nasional</option></select></div>}</div>
+              <div className="flex gap-3"><Truck size={18} className="text-[#f59e0b] shrink-0 mt-0.5" /><div><div className="text-sm font-semibold text-[#fbbf24]">Tahap Persiapan Pemuatan</div><p className="text-xs text-[#a99675] mt-1">ND dan Memo adalah jalur dokumen yang terpisah. Keduanya dapat digunakan untuk Bazar, E-commerce, peminjaman, atau keperluan lain.</p></div></div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4"><div><label className="text-xs text-[#a99675] block mb-1">Jenis Dokumen</label><select value={documentType} onChange={(e) => { const next = e.target.value; setDocumentType(next); if (next !== 'TM') setTransferScope(''); if (!['MEMO', 'ND'].includes(next)) { setConsignmentDestination(''); setConsignmentZone(''); setDispatchPurpose('LAINNYA'); } }} className="w-full bg-[#0b0f17] border border-[#59431f] rounded-lg px-3 py-2.5 text-sm"><option value="SO">SO — Penjualan</option><option value="TM">TM — Transfer Move</option><option value="CT">CT — Konsinyasi</option><option value="ND">ND — Nota Dinas</option><option value="MEMO">Memo — Pengeluaran Memo</option></select></div>{documentType === 'TM' && <div><label className="text-xs text-[#a99675] block mb-1">Cakupan Transfer</label><select value={transferScope} onChange={(e) => setTransferScope(e.target.value)} className="w-full bg-[#0b0f17] border border-[#59431f] rounded-lg px-3 py-2.5 text-sm"><option value="">Pilih cakupan...</option><option value="LOKAL">Antar Gudang Lokal</option><option value="REGIONAL">Regional</option><option value="NASIONAL">Nasional</option></select></div>}</div>
               <div className="mt-3"><div className="flex items-center justify-between mb-1"><label className="text-xs text-[#a99675]">Nomor Dokumen (satu kendaraan dapat membawa beberapa dokumen)</label><button type="button" onClick={() => setDocumentRefs((prev) => [...prev, ''])} className="text-xs text-[#60a5fa]">+ Tambah dokumen</button></div>{documentRefs.map((doc, index) => <div key={index} className="flex gap-2 mt-2"><input value={doc} onChange={(e) => { const next = [...documentRefs]; next[index] = e.target.value; setDocumentRefs(next); }} placeholder={documentType === 'SO' ? 'SO/xxxx/mm/09001' : `${documentType}/...`} className="flex-1 bg-[#0b0f17] border border-[#59431f] rounded-lg px-3 py-2.5 text-sm" />{documentRefs.length > 1 && <button type="button" onClick={() => setDocumentRefs((prev) => prev.filter((_, i) => i !== index))} className="px-3 rounded-lg border border-[#59431f] text-[#f59e0b]">×</button>}</div>)}</div>
-              {documentType === 'MEMO' && <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3 rounded-lg border border-[#1f3657] bg-[#0d1728] p-3"><div><label className="text-xs text-[#93c5fd] block mb-1">Keperluan Memo</label><select value={memoPurpose} onChange={(e) => { const purpose = e.target.value; const destination = purpose === 'BAZAR' ? 'Gudang Bazar' : purpose === 'ECOMMERCE' ? 'Gudang E-commerce' : ''; setMemoPurpose(purpose); setConsignmentDestination(destination); setConsignmentZone(''); if (destination) setParty(destination); }} className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm"><option value="BAZAR">Gudang Bazar</option><option value="ECOMMERCE">Gudang E-commerce</option><option value="PEMINJAMAN">Peminjaman</option><option value="LAINNYA">Keperluan lain</option></select></div><div><label className="text-xs text-[#93c5fd] block mb-1">Zona Unit 18</label><select value={consignmentZone} onChange={(e) => setConsignmentZone(e.target.value)} disabled={!consignmentDestination} className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm disabled:opacity-50"><option value="">{consignmentDestination ? 'Pilih zona...' : 'Tidak diperlukan'}</option>{CONSIGNMENT_ZONES.map((zone) => <option key={zone}>{zone}</option>)}</select></div><div><label className="text-xs text-[#93c5fd] block mb-1">Dasar Nota Dinas <span className="text-[#fbbf24]">*</span></label><input value={requestDocument} onChange={(e) => setRequestDocument(e.target.value)} placeholder="ND/..." className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm" /></div><p className="sm:col-span-3 text-[11px] text-[#8fb8ef]">Memo berlaku untuk berbagai keperluan. Bila tujuannya Bazar/E-commerce, saldo dipisahkan sebagai stok Unit 18 dan kemudian dapat ditautkan ke SO.</p></div>}
+              {['MEMO', 'ND'].includes(documentType) && <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-lg border border-[#1f3657] bg-[#0d1728] p-3"><div><label className="text-xs text-[#93c5fd] block mb-1">Keperluan {documentType}</label><select value={dispatchPurpose} onChange={(e) => { const purpose = e.target.value; const destination = purpose === 'BAZAR' ? 'Gudang Bazar' : purpose === 'ECOMMERCE' ? 'Gudang E-commerce' : ''; setDispatchPurpose(purpose); setConsignmentDestination(destination); setConsignmentZone(''); if (destination) setParty(destination); }} className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm"><option value="BAZAR">Gudang Bazar</option><option value="ECOMMERCE">Gudang E-commerce</option><option value="PEMINJAMAN">Peminjaman</option><option value="LAINNYA">Keperluan lain</option></select></div><div><label className="text-xs text-[#93c5fd] block mb-1">Zona Unit 18</label><select value={consignmentZone} onChange={(e) => setConsignmentZone(e.target.value)} disabled={!consignmentDestination} className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm disabled:opacity-50"><option value="">{consignmentDestination ? 'Pilih zona...' : 'Tidak diperlukan'}</option>{CONSIGNMENT_ZONES.map((zone) => <option key={zone}>{zone}</option>)}</select></div><p className="sm:col-span-2 text-[11px] text-[#8fb8ef]">{documentType} berdiri sendiri. Bila tujuannya Bazar/E-commerce, saldo dipisahkan sebagai stok Unit 18 dan kemudian dapat ditautkan ke SO atau Retur.</p></div>}
             </div>
           )}
 

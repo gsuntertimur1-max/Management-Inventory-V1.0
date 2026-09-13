@@ -52,7 +52,7 @@ def _settled_qty(load: dict, product_id: str) -> float:
 
 
 async def consignment_stock(destination: str = "") -> list[dict]:
-    query = {"document_type": "MEMO", "status": "Selesai", "consignment_destination": {"$in": list(DESTINATIONS)}}
+    query = {"document_type": {"$in": ["MEMO", "ND"]}, "status": "Selesai", "consignment_destination": {"$in": list(DESTINATIONS)}}
     if destination:
         if destination not in DESTINATIONS:
             raise HTTPException(status_code=400, detail="Lokasi konsinyasi tidak valid")
