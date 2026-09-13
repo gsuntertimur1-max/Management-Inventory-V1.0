@@ -448,6 +448,33 @@ class CategorySetting(BaseModel):
     active: bool = True
 
 
+class WarehouseZoneSetting(BaseModel):
+    code: str
+    count: int = Field(ge=1, le=99)
+
+
+class WarehouseSetting(BaseModel):
+    code: str
+    name: str
+    type: Literal['GBB', 'MP'] = 'GBB'
+    length: float = Field(gt=0, le=10000)
+    width: float = Field(gt=0, le=10000)
+    zones: List[WarehouseZoneSetting] = Field(min_length=1, max_length=8)
+    active: bool = True
+
+
+def default_warehouses() -> list[dict]:
+    return [
+        *[
+            {"code": str(unit), "name": f"GBB {unit}", "type": "GBB", "length": 50, "width": 30,
+             "zones": [{"code": "A", "count": 4}, {"code": "B", "count": 4}, {"code": "C", "count": 4}], "active": True}
+            for unit in range(17, 25)
+        ],
+        {"code": "MP1", "name": "MP1", "type": "MP", "length": 230, "width": 30,
+         "zones": [{"code": "A", "count": 8}, {"code": "B", "count": 8}], "active": True},
+    ]
+
+
 class SettingsBody(BaseModel):
     warehouse: str = 'Gudang Sunter Timur I & II'
     address: str = 'Jl. Sunter Agung, Jakarta Utara'
@@ -456,6 +483,7 @@ class SettingsBody(BaseModel):
     lowAlert: bool = True
     expAlert: bool = True
     autoQueue: bool = True
+    warehouses: List[WarehouseSetting] = Field(default_factory=default_warehouses, max_length=50)
 
 
 DEFAULT_SETTINGS = SettingsBody().model_dump()
@@ -615,6 +643,37 @@ async def update_settings(body: SettingsBody, admin: dict = Depends(require_admi
     if missing:
         raise HTTPException(status_code=400, detail=f"Kategori masih dipakai produk dan tidak dapat dihapus: {', '.join(sorted(missing))}")
     payload["categories"] = normalized_categories
+    normalized_warehouses = []
+    warehouse_codes, stack_codes = set(), set()
+    for item in payload.get("warehouses", []):
+        code = str(item.get("code", "")).strip().upper()
+        name = str(item.get("name", "")).strip()
+        if not code or not code.replace("-", "").isalnum() or "/" in code:
+            raise HTTPException(status_code=400, detail="Kode gudang hanya boleh huruf, angka, atau tanda hubung")
+        if not name:
+            raise HTTPException(status_code=400, detail=f"Nama gudang {code or '-'} wajib diisi")
+        if code in warehouse_codes:
+            raise HTTPException(status_code=400, detail=f"Kode gudang {code} tercatat lebih dari sekali")
+        zones, zone_codes = [], set()
+        for zone in item.get("zones", []):
+            zone_code = str(zone.get("code", "")).strip().upper()
+            count = int(zone.get("count", 0) or 0)
+            if not zone_code.isalpha() or len(zone_code) > 3 or zone_code in zone_codes:
+                raise HTTPException(status_code=400, detail=f"Zona pada {code} tidak valid atau ganda")
+            if count < 1 or count > 99:
+                raise HTTPException(status_code=400, detail=f"Jumlah tumpukan zona {zone_code} pada {code} harus 1–99")
+            zone_codes.add(zone_code)
+            zones.append({"code": zone_code, "count": count})
+            stack_codes.update({f"{code}/{zone_code}{number:02d}" for number in range(1, count + 1)})
+        if not zones:
+            raise HTTPException(status_code=400, detail=f"Gudang {code} harus memiliki minimal satu zona")
+        warehouse_codes.add(code)
+        normalized_warehouses.append({"code": code, "name": name, "type": item.get("type", "GBB"), "length": float(item.get("length", 0)), "width": float(item.get("width", 0)), "zones": zones, "active": bool(item.get("active", True))})
+    used_stacks = set(await db.stack_allocations.distinct("stackCode")) | {str(x) for x in await db.products.distinct("location", {"location": {"$ne": ""}})}
+    unavailable = sorted(code for code in used_stacks if "/" in code and code not in stack_codes)
+    if unavailable:
+        raise HTTPException(status_code=400, detail=f"Tidak dapat menghapus atau mengurangi tumpukan yang sudah dipakai: {', '.join(unavailable[:5])}{'…' if len(unavailable) > 5 else ''}")
+    payload["warehouses"] = normalized_warehouses
     payload["updated_at"] = now_iso()
     payload["updated_by"] = admin["name"]
     await db.settings.update_one({"_id": "app"}, {"$set": payload}, upsert=True)

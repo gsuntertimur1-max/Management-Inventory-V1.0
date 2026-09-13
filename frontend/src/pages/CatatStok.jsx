@@ -6,14 +6,15 @@ import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 import { packagingText, quantityFromInput, quantityIsValid, totalWeight } from '../lib/packaging';
 import { downloadApiFile } from '../lib/api';
+import { stackCodes } from '../lib/warehouses';
 
-const STACKS = [...Array.from({ length: 8 }, (_, i) => String(i + 17)).flatMap((unit) => ['A', 'B', 'C'].flatMap((zone) => Array.from({ length: 4 }, (_, i) => `${unit}/${zone}${String(i + 1).padStart(2, '0')}`))), ...['A', 'B'].flatMap((zone) => Array.from({ length: 8 }, (_, i) => `MP1/${zone}${String(i + 1).padStart(2, '0')}`))];
 const CONSIGNMENT_DESTINATIONS = ['Gudang E-commerce', 'Gudang Bazar'];
 const CONSIGNMENT_ZONES = ['18/A01', '18/A02', '18/A03', '18/A04', '18/B01 (½)', '18/B02 (½)', '18/B03 (½)', '18/B04 (½)'];
 const emptyRow = () => ({ productId: '', inputMode: 'QTY', inputValue: 1, qty: 1, exp: '', stackCode: '', documentNo: '' });
 
 const CatatStok = () => {
-  const { products, suppliers, purchaseOrders, addReceipt, createOutboundLoad, canInbound, canOutbound } = useData();
+  const { products, suppliers, purchaseOrders, settings, addReceipt, createOutboundLoad, canInbound, canOutbound } = useData();
+  const STACKS = stackCodes(settings?.warehouses);
   const navigate = useNavigate();
   const [type, setType] = useState(canOutbound ? 'KELUAR' : 'MASUK');
   const [rows, setRows] = useState([emptyRow()]);
