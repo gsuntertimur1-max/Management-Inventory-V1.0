@@ -33,6 +33,8 @@ const CatatStok = () => {
   const [saving, setSaving] = useState(false);
   const [weighingForm, setWeighingForm] = useState(false);
   const [grossWeight, setGrossWeight] = useState('');
+  const [grossMin, setGrossMin] = useState('');
+  const [grossMax, setGrossMax] = useState('');
 
   const activePOs = useMemo(
     () => purchaseOrders.filter((po) => po.status !== 'Selesai' && po.status !== 'Diterima'),
@@ -58,6 +60,8 @@ const CatatStok = () => {
     setConsignmentZone('');
     setWeighingForm(false);
     setGrossWeight('');
+    setGrossMin('');
+    setGrossMax('');
   };
 
   const chooseType = (nextType) => {
@@ -128,8 +132,12 @@ const CatatStok = () => {
       toast.error('Berat harus menghasilkan jumlah kemasan primer/pack yang utuh');
       return;
     }
-    if (weighingForm && Number(grossWeight) <= 0) {
-      toast.error('Isi bruto timbangan untuk membuat form timbangan');
+    if (weighingForm && (Number(grossWeight) <= 0 || Number(grossMin) <= 0 || Number(grossMax) <= 0)) {
+      toast.error('Isi rata-rata bruto serta rentang timbang');
+      return;
+    }
+    if (weighingForm && (Number(grossWeight) < Number(grossMin) || Number(grossWeight) > Number(grossMax))) {
+      toast.error('Rata-rata bruto harus berada di dalam rentang timbang');
       return;
     }
     if (!party.trim()) {
@@ -169,6 +177,8 @@ const CatatStok = () => {
           keterangan: ket,
           weighingForm,
           grossWeight: Number(grossWeight || 0),
+          grossMin: Number(grossMin || 0),
+          grossMax: Number(grossMax || 0),
         });
         const poStatus = result?.purchaseOrder?.status;
         toast.success(poStatus ? `Penerimaan tersimpan · Status PO: ${poStatus}` : 'Stok masuk tersimpan');
@@ -191,6 +201,8 @@ const CatatStok = () => {
           consignmentZone,
           weighingForm,
           grossWeight: Number(grossWeight || 0),
+          grossMin: Number(grossMin || 0),
+          grossMax: Number(grossMax || 0),
         });
         toast.success(`Antrian ${load.antrian} dibuat. Stok belum berkurang sampai pemuatan selesai.`);
         if (weighingForm) await downloadApiFile(`/export/weighing-form/outbound/${load.id}.pdf`, `form_timbangan_keluar_${load.antrian}.pdf`);
@@ -250,7 +262,7 @@ const CatatStok = () => {
 
           <div className="mb-5 rounded-xl border border-[#294263] bg-[#0d1728] p-4">
             <label className="flex items-center gap-3 cursor-pointer"><input type="checkbox" checked={weighingForm} onChange={(e) => setWeighingForm(e.target.checked)} className="h-4 w-4 accent-[#2563eb]" /><span><span className="text-sm font-semibold">Buat form timbangan</span><span className="block text-xs text-[#8fb8ef] mt-0.5">Opsional. Sistem mengisi 20 baris bruto dari satu nilai awal.</span></span></label>
-            {weighingForm && <div className="mt-3 max-w-xs"><label className="text-xs text-[#93c5fd] block mb-1">Bruto timbangan awal (kg)</label><input type="number" min="0.01" step="0.01" value={grossWeight} onChange={(e) => setGrossWeight(e.target.value)} placeholder="Contoh: 12.50" className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm font-mono" /></div>}
+            {weighingForm && <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3"><div><label className="text-xs text-[#93c5fd] block mb-1">Rata-rata bruto (kg)</label><input type="number" min="0.01" step="0.01" value={grossWeight} onChange={(e) => setGrossWeight(e.target.value)} placeholder="40.22" className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm font-mono" /></div><div><label className="text-xs text-[#93c5fd] block mb-1">Bruto minimum (kg)</label><input type="number" min="0.01" step="0.01" value={grossMin} onChange={(e) => setGrossMin(e.target.value)} placeholder="40.20" className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm font-mono" /></div><div><label className="text-xs text-[#93c5fd] block mb-1">Bruto maksimum (kg)</label><input type="number" min="0.01" step="0.01" value={grossMax} onChange={(e) => setGrossMax(e.target.value)} placeholder="40.32" className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm font-mono" /></div><p className="sm:col-span-3 text-[11px] text-[#8fb8ef]">20 bruto dibuat bervariasi di dalam rentang. Rata-ratanya tetap tepat sesuai nilai target.</p></div>}
           </div>
 
           <label className="text-sm font-medium mb-2 block">Daftar Barang</label>

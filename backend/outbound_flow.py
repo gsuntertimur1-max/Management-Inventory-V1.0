@@ -1,5 +1,6 @@
 from collections import defaultdict
 import re
+import random
 from typing import List, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -52,6 +53,8 @@ class OutboundCreateInput(BaseModel):
     consignmentZone: str = ""
     weighingForm: bool = False
     grossWeight: float = Field(default=0, ge=0)
+    grossMin: float = Field(default=0, ge=0)
+    grossMax: float = Field(default=0, ge=0)
 
 
 class ReturnPlacementInput(BaseModel):
@@ -83,6 +86,19 @@ class SettlementInput(BaseModel):
     documentNo: str
     items: List[SettlementItemInput] = Field(min_length=1)
     note: str = ""
+
+
+def _weighing_entries(average: float, minimum: float, maximum: float) -> list[dict]:
+    target = round(average * 100)
+    low, high = round(minimum * 100), round(maximum * 100)
+    spread = min(target - low, high - target)
+    chooser = random.SystemRandom()
+    values = []
+    for _ in range(10):
+        delta = chooser.randint(0, spread)
+        values.extend([target - delta, target + delta])
+    chooser.shuffle(values)
+    return [{"no": index, "gross": value / 100} for index, value in enumerate(values, 1)]
 
 
 async def _reserved_qty(product_id: str, kondisi: str, exclude_id: str = "") -> float:
@@ -133,8 +149,10 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
     party = body.party.strip()
     if not party:
         raise HTTPException(status_code=400, detail="Penerima barang wajib diisi")
-    if body.weighingForm and body.grossWeight <= 0:
-        raise HTTPException(status_code=400, detail="Bruto timbangan harus diisi untuk membuat form timbangan")
+    if body.weighingForm and (body.grossWeight <= 0 or body.grossMin <= 0 or body.grossMax <= 0):
+        raise HTTPException(status_code=400, detail="Rata-rata bruto serta rentang timbang harus diisi")
+    if body.weighingForm and not body.grossMin <= body.grossWeight <= body.grossMax:
+        raise HTTPException(status_code=400, detail="Rata-rata bruto harus berada di dalam rentang timbang")
     refs = []
     for candidate in [body.ref, *body.documents]:
         value = str(candidate or "").strip()
@@ -256,7 +274,9 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         "consignment_zone": body.consignmentZone.strip(),
         "weighing_form": body.weighingForm,
         "gross_weight": float(body.grossWeight) if body.weighingForm else 0,
-        "weighing_entries": [{"no": index, "gross": float(body.grossWeight)} for index in range(1, 21)] if body.weighingForm else [],
+        "gross_min": float(body.grossMin) if body.weighingForm else 0,
+        "gross_max": float(body.grossMax) if body.weighingForm else 0,
+        "weighing_entries": _weighing_entries(float(body.grossWeight), float(body.grossMin), float(body.grossMax)) if body.weighingForm else [],
         "document_links": [],
         "document_status": "Menunggu Pemuatan",
         "items": load_items,

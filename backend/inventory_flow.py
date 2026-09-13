@@ -1,5 +1,6 @@
 import csv
 import io
+import random
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import List, Literal
@@ -51,6 +52,8 @@ class ReceiptInput(BaseModel):
     keterangan: str = ""
     weighingForm: bool = False
     grossWeight: float = Field(default=0, ge=0)
+    grossMin: float = Field(default=0, ge=0)
+    grossMax: float = Field(default=0, ge=0)
 
 
 def _number(value, default=0.0) -> float:
@@ -86,6 +89,19 @@ def _validate_pack_qty(product: dict, qty: float) -> None:
             status_code=400,
             detail=f"Jumlah {product.get('name', 'produk')} harus berupa kemasan primer/pack utuh",
         )
+
+
+def _weighing_entries(average: float, minimum: float, maximum: float) -> list[dict]:
+    target = round(average * 100)
+    low, high = round(minimum * 100), round(maximum * 100)
+    spread = min(target - low, high - target)
+    chooser = random.SystemRandom()
+    values = []
+    for _ in range(10):
+        delta = chooser.randint(0, spread)
+        values.extend([target - delta, target + delta])
+    chooser.shuffle(values)
+    return [{"no": index, "gross": value / 100} for index, value in enumerate(values, 1)]
 
 
 def _po_status(items: list[dict]) -> str:
@@ -203,8 +219,10 @@ async def create_purchase_order(body: PurchaseOrderInput, user: dict = Depends(r
 
 @router.post("/receipts")
 async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write)):
-    if body.weighingForm and body.grossWeight <= 0:
-        raise HTTPException(status_code=400, detail="Bruto timbangan harus diisi untuk membuat form timbangan")
+    if body.weighingForm and (body.grossWeight <= 0 or body.grossMin <= 0 or body.grossMax <= 0):
+        raise HTTPException(status_code=400, detail="Rata-rata bruto serta rentang timbang harus diisi")
+    if body.weighingForm and not body.grossMin <= body.grossWeight <= body.grossMax:
+        raise HTTPException(status_code=400, detail="Rata-rata bruto harus berada di dalam rentang timbang")
     po = None
     if body.poId:
         raw_po = await db.purchase_orders.find_one({"id": body.poId}, {"_id": 0})
@@ -305,7 +323,9 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
                 "keterangan": body.keterangan,
                 "weighing_form": body.weighingForm,
                 "gross_weight": float(body.grossWeight) if body.weighingForm else 0,
-                "weighing_entries": [{"no": index, "gross": float(body.grossWeight)} for index in range(1, 21)] if body.weighingForm else [],
+                "gross_min": float(body.grossMin) if body.weighingForm else 0,
+                "gross_max": float(body.grossMax) if body.weighingForm else 0,
+                "weighing_entries": _weighing_entries(float(body.grossWeight), float(body.grossMin), float(body.grossMax)) if body.weighingForm else [],
             })
 
         if txns:
