@@ -50,11 +50,17 @@ class OutboundCreateInput(BaseModel):
     consignmentZone: str = ""
 
 
+class ReturnPlacementInput(BaseModel):
+    goodQty: float = Field(gt=0)
+    stackCode: str
+
+
 class ReturnItemInput(BaseModel):
     productId: str
     goodQty: float = Field(default=0, ge=0)
     damagedQty: float = Field(default=0, ge=0)
     stackCode: str = ""
+    placements: List[ReturnPlacementInput] = Field(default_factory=list, max_length=10)
 
 
 class ConsignmentReturnInput(BaseModel):
@@ -456,7 +462,9 @@ async def create_consignment_return(load_id: str, body: ConsignmentReturnInput, 
             source = original.get(item.productId)
             if not source:
                 raise HTTPException(status_code=400, detail="Produk retur tidak terdapat pada dokumen induk")
-            qty = float(item.goodQty) + float(item.damagedQty)
+            placements = [placement for placement in item.placements if float(placement.goodQty) > 0] or ([ReturnPlacementInput(goodQty=item.goodQty, stackCode=item.stackCode)] if item.goodQty else [])
+            good_qty = sum(float(placement.goodQty) for placement in placements)
+            qty = good_qty + float(item.damagedQty)
             if qty <= 0:
                 continue
             returned, sold = _linked_totals(load, item.productId)
@@ -465,17 +473,18 @@ async def create_consignment_return(load_id: str, body: ConsignmentReturnInput, 
             product = await db.products.find_one({"id": item.productId}, {"_id": 0})
             if not product:
                 raise HTTPException(status_code=404, detail="Produk pengembalian tidak ditemukan")
-            if item.goodQty and item.stackCode.strip().upper() not in VALID_STACK_CODES:
-                raise HTTPException(status_code=400, detail=f"Pilih lokasi tumpukan untuk barang Good {source.get('name', '')}")
-            if item.goodQty:
-                await db.products.update_one({"id": item.productId}, {"$inc": {"stock": float(item.goodQty)}})
-                stock_changes.append((item.productId, "stock", float(item.goodQty)))
-                if item.stackCode.strip():
-                    await allocate_stock_to_stack(product, item.stackCode, float(item.goodQty), user.get("name", ""))
+            if good_qty:
+                for placement in placements:
+                    if placement.stackCode.strip().upper() not in VALID_STACK_CODES:
+                        raise HTTPException(status_code=400, detail=f"Pilih lokasi tumpukan untuk barang Good {source.get('name', '')}")
+                await db.products.update_one({"id": item.productId}, {"$inc": {"stock": good_qty}})
+                stock_changes.append((item.productId, "stock", good_qty))
+                for placement in placements:
+                    await allocate_stock_to_stack(product, placement.stackCode, float(placement.goodQty), user.get("name", ""))
             if item.damagedQty:
                 await db.products.update_one({"id": item.productId}, {"$inc": {"damaged": float(item.damagedQty)}})
                 stock_changes.append((item.productId, "damaged", float(item.damagedQty)))
-            link_items.append({"productId": item.productId, "name": source.get("name", ""), "unit": source.get("unit", ""), "goodQty": float(item.goodQty), "damagedQty": float(item.damagedQty), "stackCode": item.stackCode.strip().upper()})
+            link_items.append({"productId": item.productId, "name": source.get("name", ""), "unit": source.get("unit", ""), "goodQty": good_qty, "damagedQty": float(item.damagedQty), "stackCode": placements[0].stackCode.strip().upper() if len(placements) == 1 else "", "placements": [{"goodQty": float(placement.goodQty), "stackCode": placement.stackCode.strip().upper()} for placement in placements]})
         if not link_items:
             raise HTTPException(status_code=400, detail="Isi jumlah barang yang dikembalikan")
         link = {"id": new_id(), "type": body.returnType, "no": document_no, "time": now_iso(), "items": link_items, "note": body.note.strip(), "operator": user.get("name", "")}

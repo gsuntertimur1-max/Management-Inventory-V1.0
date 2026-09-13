@@ -7,12 +7,14 @@ from backend.server import app
 from backend.inventory_flow import router as inventory_flow_router
 from backend.master_products import router as master_products_router
 from backend.outbound_flow import router as outbound_flow_router
+from backend.consignment import router as consignment_router
 from backend.stack_allocations import router as stack_allocations_router
 from backend.pdf_documents import router as pdf_documents_router
 
 app.include_router(inventory_flow_router)
 app.include_router(master_products_router)
 app.include_router(outbound_flow_router)
+app.include_router(consignment_router)
 app.include_router(stack_allocations_router)
 app.include_router(pdf_documents_router)
 

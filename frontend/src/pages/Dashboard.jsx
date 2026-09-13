@@ -1,8 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Layers, AlertTriangle, Search, ClipboardList, ArrowUpRight, ArrowDownRight, Link2 } from 'lucide-react';
+import { Layers, AlertTriangle, Search, ClipboardList, ArrowUpRight, ArrowDownRight, Link2, Printer } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { formatNum, formatDate } from '../mock';
+import { apiError, downloadApiFile } from '../lib/api';
+import { toast } from 'sonner';
 
 const StatCard = ({ icon: Icon, label, value, sub, color }) => (
   <div className="card-surface stat-card p-5">
@@ -14,7 +16,7 @@ const StatCard = ({ icon: Icon, label, value, sub, color }) => (
 );
 
 const Dashboard = () => {
-  const { products, transactions, outboundLoads, settings } = useData();
+  const { products, transactions, outboundLoads, consignmentStock, settings } = useData();
   const navigate = useNavigate();
   const [q, setQ] = useState('');
 
@@ -54,26 +56,8 @@ const Dashboard = () => {
     .filter((load) => ['CT', 'MEMO'].includes(load.document_type) && load.status === 'Selesai')
     .map((load) => ({ ...load, pendingItems: remainingDocumentItems(load) }))
     .filter((load) => load.pendingItems.length > 0);
-  const consignmentStock = Object.values(outboundLoads
-    .filter((load) => load.document_type === 'CT' && ['Gudang Bazar', 'Gudang E-commerce'].includes(load.consignment_destination) && load.status === 'Selesai')
-    .reduce((result, load) => {
-      remainingDocumentItems(load).forEach((item) => {
-        const key = `${load.consignment_destination}|${item.productId || item.sku}`;
-        const row = result[key] || {
-          sku: item.sku || '—',
-          name: item.name || '—',
-          unit: item.unit || 'pack/pcs',
-          location: load.consignment_destination,
-          qty: 0,
-          weight: 0,
-        };
-        row.qty += Number(item.remaining || 0);
-        row.weight += Number(item.remaining || 0) * Number(item.weight || 0);
-        result[key] = row;
-      });
-      return result;
-    }, {}))
-    .sort((a, b) => a.name.localeCompare(b.name, 'id') || (a.location === 'Gudang Bazar' ? -1 : 1) - (b.location === 'Gudang Bazar' ? -1 : 1));
+  const bazarStock = consignmentStock.filter((item) => item.destination === 'Gudang Bazar');
+  const ecommerceStock = consignmentStock.filter((item) => item.destination === 'Gudang E-commerce');
   const documentAge = (value) => {
     const days = Math.max(0, Math.floor((Date.now() - new Date(value || Date.now()).getTime()) / 86400000));
     return days === 0 ? 'Hari ini' : `${days} hari`;
@@ -85,13 +69,15 @@ const Dashboard = () => {
         <div>
           <div className="label-mono mb-2">Pusat Kendali Gudang</div>
           <h1 className="font-display text-4xl font-bold">Ringkasan Penyimpanan Stok</h1>
-          <p className="text-[#8b93a1] mt-2 max-w-xl">Pantau nilai aset inventori, perputaran barang, dan aktivitas terakhir gudang Anda.</p>
+          <p className="text-[#8b93a1] mt-2 max-w-xl">Pantau stok gudang utama, stok konsinyasi, peringatan operasional, dan aktivitas transaksi terbaru.</p>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <StatCard icon={Layers} label="Total Unit Fisik Stok" value={formatNum(totalUnits)} sub="Kuantitas seluruh gudang" color="#a855f7" />
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <StatCard icon={Layers} label="Stok Gudang Utama" value={formatNum(totalUnits)} sub="Belum termasuk konsinyasi" color="#a855f7" />
         <StatCard icon={AlertTriangle} label="Stok Rusak (Damage)" value={formatNum(totalDamaged)} sub="Unit kondisi rusak" color="#ef4444" />
+        <StatCard icon={Layers} label="Produk Aktif Bazar" value={formatNum(bazarStock.length)} sub="SKU konsinyasi belum SO/CR" color="#f59e0b" />
+        <StatCard icon={Layers} label="Produk Aktif E-commerce" value={formatNum(ecommerceStock.length)} sub="SKU konsinyasi belum SO/CR" color="#0ea5e9" />
       </div>
 
       {(settings?.lowAlert ?? true) && (
@@ -186,14 +172,13 @@ const Dashboard = () => {
         </div>
       </div>
 
-      <div className="card-surface p-6 border border-[#1f3657]">
-        <div className="mb-4">
-          <div className="label-mono text-[10px] text-[#93c5fd]">Konsinyasi Unit 18</div>
-          <h2 className="font-display text-xl font-bold mt-1">Total Produk Gudang Bazar & E-commerce</h2>
-          <p className="text-sm text-[#8b93a1] mt-1">Akumulasi stok CT yang belum diselesaikan melalui CR atau SO. Nomor tumpukan tidak ditampilkan.</p>
-        </div>
-        {consignmentStock.length === 0 ? <p className="text-sm text-[#8b93a1]">Belum ada stok konsinyasi aktif di Gudang Bazar atau Gudang E-commerce.</p> : <div className="overflow-x-auto"><table className="w-full text-sm tbl"><thead><tr className="text-left border-b border-[#1a222e]"><th className="py-2.5 pr-4">SKU</th><th className="py-2.5 pr-4">Nama Komoditi</th><th className="py-2.5 pr-4">Kuantum (pack/pcs)</th><th className="py-2.5 pr-4">Kuantum (berat)</th><th className="py-2.5">Lokasi</th></tr></thead><tbody>{consignmentStock.map((item) => <tr key={`${item.location}-${item.sku}`} className="tbl-row border-b border-[#131a24]"><td className="py-3 pr-4 font-mono text-xs text-[#93c5fd]">{item.sku}</td><td className="py-3 pr-4 font-medium">{item.name}</td><td className="py-3 pr-4 font-mono">{formatNum(item.qty)} {item.unit}</td><td className="py-3 pr-4 font-mono">{item.weight > 0 ? `${formatNum(item.weight)} kg` : '—'}</td><td className="py-3 font-medium">{item.location === 'Gudang Bazar' ? 'Bazar' : 'E-commerce'}</td></tr>)}</tbody></table></div>}
-      </div>
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">{[
+        { destination: 'Gudang Bazar', title: 'Kartu Stok Gudang Bazar', rows: bazarStock, color: '#f59e0b' },
+        { destination: 'Gudang E-commerce', title: 'Kartu Stok Gudang E-commerce', rows: ecommerceStock, color: '#0ea5e9' },
+      ].map(({ destination, title, rows, color }) => <div key={destination} className="card-surface p-6 border border-[#1f3657]">
+        <div className="flex flex-wrap items-start justify-between gap-3 mb-4"><div><div className="label-mono text-[10px]" style={{ color }}>Konsinyasi Unit 18</div><h2 className="font-display text-xl font-bold mt-1">{title}</h2><p className="text-sm text-[#8b93a1] mt-1">Saldo CT dikurangi SO serta CR/Retur. ND/Memo digabung sebagai dasar catatan.</p></div><button onClick={() => downloadApiFile(`/export/consignment-stock-card.pdf?destination=${encodeURIComponent(destination)}`, `kartu_stok_${destination.replaceAll(' ', '_')}.pdf`).catch((e) => toast.error(apiError(e)))} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#294263] text-xs text-[#93c5fd]"><Printer size={14} /> Download kartu</button></div>
+        {rows.length === 0 ? <p className="text-sm text-[#8b93a1]">Belum ada stok konsinyasi aktif.</p> : <div className="overflow-x-auto"><table className="w-full text-sm tbl"><thead><tr className="text-left border-b border-[#1a222e]"><th className="py-2.5 pr-3">SKU</th><th className="py-2.5 pr-3">Nama Komoditi</th><th className="py-2.5 pr-3">Pack/pcs</th><th className="py-2.5 pr-3">Berat</th><th className="py-2.5">ND/Memo</th></tr></thead><tbody>{rows.map((item) => <tr key={item.productId} className="tbl-row border-b border-[#131a24]"><td className="py-3 pr-3 font-mono text-xs text-[#93c5fd]">{item.sku || '—'}</td><td className="py-3 pr-3 font-medium">{item.name}</td><td className="py-3 pr-3 font-mono whitespace-nowrap">{formatNum(item.qty)} {item.unit}</td><td className="py-3 pr-3 font-mono whitespace-nowrap">{item.weight > 0 ? `${formatNum(item.totalWeight)} kg` : '—'}</td><td className="py-3 text-xs text-[#8b93a1]">{item.requestDocuments?.join(', ') || '—'}</td></tr>)}</tbody></table></div>}
+      </div>)}</div>
 
       <div className="card-surface p-6">
         <h2 className="font-display text-lg font-bold mb-4">Aktivitas Terakhir</h2>

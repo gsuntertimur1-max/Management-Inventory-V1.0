@@ -312,6 +312,7 @@ async def initialize_app():
     await db.user_sessions.create_index("session_token")
     await db.products.create_index("sku")
     await db.stack_allocations.create_index([("productId", 1), ("stackCode", 1)], unique=True)
+    await create_unique_index_safely(db.consignment_layouts, [("destination", 1), ("productId", 1)])
     await db.login_attempts.create_index("identifier")
     await create_unique_index_safely(db.surat_jalan, "no", sparse=True)
     await create_unique_index_safely(db.purchase_orders, "no", sparse=True)

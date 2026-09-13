@@ -25,6 +25,8 @@ const EMPTY = {
   transactions: [],
   stackAllocations: [],
   stackTreatments: [],
+  consignmentStock: [],
+  consignmentLayouts: [],
   settings: DEFAULT_SETTINGS,
 };
 
@@ -35,7 +37,7 @@ export const DataProvider = ({ children }) => {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [p, suppliersRes, sj, loads, po, t, stacks, treatments, settingsRes, usersRes] = await Promise.all([
+      const [p, suppliersRes, sj, loads, po, t, stacks, treatments, consignmentStockRes, consignmentLayoutsRes, settingsRes, usersRes] = await Promise.all([
         api.get('/products'),
         api.get('/suppliers'),
         api.get('/surat-jalan'),
@@ -44,6 +46,8 @@ export const DataProvider = ({ children }) => {
         api.get('/transactions'),
         api.get('/stack-allocations'),
         api.get('/stack-treatments'),
+        api.get('/consignment-stock'),
+        api.get('/consignment-layouts'),
         api.get('/settings'),
         hasPermission(user?.role, 'users') ? api.get('/users') : Promise.resolve({ data: [] }),
       ]);
@@ -57,6 +61,8 @@ export const DataProvider = ({ children }) => {
         transactions: t.data,
         stackAllocations: stacks.data,
         stackTreatments: treatments.data,
+        consignmentStock: consignmentStockRes.data,
+        consignmentLayouts: consignmentLayoutsRes.data,
         settings: { ...DEFAULT_SETTINGS, ...settingsRes.data },
       });
     } catch (e) {
@@ -177,6 +183,7 @@ export const DataProvider = ({ children }) => {
   const updateStackAllocation = async (id, payload) => { await api.put(`/stack-allocations/${id}`, payload); await fetchAll(); };
   const deleteStackAllocation = async (id) => { await api.delete(`/stack-allocations/${id}`); await fetchAll(); };
   const addStackTreatment = async (payload) => { await api.post('/stack-treatments', payload); await fetchAll(); };
+  const saveConsignmentLayout = async (payload) => { await api.put('/consignment-layouts', payload); await fetchAll(); };
 
   return (
     <DataContext.Provider value={{
@@ -197,6 +204,7 @@ export const DataProvider = ({ children }) => {
       addSupplier, addPO, addUser, updateUser, deleteUser, changeUserPassword, updateSettings, resetData, importCsv,
       addStackAllocation, updateStackAllocation, deleteStackAllocation,
       addStackTreatment,
+      saveConsignmentLayout,
     }}>
       {children}
     </DataContext.Provider>
