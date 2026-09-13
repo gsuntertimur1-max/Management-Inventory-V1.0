@@ -15,7 +15,6 @@ const TumpukanStok = () => {
   const { products, stackAllocations, stackTreatments, consignmentStock, consignmentLayouts, consignmentLayoutHistory, canWrite, addStackAllocation, updateStackAllocation, deleteStackAllocation, addStackTreatment, saveConsignmentLayout } = useData();
   const [warehouse, setWarehouse] = useState('17');
   const [selected, setSelected] = useState('17/A01');
-  const [mobileZone, setMobileZone] = useState('A');
   const [modal, setModal] = useState(null);
   const [busy, setBusy] = useState(false);
   const [treatmentModal, setTreatmentModal] = useState(null);
@@ -33,7 +32,7 @@ const TumpukanStok = () => {
   const consignmentSecondary = consignmentModal ? consignmentModal.arrangements.reduce((sum, row) => sum + Number(row.hamparan || 0) * Number(row.kaki || 0) * Number(row.height || 0), 0) + Number(consignmentModal.extraSecondary || 0) : 0;
   const consignmentCalculated = consignmentModal ? consignmentSecondary * Number(consignmentModal.secondaryQty || 0) + Number(consignmentModal.extraPrimary || 0) : 0;
 
-  const chooseWarehouse = (value) => { setWarehouse(value); setSelected(codesFor(value)[0]); setMobileZone('A'); };
+  const chooseWarehouse = (value) => { setWarehouse(value); setSelected(codesFor(value)[0]); };
   const openEdit = (item) => setModal({ mode: 'edit', id: item.id, data: { productId: item.productId, stackCode: item.stackCode, length: item.length || 1, width: item.width || 1, height: item.height || 1, arrangements: item.arrangements?.length ? item.arrangements : [{ hamparan: item.length || 1, kaki: item.width || 1, height: item.height || 1 }], extraSecondary: item.extraSecondary || 0, extraPrimary: item.extraPrimary || item.primaryRemainder || 0, note: item.note || '', originalPrimaryQty: item.primaryQty } });
   const save = async () => {
     if (!modal?.data.productId) return toast.error('Pilih produk terlebih dahulu');
@@ -87,31 +86,13 @@ const TumpukanStok = () => {
     <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_390px] gap-5">
       <section className="card-surface p-4 md:p-5">
         <div className="flex justify-between mb-4"><div><h2 className="font-display text-xl font-bold">{warehouse === 'MP1' ? 'MP1' : `GBB ${warehouse}`}</h2><p className="text-xs text-[#6b7688] mt-1">{warehouse === 'MP1' ? '230 × 30 meter · membentang di antara GBB 17–20 dan GBB 21–24' : '50 × 30 meter · dua posisi pintu'} · Klik tumpukan untuk melihat isinya.</p></div><span className="hidden sm:flex items-center gap-2 text-xs text-[#6b7688]"><DoorOpen size={16} />Pintu depan</span></div>
-        {warehouse !== 'MP1' && <div className="hidden md:block mb-2 rounded-lg border border-dashed border-[#35445b] bg-[#0b0f17] py-2 text-center text-[11px] text-[#8b93a1]">Lorong / jalan keliling GBB · batas antar-tumpukan</div>}
-        <div className="md:hidden">
-          <div className="rounded-xl border border-[#202a38] bg-[#0b0f17] p-3">
-            <div className="flex items-center justify-between gap-3">
-              <div><div className="text-sm font-semibold">Pilih area tumpukan</div><div className="text-[11px] text-[#6b7688] mt-0.5">Peta disederhanakan agar mudah dibaca di HP.</div></div>
-              {warehouse !== 'MP1' && <span className="shrink-0 text-[11px] text-[#6b7688]">A/C 15 m · B 20 m</span>}
-            </div>
-            <div className={`mt-3 grid gap-2 ${warehouse === 'MP1' ? 'grid-cols-2' : 'grid-cols-3'}`}>
-              {zones.slice().reverse().map((zone) => <button key={zone} type="button" onClick={() => setMobileZone(zone)} className={`rounded-lg py-2 text-sm font-bold transition-colors ${mobileZone === zone ? 'bg-[#2563eb] text-white' : 'bg-[#151d28] text-[#8b93a1]'}`}>Tumpukan {zone}</button>)}
-            </div>
-          </div>
-          <div className="mt-3 grid grid-cols-2 gap-3">
-            {codesFor(warehouse).filter((code) => code.includes(`/${mobileZone}`)).map((code) => {
-              const items = grouped[code] || [];
-              const productNames = items.map((item) => item.productName).filter(Boolean);
-              return <button key={code} onClick={() => setSelected(code)} title={productNames.join(', ')} className={`min-h-[124px] rounded-xl border p-3 text-left ${selected === code ? 'border-[#3b82f6] bg-[#102044]' : items.length ? 'border-[#214a3a] bg-[#0d1c19]' : 'border-[#202a38] bg-[#0b0f17]'}`}><div className="flex justify-between gap-2"><span className="font-mono text-sm font-bold">{code}</span><span className={`mt-1 w-2.5 h-2.5 shrink-0 rounded-full ${items.length ? 'bg-[#22c55e]' : 'bg-[#374151]'}`} /></div>{items.length ? <><div className="mt-3 text-xs leading-5 text-[#d9e3ef] line-clamp-2">{productNames[0]}</div>{productNames.length > 1 && <div className="mt-1 text-[10px] text-[#8b93a1]">+ {productNames.length - 1} komoditi lain</div>}</> : <div className="mt-3 text-sm text-[#8b93a1]">Kosong</div>}</button>;
-            })}
-          </div>
-        </div>
-        <div className={`hidden md:grid ${warehouse === 'MP1' ? 'grid-cols-2' : ''} gap-2 md:gap-3`} style={warehouse === 'MP1' ? undefined : { gridTemplateColumns: '3fr 4fr 3fr' }}>{zones.map((zone) => <div key={zone} className="space-y-2 min-w-0"><div className="text-center text-sm font-bold text-[#93c5fd] py-2 rounded-lg bg-[#0d1728]">Tumpukan {zone}{warehouse !== 'MP1' && <span className="ml-1 text-[10px] text-[#6b7688]">· {zone === 'B' ? '20 m' : '15 m'}</span>}</div>{codesFor(warehouse).filter((code) => code.includes(`/${zone}`)).map((code) => {
+        {warehouse !== 'MP1' && <div className="mb-2 rounded-lg border border-dashed border-[#35445b] bg-[#0b0f17] py-2 text-center text-[11px] text-[#8b93a1]">Lorong / jalan keliling GBB · batas antar-tumpukan</div>}
+        <div className={`grid ${warehouse === 'MP1' ? 'grid-cols-2' : ''} gap-2 md:gap-3`} style={warehouse === 'MP1' ? undefined : { gridTemplateColumns: '3fr 4fr 3fr' }}>{zones.map((zone) => <div key={zone} className="space-y-2 min-w-0"><div className="text-center text-sm font-bold text-[#93c5fd] py-2 rounded-lg bg-[#0d1728]">Tumpukan {zone}{warehouse !== 'MP1' && <span className="ml-1 text-[10px] text-[#6b7688]">· {zone === 'B' ? '20 m' : '15 m'}</span>}</div>{codesFor(warehouse).filter((code) => code.includes(`/${zone}`)).map((code) => {
           const items = grouped[code] || [];
           const productNames = items.map((item) => item.productName).filter(Boolean);
           return <button key={code} onClick={() => setSelected(code)} title={productNames.join(', ')} className={`w-full min-h-[100px] p-2.5 rounded-xl border text-left ${selected === code ? 'border-[#3b82f6] bg-[#102044]' : items.length ? 'border-[#214a3a] bg-[#0d1c19]' : 'border-[#202a38] bg-[#0b0f17]'}`}><div className="flex justify-between"><span className="font-mono text-xs md:text-sm font-bold">{code}</span><span className={`w-2 h-2 rounded-full ${items.length ? 'bg-[#22c55e]' : 'bg-[#374151]'}`} /></div>{items.length ? <><div className="mt-3 text-xs leading-5 text-[#d9e3ef] line-clamp-2">{productNames[0]}</div>{productNames.length > 1 && <div className="mt-1 text-[10px] text-[#8b93a1]">+ {productNames.length - 1} komoditi lain</div>}</> : <div className="mt-3 text-xs text-[#8b93a1]">Kosong</div>}</button>;
         })}</div>)}</div>
-        <div className="mt-4 flex justify-center gap-2 border border-dashed border-[#29364a] rounded-lg px-3 py-2.5 text-center text-xs text-[#6b7688]"><DoorOpen size={15} className="shrink-0" />{warehouse === 'MP1' ? 'Pintu utama depan dan belakang · lebar 30 meter' : 'Pintu belakang terhubung menuju MP1'}</div>
+        <div className="mt-4 flex justify-center gap-2 border border-dashed border-[#29364a] rounded-lg py-2.5 text-xs text-[#6b7688]"><DoorOpen size={15} />{warehouse === 'MP1' ? 'Pintu utama depan dan belakang · lebar 30 meter' : 'Pintu belakang terhubung menuju MP1'}</div>
       </section>
 
       <aside className="card-surface p-5 h-fit xl:sticky xl:top-24">
