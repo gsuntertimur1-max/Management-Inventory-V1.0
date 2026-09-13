@@ -239,22 +239,31 @@ def _weighing_form_pdf(title: str, document_no: str, party: str, polisi: str, cr
     c.setFont("Helvetica-Bold", 7); c.drawString(left, y, "PENERIMA / PENGIRIM"); c.drawString(left + 92 * mm, y, "NO. POLISI")
     c.setFont("Helvetica", 8); c.drawString(left, y - 5 * mm, party or "-"); c.drawString(left + 92 * mm, y - 5 * mm, polisi or "-")
     y -= 15 * mm
-    cols = [left, left + 18 * mm, left + 94 * mm, right]
     row_h = 8 * mm
-    c.setFillColor(SOFT_HEADER); c.rect(left, y - row_h, right - left, row_h, fill=1, stroke=1); c.setFillColor(colors.white); c.setFont("Helvetica-Bold", 8)
-    c.drawCentredString((cols[0] + cols[1]) / 2, y - 5.2 * mm, "NO")
-    c.drawCentredString((cols[1] + cols[2]) / 2, y - 5.2 * mm, "BRUTO (KG)")
-    c.drawCentredString((cols[2] + cols[3]) / 2, y - 5.2 * mm, "CATATAN / PARAF")
-    y -= row_h
-    c.setFillColor(colors.black)
-    for index in range(20):
-        entry = entries[index] if index < len(entries) else {"no": index + 1, "gross": 0}
-        c.rect(left, y - row_h, right - left, row_h, fill=0, stroke=1)
-        c.line(cols[1], y, cols[1], y - row_h); c.line(cols[2], y, cols[2], y - row_h)
-        c.setFont("Helvetica", 8); c.drawCentredString((cols[0] + cols[1]) / 2, y - 5.2 * mm, str(entry.get("no", index + 1)))
-        c.drawCentredString((cols[1] + cols[2]) / 2, y - 5.2 * mm, _num(entry.get("gross", 0)))
-        y -= row_h
-    c.setFont("Helvetica", 7); c.drawString(left, 18 * mm, "Bruto dibuat otomatis sebanyak 20 baris dari nilai awal dan dapat dikoreksi sesuai timbang aktual.")
+    gap = 8 * mm
+    half = (right - left - gap) / 2
+    groups = [(left, entries[:10], 1), (left + half + gap, entries[10:20], 11)]
+    for start_x, group_entries, first_no in groups:
+        number_col = start_x + 18 * mm
+        end_x = start_x + half
+        c.setFillColor(SOFT_HEADER); c.rect(start_x, y - row_h, half, row_h, fill=1, stroke=1); c.setFillColor(colors.white); c.setFont("Helvetica-Bold", 8)
+        c.drawCentredString((start_x + number_col) / 2, y - 5.2 * mm, "NO")
+        c.drawCentredString((number_col + end_x) / 2, y - 5.2 * mm, "BRUTO (KG)")
+        for index in range(10):
+            entry = group_entries[index] if index < len(group_entries) else {"no": first_no + index, "gross": 0}
+            row_y = y - row_h * (index + 1)
+            c.setFillColor(colors.black); c.rect(start_x, row_y, half, row_h, fill=0, stroke=1); c.line(number_col, row_y + row_h, number_col, row_y)
+            c.setFont("Helvetica", 8); c.drawCentredString((start_x + number_col) / 2, row_y + 2.8 * mm, str(entry.get("no", first_no + index)))
+            c.drawCentredString((number_col + end_x) / 2, row_y + 2.8 * mm, _num(entry.get("gross", 0)))
+    y -= row_h * 11
+    c.setFont("Helvetica", 7); c.drawString(left, y - 3 * mm, "Bruto dibuat otomatis sebanyak 20 baris dan dapat dikoreksi sesuai timbang aktual.")
+    sign_y = 39 * mm
+    c.setFont("Helvetica", 8); c.drawCentredString(left + 42 * mm, sign_y + 20 * mm, "Pengangkut / Pengambil")
+    c.drawCentredString(right - 42 * mm, sign_y + 20 * mm, "Petugas Gudang")
+    c.line(left + 17 * mm, sign_y, left + 67 * mm, sign_y)
+    c.line(right - 67 * mm, sign_y, right - 17 * mm, sign_y)
+    c.setFont("Helvetica", 7); c.drawCentredString(left + 42 * mm, sign_y - 4 * mm, "Nama dan tanda tangan")
+    c.drawCentredString(right - 42 * mm, sign_y - 4 * mm, "Nama dan tanda tangan")
     c.drawRightString(right, 18 * mm, f"Dicetak: {_date(operational_now().isoformat(), True)}")
     c.save()
     return buffer
