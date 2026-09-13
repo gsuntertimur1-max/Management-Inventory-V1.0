@@ -49,6 +49,8 @@ class ReceiptInput(BaseModel):
     polisi: str = ""
     kondisi: Literal["BAIK", "RUSAK"] = "BAIK"
     keterangan: str = ""
+    weighingForm: bool = False
+    grossWeight: float = Field(default=0, ge=0)
 
 
 def _number(value, default=0.0) -> float:
@@ -201,6 +203,8 @@ async def create_purchase_order(body: PurchaseOrderInput, user: dict = Depends(r
 
 @router.post("/receipts")
 async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write)):
+    if body.weighingForm and body.grossWeight <= 0:
+        raise HTTPException(status_code=400, detail="Bruto timbangan harus diisi untuk membuat form timbangan")
     po = None
     if body.poId:
         raw_po = await db.purchase_orders.find_one({"id": body.poId}, {"_id": 0})
@@ -299,6 +303,9 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
                 "polisi": body.polisi,
                 "operator": user.get("name", ""),
                 "keterangan": body.keterangan,
+                "weighing_form": body.weighingForm,
+                "gross_weight": float(body.grossWeight) if body.weighingForm else 0,
+                "weighing_entries": [{"no": index, "gross": float(body.grossWeight)} for index in range(1, 21)] if body.weighingForm else [],
             })
 
         if txns:
@@ -339,6 +346,7 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
 
     return {
         "transactions": txns,
+        "operationId": operation_id,
         "purchaseOrder": updated_po,
         "message": "Penerimaan stok berhasil disimpan",
     }

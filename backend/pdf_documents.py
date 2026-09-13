@@ -220,3 +220,60 @@ async def export_bon_muat_pdf(load_id: str, user: dict = Depends(get_current_use
     for item in load.get("items",[]): c.setFont("Helvetica-Bold",6.5); c.drawString(5*mm,y,str(item.get("name",""))[:48]); y-=4*mm; c.setFont("Helvetica",6.5); c.drawString(7*mm,y,f"{_num(item.get('qty'))} {item.get('unit','')} | {_num(item.get('berat'))} Kg"); y-=6*mm
     c.setDash(2,2); c.line(4*mm,y,width-4*mm,y); c.setDash(); y-=7*mm; c.setFont("Helvetica-Bold",7); c.drawCentredString(mid,y,"Serahkan bon ini kepada petugas pemuatan"); y-=5*mm; c.setFont("Helvetica",6.5); c.drawCentredString(mid,y,"Terima kasih - GBB Sunter Timur I & II"); c.save()
     return _pdf_response(buffer, f"bon_pemuatan_{load.get('bon_no','')}.pdf")
+
+
+def _weighing_form_pdf(title: str, document_no: str, party: str, polisi: str, created_at: str, entries: list[dict]) -> io.BytesIO:
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+    left, right = 16 * mm, width - 16 * mm
+    if LOGO.exists():
+        c.drawImage(str(LOGO), left, height - 31 * mm, width=38 * mm, height=18 * mm, preserveAspectRatio=True, mask="auto")
+    c.setFont("Helvetica-Bold", 15); c.drawCentredString(width / 2, height - 18 * mm, "FORM TIMBANGAN")
+    c.setFont("Helvetica", 8); c.drawCentredString(width / 2, height - 24 * mm, title)
+    y = height - 42 * mm
+    c.setFillColor(colors.HexColor("#E7EFF3")); c.rect(left, y - 15 * mm, right - left, 15 * mm, fill=1, stroke=0); c.setFillColor(colors.black)
+    c.setFont("Helvetica-Bold", 7); c.drawString(left + 3 * mm, y - 5 * mm, "DOKUMEN"); c.drawString(left + 92 * mm, y - 5 * mm, "TANGGAL")
+    c.setFont("Helvetica", 8); c.drawString(left + 3 * mm, y - 10 * mm, document_no or "-"); c.drawString(left + 92 * mm, y - 10 * mm, _date(created_at, True))
+    y -= 23 * mm
+    c.setFont("Helvetica-Bold", 7); c.drawString(left, y, "PENERIMA / PENGIRIM"); c.drawString(left + 92 * mm, y, "NO. POLISI")
+    c.setFont("Helvetica", 8); c.drawString(left, y - 5 * mm, party or "-"); c.drawString(left + 92 * mm, y - 5 * mm, polisi or "-")
+    y -= 15 * mm
+    cols = [left, left + 18 * mm, left + 94 * mm, right]
+    row_h = 8 * mm
+    c.setFillColor(SOFT_HEADER); c.rect(left, y - row_h, right - left, row_h, fill=1, stroke=1); c.setFillColor(colors.white); c.setFont("Helvetica-Bold", 8)
+    c.drawCentredString((cols[0] + cols[1]) / 2, y - 5.2 * mm, "NO")
+    c.drawCentredString((cols[1] + cols[2]) / 2, y - 5.2 * mm, "BRUTO (KG)")
+    c.drawCentredString((cols[2] + cols[3]) / 2, y - 5.2 * mm, "CATATAN / PARAF")
+    y -= row_h
+    c.setFillColor(colors.black)
+    for index in range(20):
+        entry = entries[index] if index < len(entries) else {"no": index + 1, "gross": 0}
+        c.rect(left, y - row_h, right - left, row_h, fill=0, stroke=1)
+        c.line(cols[1], y, cols[1], y - row_h); c.line(cols[2], y, cols[2], y - row_h)
+        c.setFont("Helvetica", 8); c.drawCentredString((cols[0] + cols[1]) / 2, y - 5.2 * mm, str(entry.get("no", index + 1)))
+        c.drawCentredString((cols[1] + cols[2]) / 2, y - 5.2 * mm, _num(entry.get("gross", 0)))
+        y -= row_h
+    c.setFont("Helvetica", 7); c.drawString(left, 18 * mm, "Bruto dibuat otomatis sebanyak 20 baris dari nilai awal dan dapat dikoreksi sesuai timbang aktual.")
+    c.drawRightString(right, 18 * mm, f"Dicetak: {_date(operational_now().isoformat(), True)}")
+    c.save()
+    return buffer
+
+
+@router.get("/export/weighing-form/outbound/{load_id}.pdf")
+async def export_outbound_weighing_form_pdf(load_id: str, user: dict = Depends(get_current_user)):
+    load = await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
+    if not load or not load.get("weighing_form"):
+        raise HTTPException(status_code=404, detail="Form timbangan pengeluaran tidak tersedia")
+    buffer = _weighing_form_pdf("PENGELUARAN BARANG", ", ".join(load.get("documents") or [load.get("ref", "-")]), load.get("party", ""), load.get("polisi", ""), load.get("created_at", ""), load.get("weighing_entries", []))
+    return _pdf_response(buffer, f"form_timbangan_keluar_{load.get('antrian', load_id)}.pdf")
+
+
+@router.get("/export/weighing-form/inbound/{operation_id}.pdf")
+async def export_inbound_weighing_form_pdf(operation_id: str, user: dict = Depends(get_current_user)):
+    transactions = await db.transactions.find({"operation_id": operation_id, "type": "MASUK"}, {"_id": 0}).to_list(100)
+    if not transactions or not transactions[0].get("weighing_form"):
+        raise HTTPException(status_code=404, detail="Form timbangan pemasukan tidak tersedia")
+    first = transactions[0]
+    buffer = _weighing_form_pdf("PEMASUKAN BARANG", first.get("ref", "-"), first.get("penerima", ""), first.get("polisi", ""), first.get("time", ""), first.get("weighing_entries", []))
+    return _pdf_response(buffer, f"form_timbangan_masuk_{operation_id}.pdf")

@@ -5,6 +5,7 @@ import { formatRp, formatNum } from '../mock';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 import { packagingText, quantityFromInput, quantityIsValid, totalWeight } from '../lib/packaging';
+import { downloadApiFile } from '../lib/api';
 
 const STACKS = [...Array.from({ length: 8 }, (_, i) => String(i + 17)).flatMap((unit) => ['A', 'B', 'C'].flatMap((zone) => Array.from({ length: 4 }, (_, i) => `${unit}/${zone}${String(i + 1).padStart(2, '0')}`))), ...['A', 'B'].flatMap((zone) => Array.from({ length: 8 }, (_, i) => `MP1/${zone}${String(i + 1).padStart(2, '0')}`))];
 const CONSIGNMENT_DESTINATIONS = ['Gudang E-commerce', 'Gudang Bazar'];
@@ -30,6 +31,8 @@ const CatatStok = () => {
   const [consignmentDestination, setConsignmentDestination] = useState('');
   const [consignmentZone, setConsignmentZone] = useState('');
   const [saving, setSaving] = useState(false);
+  const [weighingForm, setWeighingForm] = useState(false);
+  const [grossWeight, setGrossWeight] = useState('');
 
   const activePOs = useMemo(
     () => purchaseOrders.filter((po) => po.status !== 'Selesai' && po.status !== 'Diterima'),
@@ -53,6 +56,8 @@ const CatatStok = () => {
     setDispatchPurpose('LAINNYA');
     setConsignmentDestination('');
     setConsignmentZone('');
+    setWeighingForm(false);
+    setGrossWeight('');
   };
 
   const chooseType = (nextType) => {
@@ -123,6 +128,10 @@ const CatatStok = () => {
       toast.error('Berat harus menghasilkan jumlah kemasan primer/pack yang utuh');
       return;
     }
+    if (weighingForm && Number(grossWeight) <= 0) {
+      toast.error('Isi bruto timbangan untuk membuat form timbangan');
+      return;
+    }
     if (!party.trim()) {
       toast.error(type === 'MASUK' ? 'Pilih supplier pengirim' : 'Isi penerima barang');
       return;
@@ -158,9 +167,12 @@ const CatatStok = () => {
           polisi,
           kondisi,
           keterangan: ket,
+          weighingForm,
+          grossWeight: Number(grossWeight || 0),
         });
         const poStatus = result?.purchaseOrder?.status;
         toast.success(poStatus ? `Penerimaan tersimpan · Status PO: ${poStatus}` : 'Stok masuk tersimpan');
+        if (weighingForm && result?.operationId) await downloadApiFile(`/export/weighing-form/inbound/${result.operationId}.pdf`, `form_timbangan_masuk_${result.operationId}.pdf`);
         navigate('/riwayat');
       } else {
         const load = await createOutboundLoad({
@@ -177,8 +189,11 @@ const CatatStok = () => {
           dispatchPurpose,
           consignmentDestination,
           consignmentZone,
+          weighingForm,
+          grossWeight: Number(grossWeight || 0),
         });
         toast.success(`Antrian ${load.antrian} dibuat. Stok belum berkurang sampai pemuatan selesai.`);
+        if (weighingForm) await downloadApiFile(`/export/weighing-form/outbound/${load.id}.pdf`, `form_timbangan_keluar_${load.antrian}.pdf`);
         navigate('/pengeluaran');
       }
     } catch (e) {
@@ -229,9 +244,14 @@ const CatatStok = () => {
               <div className="flex gap-3"><Truck size={18} className="text-[#f59e0b] shrink-0 mt-0.5" /><div><div className="text-sm font-semibold text-[#fbbf24]">Tahap Persiapan Pemuatan</div><p className="text-xs text-[#a99675] mt-1">ND dan Memo adalah jalur dokumen yang terpisah. Keduanya dapat digunakan untuk Bazar, E-commerce, peminjaman, atau keperluan lain.</p></div></div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4"><div><label className="text-xs text-[#a99675] block mb-1">Jenis Dokumen</label><select value={documentType} onChange={(e) => { const next = e.target.value; setDocumentType(next); if (next !== 'TM') setTransferScope(''); if (!['MEMO', 'ND'].includes(next)) { setConsignmentDestination(''); setConsignmentZone(''); setDispatchPurpose('LAINNYA'); } }} className="w-full bg-[#0b0f17] border border-[#59431f] rounded-lg px-3 py-2.5 text-sm"><option value="SO">SO — Penjualan</option><option value="TM">TM — Transfer Move</option><option value="CT">CT — Konsinyasi</option><option value="ND">ND — Nota Dinas</option><option value="MEMO">Memo — Pengeluaran Memo</option></select></div>{documentType === 'TM' && <div><label className="text-xs text-[#a99675] block mb-1">Cakupan Transfer</label><select value={transferScope} onChange={(e) => setTransferScope(e.target.value)} className="w-full bg-[#0b0f17] border border-[#59431f] rounded-lg px-3 py-2.5 text-sm"><option value="">Pilih cakupan...</option><option value="LOKAL">Antar Gudang Lokal</option><option value="REGIONAL">Regional</option><option value="NASIONAL">Nasional</option></select></div>}</div>
               <div className="mt-3"><div className="flex items-center justify-between mb-1"><label className="text-xs text-[#a99675]">Nomor Dokumen (satu kendaraan dapat membawa beberapa dokumen)</label><button type="button" onClick={() => setDocumentRefs((prev) => [...prev, ''])} className="text-xs text-[#60a5fa]">+ Tambah dokumen</button></div>{documentRefs.map((doc, index) => <div key={index} className="flex gap-2 mt-2"><input value={doc} onChange={(e) => { const next = [...documentRefs]; next[index] = e.target.value; setDocumentRefs(next); }} placeholder={documentType === 'SO' ? 'SO/xxxx/mm/09001' : `${documentType}/...`} className="flex-1 bg-[#0b0f17] border border-[#59431f] rounded-lg px-3 py-2.5 text-sm" />{documentRefs.length > 1 && <button type="button" onClick={() => setDocumentRefs((prev) => prev.filter((_, i) => i !== index))} className="px-3 rounded-lg border border-[#59431f] text-[#f59e0b]">×</button>}</div>)}</div>
-              {['MEMO', 'ND'].includes(documentType) && <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-lg border border-[#1f3657] bg-[#0d1728] p-3"><div><label className="text-xs text-[#93c5fd] block mb-1">Keperluan {documentType}</label><select value={dispatchPurpose} onChange={(e) => { const purpose = e.target.value; const destination = purpose === 'BAZAR' ? 'Gudang Bazar' : purpose === 'ECOMMERCE' ? 'Gudang E-commerce' : ''; setDispatchPurpose(purpose); setConsignmentDestination(destination); setConsignmentZone(''); if (destination) setParty(destination); }} className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm"><option value="BAZAR">Gudang Bazar</option><option value="ECOMMERCE">Gudang E-commerce</option><option value="PEMINJAMAN">Peminjaman</option><option value="LAINNYA">Keperluan lain</option></select></div><div><label className="text-xs text-[#93c5fd] block mb-1">Zona Unit 18</label><select value={consignmentZone} onChange={(e) => setConsignmentZone(e.target.value)} disabled={!consignmentDestination} className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm disabled:opacity-50"><option value="">{consignmentDestination ? 'Pilih zona...' : 'Tidak diperlukan'}</option>{CONSIGNMENT_ZONES.map((zone) => <option key={zone}>{zone}</option>)}</select></div><p className="sm:col-span-2 text-[11px] text-[#8fb8ef]">{documentType} berdiri sendiri. Bila tujuannya Bazar/E-commerce, saldo dipisahkan sebagai stok Unit 18 dan kemudian dapat ditautkan ke SO atau Retur.</p></div>}
+          {['MEMO', 'ND'].includes(documentType) && <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-lg border border-[#1f3657] bg-[#0d1728] p-3"><div><label className="text-xs text-[#93c5fd] block mb-1">Keperluan {documentType}</label><select value={dispatchPurpose} onChange={(e) => { const purpose = e.target.value; const destination = purpose === 'BAZAR' ? 'Gudang Bazar' : purpose === 'ECOMMERCE' ? 'Gudang E-commerce' : ''; setDispatchPurpose(purpose); setConsignmentDestination(destination); setConsignmentZone(''); if (destination) setParty(destination); }} className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm"><option value="BAZAR">Gudang Bazar</option><option value="ECOMMERCE">Gudang E-commerce</option><option value="PEMINJAMAN">Peminjaman</option><option value="LAINNYA">Keperluan lain</option></select></div><div><label className="text-xs text-[#93c5fd] block mb-1">Zona Unit 18</label><select value={consignmentZone} onChange={(e) => setConsignmentZone(e.target.value)} disabled={!consignmentDestination} className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm disabled:opacity-50"><option value="">{consignmentDestination ? 'Pilih zona...' : 'Tidak diperlukan'}</option>{CONSIGNMENT_ZONES.map((zone) => <option key={zone}>{zone}</option>)}</select></div><p className="sm:col-span-2 text-[11px] text-[#8fb8ef]">{documentType} berdiri sendiri. Bila tujuannya Bazar/E-commerce, saldo dipisahkan sebagai stok Unit 18 dan kemudian dapat ditautkan ke SO atau Retur.</p></div>}
             </div>
           )}
+
+          <div className="mb-5 rounded-xl border border-[#294263] bg-[#0d1728] p-4">
+            <label className="flex items-center gap-3 cursor-pointer"><input type="checkbox" checked={weighingForm} onChange={(e) => setWeighingForm(e.target.checked)} className="h-4 w-4 accent-[#2563eb]" /><span><span className="text-sm font-semibold">Buat form timbangan</span><span className="block text-xs text-[#8fb8ef] mt-0.5">Opsional. Sistem mengisi 20 baris bruto dari satu nilai awal.</span></span></label>
+            {weighingForm && <div className="mt-3 max-w-xs"><label className="text-xs text-[#93c5fd] block mb-1">Bruto timbangan awal (kg)</label><input type="number" min="0.01" step="0.01" value={grossWeight} onChange={(e) => setGrossWeight(e.target.value)} placeholder="Contoh: 12.50" className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm font-mono" /></div>}
+          </div>
 
           <label className="text-sm font-medium mb-2 block">Daftar Barang</label>
           <div className="space-y-3 mb-3">

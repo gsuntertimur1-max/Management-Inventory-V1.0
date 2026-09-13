@@ -50,6 +50,8 @@ class OutboundCreateInput(BaseModel):
     dispatchPurpose: Literal["BAZAR", "ECOMMERCE", "PEMINJAMAN", "LAINNYA"] = "LAINNYA"
     consignmentDestination: str = ""
     consignmentZone: str = ""
+    weighingForm: bool = False
+    grossWeight: float = Field(default=0, ge=0)
 
 
 class ReturnPlacementInput(BaseModel):
@@ -131,6 +133,8 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
     party = body.party.strip()
     if not party:
         raise HTTPException(status_code=400, detail="Penerima barang wajib diisi")
+    if body.weighingForm and body.grossWeight <= 0:
+        raise HTTPException(status_code=400, detail="Bruto timbangan harus diisi untuk membuat form timbangan")
     refs = []
     for candidate in [body.ref, *body.documents]:
         value = str(candidate or "").strip()
@@ -250,6 +254,9 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         "dispatch_purpose": body.dispatchPurpose if body.documentType in {"MEMO", "ND"} else "",
         "consignment_destination": body.consignmentDestination.strip(),
         "consignment_zone": body.consignmentZone.strip(),
+        "weighing_form": body.weighingForm,
+        "gross_weight": float(body.grossWeight) if body.weighingForm else 0,
+        "weighing_entries": [{"no": index, "gross": float(body.grossWeight)} for index in range(1, 21)] if body.weighingForm else [],
         "document_links": [],
         "document_status": "Menunggu Pemuatan",
         "items": load_items,
