@@ -252,7 +252,7 @@ def _weighing_form_pdf(title: str, document_no: str, party: str, polisi: str, cr
         c.drawCentredString((number_col + end_x) / 2, y - 5.2 * mm, "BRUTO (KG)")
         for index in range(10):
             entry = group_entries[index] if index < len(group_entries) else {"no": first_no + index, "gross": 0}
-            row_y = y - row_h * (index + 1)
+            row_y = y - row_h * (index + 2)
             c.setFillColor(colors.black); c.rect(start_x, row_y, half, row_h, fill=0, stroke=1); c.line(number_col, row_y + row_h, number_col, row_y)
             c.setFont("Helvetica", 8); c.drawCentredString((start_x + number_col) / 2, row_y + 2.8 * mm, str(entry.get("no", first_no + index)))
             c.drawCentredString((number_col + end_x) / 2, row_y + 2.8 * mm, _num(entry.get("gross", 0)))
@@ -262,8 +262,6 @@ def _weighing_form_pdf(title: str, document_no: str, party: str, polisi: str, cr
     c.drawCentredString(right - 42 * mm, sign_y + 20 * mm, "Petugas Gudang")
     c.line(left + 17 * mm, sign_y, left + 67 * mm, sign_y)
     c.line(right - 67 * mm, sign_y, right - 17 * mm, sign_y)
-    c.setFont("Helvetica", 7); c.drawCentredString(left + 42 * mm, sign_y - 4 * mm, "Nama dan tanda tangan")
-    c.drawCentredString(right - 42 * mm, sign_y - 4 * mm, "Nama dan tanda tangan")
     c.drawRightString(right, 18 * mm, f"Dicetak: {_date(operational_now().isoformat(), True)}")
     c.save()
     return buffer
