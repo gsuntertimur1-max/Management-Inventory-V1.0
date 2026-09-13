@@ -17,6 +17,7 @@ import Pengguna from './pages/Pengguna';
 import Pengaturan from './pages/Pengaturan';
 import ImportData from './pages/ImportData';
 import TumpukanStok from './pages/TumpukanStok';
+import OpnameKonsinyasi from './pages/OpnameKonsinyasi';
 import { hasPermission, roleLabel } from './lib/permissions';
 
 const Loading = () => (
@@ -53,6 +54,7 @@ function AppRoutes() {
       <Route path="/produk" element={<Protected><DaftarProduk /></Protected>} />
       <Route path="/import" element={<Protected permission="masterWrite"><ImportData /></Protected>} />
       <Route path="/tumpukan" element={<Protected><TumpukanStok /></Protected>} />
+      <Route path="/opname-konsinyasi" element={<Protected><OpnameKonsinyasi /></Protected>} />
       <Route path="/catat" element={<Protected permission="operations"><CatatStok /></Protected>} />
       <Route path="/pengeluaran" element={<Protected permission="outbound"><Pengeluaran /></Protected>} />
       <Route path="/riwayat" element={<Protected><Riwayat /></Protected>} />

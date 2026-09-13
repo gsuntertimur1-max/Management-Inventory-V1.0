@@ -214,6 +214,22 @@ async def reconcile_product_allocations(product_id: str) -> None:
         excess = 0
 
 
+async def decrease_stack_allocation(product_id: str, stack_code: str, qty: float, operator: str) -> None:
+    """Kurangi tumpukan asal yang dipilih pada pengeluaran, lalu tandai susunan fisik untuk diperbarui."""
+    allocation = await db.stack_allocations.find_one({"productId": product_id, "stackCode": stack_code}, {"_id": 0})
+    if not allocation or float(allocation.get("primaryQty", 0) or 0) + 1e-9 < qty:
+        raise HTTPException(status_code=400, detail=f"Stok pada tumpukan {stack_code} tidak mencukupi untuk pengeluaran")
+    remaining = float(allocation.get("primaryQty", 0) or 0) - qty
+    if remaining <= 1e-9:
+        await db.stack_allocations.delete_one({"id": allocation["id"]})
+        await record_stack_history("PENGELUARAN_HABIS", allocation, operator)
+        return
+    per_secondary = float(allocation.get("secondaryQty", 0) or 0)
+    updated = {**allocation, "primaryQty": remaining, "secondaryCount": int(remaining // per_secondary) if per_secondary > 0 else 0, "primaryRemainder": remaining % per_secondary if per_secondary > 0 else remaining, "length": 0, "width": 0, "height": 0, "arrangementAdjusted": True, "updatedAt": now_iso()}
+    await db.stack_allocations.update_one({"id": allocation["id"]}, {"$set": {key: value for key, value in updated.items() if key != "id"}})
+    await record_stack_history("PENGELUARAN_OTOMATIS", updated, operator)
+
+
 async def migrate_default_locations() -> None:
     """Tempatkan stok lama yang sudah mempunyai kode tumpukan default yang valid."""
     legacy = await db.stack_allocations.find({"stackCode": {"$regex": "^MP/"}}, {"_id": 0}).to_list(1000)

@@ -83,7 +83,7 @@ async def export_consignment_stock_card_pdf(destination: str, user: dict = Depen
     center = ParagraphStyle("cons-center", parent=small, alignment=TA_CENTER)
     short_location = "BAZAR" if location == "Gudang Bazar" else "E-COMMERCE"
     story = [Paragraph("K A R T U &nbsp; S T O K &nbsp; K O N S I N Y A S I", title), Paragraph(f"{short_location} - GBB Sunter Timur I &amp; II", ParagraphStyle("cons-sub", parent=title, fontSize=9, leading=12, spaceAfter=12)), Spacer(1, 5 * mm)]
-    headers = ["NO", "SKU", "NAMA KOMODITI", "PERKALIAN", "KEMASAN SEKUNDER", "KUANTUM PACK/PCS", "KUANTUM BERAT", "CT TERKAIT", "ND/MEMO DASAR"]
+    headers = ["NO", "SKU", "NAMA KOMODITI", "PERKALIAN", "KEMASAN SEKUNDER", "KUANTUM PACK/PCS", "KUANTUM BERAT", "MEMO TERKAIT", "ND DASAR"]
     data = [[Paragraph(header, center) for header in headers]]
     for index, item in enumerate(items, 1):
         layout = by_product.get(item.get("productId"), {})
@@ -97,7 +97,14 @@ async def export_consignment_stock_card_pdf(destination: str, user: dict = Depen
     widths = [8, 22, 48, 64, 28, 32, 30, 42, 42]
     table = LongTable(data, colWidths=[width * mm for width in widths], repeatRows=1)
     table.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), SOFT_HEADER), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("GRID", (0, 0), (-1, -1), .35, colors.HexColor("#777777")), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5)]))
-    story += [table, Spacer(1, 10 * mm), Table([["", Paragraph(f"Jakarta, {_date(operational_now().isoformat())}<br/><br/>Kepala Gudang Sunter Timur I &amp; II<br/><br/><br/><b>{warehouse_head}</b>", ParagraphStyle("cons-sign", parent=small, alignment=TA_CENTER, fontSize=8, leading=14))]], colWidths=[190 * mm, 65 * mm])]
+    history = await db.consignment_layout_history.find({"destination": location}, {"_id": 0}).sort("time", -1).to_list(5000)
+    story += [table, Spacer(1, 8 * mm), Paragraph("RIWAYAT PERUBAHAN PERKALIAN", title)]
+    history_data = [["WAKTU", "KOMODITI", "PERKALIAN TERBARU", "CATATAN", "PETUGAS"]]
+    for entry in history:
+        after = entry.get("after", {})
+        product = next((item for item in items if item.get("productId") == entry.get("productId")), {})
+        history_data.append([_date(entry.get("time"), True), product.get("name", entry.get("productId", "")), _consignment_arrangement(after, product), entry.get("note", ""), entry.get("operator", "")])
+    story += [LongTable(history_data, colWidths=[34 * mm, 66 * mm, 86 * mm, 45 * mm, 38 * mm], repeatRows=1, style=[("BACKGROUND", (0, 0), (-1, 0), SOFT_HEADER), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 7), ("GRID", (0, 0), (-1, -1), .35, colors.grey), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]), Spacer(1, 10 * mm), Table([["", Paragraph(f"Jakarta, {_date(operational_now().isoformat())}<br/><br/>Kepala Gudang Sunter Timur I &amp; II<br/><br/><br/><b>{warehouse_head}</b>", ParagraphStyle("cons-sign", parent=small, alignment=TA_CENTER, fontSize=8, leading=14))]], colWidths=[190 * mm, 65 * mm])]
     doc.build(story, onFirstPage=_stack_page, onLaterPages=_stack_page)
     return _pdf_response(buffer, f"kartu_stok_konsinyasi_{short_location.lower()}.pdf")
 

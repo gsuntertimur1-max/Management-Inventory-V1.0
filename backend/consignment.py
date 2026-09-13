@@ -26,6 +26,18 @@ class ConsignmentLayoutInput(BaseModel):
     note: str = ""
 
 
+class OpnameItemInput(BaseModel):
+    productId: str
+    actualQty: float = Field(ge=0)
+    note: str = ""
+
+
+class ConsignmentOpnameInput(BaseModel):
+    destination: Literal["Gudang Bazar", "Gudang E-commerce"]
+    items: List[OpnameItemInput] = Field(min_length=1)
+    note: str = ""
+
+
 def _settled_qty(load: dict, product_id: str) -> float:
     settled = 0.0
     for link in load.get("document_links", []):
@@ -40,7 +52,7 @@ def _settled_qty(load: dict, product_id: str) -> float:
 
 
 async def consignment_stock(destination: str = "") -> list[dict]:
-    query = {"document_type": "CT", "status": "Selesai", "consignment_destination": {"$in": list(DESTINATIONS)}}
+    query = {"document_type": "MEMO", "status": "Selesai", "consignment_destination": {"$in": list(DESTINATIONS)}}
     if destination:
         if destination not in DESTINATIONS:
             raise HTTPException(status_code=400, detail="Lokasi konsinyasi tidak valid")
@@ -80,6 +92,18 @@ async def list_consignment_layouts(user: dict = Depends(get_current_user)):
     return await db.consignment_layouts.find({}, {"_id": 0}).to_list(5000)
 
 
+@router.get("/consignment-layout-history")
+async def list_consignment_layout_history(destination: str = "", user: dict = Depends(get_current_user)):
+    query = {"destination": destination} if destination in DESTINATIONS else {}
+    return await db.consignment_layout_history.find(query, {"_id": 0}).sort("time", -1).to_list(5000)
+
+
+@router.get("/consignment-opnames")
+async def list_consignment_opnames(destination: str = "", user: dict = Depends(get_current_user)):
+    query = {"destination": destination} if destination in DESTINATIONS else {}
+    return await db.consignment_opnames.find(query, {"_id": 0}).sort("time", -1).to_list(5000)
+
+
 @router.put("/consignment-layouts")
 async def save_consignment_layout(body: ConsignmentLayoutInput, user: dict = Depends(require_write)):
     rows = await consignment_stock(body.destination)
@@ -102,4 +126,21 @@ async def save_consignment_layout(body: ConsignmentLayoutInput, user: dict = Dep
         {"destination": body.destination, "productId": body.productId},
         {"$set": doc, "$setOnInsert": {"id": new_id(), "createdAt": now}}, upsert=True, return_document=ReturnDocument.AFTER,
     )
-    return {k: v for k, v in previous.items() if k != "_id"}
+    result = {k: v for k, v in previous.items() if k != "_id"}
+    await db.consignment_layout_history.insert_one({"id": new_id(), "time": now, "destination": body.destination, "productId": body.productId, "before": {k: v for k, v in (await db.consignment_layout_history.find_one({"destination": body.destination, "productId": body.productId}, {"_id": 0}, sort=[("time", -1)]) or {}).get("after", {}).items()}, "after": result, "operator": user.get("name", ""), "note": body.note.strip()})
+    return result
+
+
+@router.post("/consignment-opnames")
+async def create_consignment_opname(body: ConsignmentOpnameInput, user: dict = Depends(require_write)):
+    stock_by_product = {row["productId"]: row for row in await consignment_stock(body.destination)}
+    items = []
+    for item in body.items:
+        system = stock_by_product.get(item.productId)
+        if not system:
+            raise HTTPException(status_code=400, detail="Produk opname tidak memiliki saldo konsinyasi aktif")
+        actual = float(item.actualQty)
+        items.append({"productId": item.productId, "sku": system.get("sku", ""), "name": system.get("name", ""), "unit": system.get("unit", ""), "systemQty": float(system["qty"]), "actualQty": actual, "difference": actual - float(system["qty"]), "note": item.note.strip()})
+    doc = {"id": new_id(), "time": now_iso(), "destination": body.destination, "items": items, "note": body.note.strip(), "operator": user.get("name", "")}
+    await db.consignment_opnames.insert_one(dict(doc))
+    return doc

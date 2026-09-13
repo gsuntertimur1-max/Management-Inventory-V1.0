@@ -58,7 +58,7 @@ const Pengeluaran = () => {
     }));
     return Math.max(Number(source.qty || 0) - used, 0);
   };
-  const consignmentSummary = Object.values(outboundLoads.filter((load) => load.document_type === 'CT' && load.consignment_destination && load.status === 'Selesai').reduce((result, load) => {
+  const consignmentSummary = Object.values(outboundLoads.filter((load) => load.document_type === 'MEMO' && load.consignment_destination && load.status === 'Selesai').reduce((result, load) => {
     (load.items || []).forEach((item) => {
       const qty = remainingQty(load, item);
       if (qty <= 0) return;
@@ -218,7 +218,7 @@ const Pengeluaran = () => {
       </div>
 
       {consignmentSummary.length > 0 && <div className="card-surface p-5 border border-[#1f3657]">
-        <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3"><div><div className="label-mono text-[10px] text-[#93c5fd]">Persediaan di luar stok gudang utama</div><h2 className="font-display text-lg font-bold mt-1">Stok Konsinyasi Unit 18</h2></div><p className="text-xs text-[#6b7688]">Berubah otomatis saat CR atau SO ditautkan.</p></div>
+        <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3"><div><div className="label-mono text-[10px] text-[#93c5fd]">Persediaan di luar stok gudang utama</div><h2 className="font-display text-lg font-bold mt-1">Stok Konsinyasi Unit 18</h2></div><p className="text-xs text-[#6b7688]">Berasal dari Memo/ND dan berubah saat SO atau Retur ditautkan.</p></div>
         <div className="overflow-x-auto"><table className="w-full text-xs tbl"><thead><tr className="text-left border-b border-[#1a222e]"><th className="py-2 pr-4">Tujuan</th><th className="py-2 pr-4">Zona</th><th className="py-2 pr-4">Komoditas</th><th className="py-2 text-right">Sisa Konsinyasi</th></tr></thead><tbody>{consignmentSummary.map((item) => <tr key={`${item.destination}-${item.zone}-${item.name}`} className="border-b border-[#131a24]"><td className="py-2.5 pr-4">{item.destination}</td><td className="py-2.5 pr-4 font-mono text-[#93c5fd]">{item.zone}</td><td className="py-2.5 pr-4">{item.name}</td><td className="py-2.5 text-right font-mono font-semibold">{formatNum(item.qty)} {item.unit}</td></tr>)}</tbody></table></div>
       </div>}
 

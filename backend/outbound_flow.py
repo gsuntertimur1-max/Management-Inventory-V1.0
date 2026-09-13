@@ -15,7 +15,7 @@ from backend.server import (
     operational_now,
     require_write,
 )
-from backend.stack_allocations import VALID_STACK_CODES, allocate_stock_to_stack, reconcile_product_allocations
+from backend.stack_allocations import VALID_STACK_CODES, allocate_stock_to_stack, decrease_stack_allocation, reconcile_product_allocations
 
 router = APIRouter(prefix="/api")
 
@@ -32,6 +32,7 @@ class OutboundItemInput(BaseModel):
     productId: str
     qty: float = Field(gt=0)
     documentNo: str = ""
+    stackCode: str = ""
 
 
 class OutboundCreateInput(BaseModel):
@@ -141,6 +142,10 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         raise HTTPException(status_code=400, detail=f"Nomor dokumen tidak sesuai jenis {body.documentType}")
     if body.documentType == "TM" and not body.transferScope:
         raise HTTPException(status_code=400, detail="Pilih cakupan Transfer Move")
+    if body.consignmentDestination and body.documentType != "MEMO":
+        raise HTTPException(status_code=400, detail="Stok Gudang Bazar/E-commerce harus dicatat menggunakan Memo/ND")
+    if body.consignmentDestination and body.consignmentDestination not in {"Gudang Bazar", "Gudang E-commerce"}:
+        raise HTTPException(status_code=400, detail="Tujuan konsinyasi tidak valid")
     for ref in refs:
         if await db.outbound_loads.find_one({"$or": [{"ref": ref}, {"documents": ref}, {"document_links.no": ref}]}):
             raise HTTPException(status_code=409, detail=f"Nomor dokumen {ref} sudah digunakan")
@@ -159,6 +164,11 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         if not product:
             raise HTTPException(status_code=404, detail="Produk pengeluaran tidak ditemukan")
         _validate_pack_qty(product, qty)
+        if body.documentType == "MEMO" and body.consignmentDestination:
+            if float(product.get("weight", 0) or 0) <= 0:
+                raise HTTPException(status_code=400, detail=f"Berat per pack/pcs {product.get('name', '')} wajib diisi sebelum dikirim ke Bazar/E-commerce")
+            if not product.get("secondary") or float(product.get("secondaryQty", 0) or 0) <= 0:
+                raise HTTPException(status_code=400, detail=f"Kemasan sekunder {product.get('name', '')} wajib diisi sebelum dikirim ke Bazar/E-commerce")
         products[product_id] = product
 
         field = "damaged" if body.kondisi == "RUSAK" else "stock"
@@ -182,7 +192,10 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
             raise HTTPException(status_code=400, detail=f"Dokumen komoditas {item_ref} belum didaftarkan")
         qty = float(item.qty)
         weight = float(product.get("weight", 0) or 0)
-        load_items.append({"productId": item.productId, "documentNo": item_ref, "sku": product.get("sku", ""), "name": product.get("name", ""), "qty": qty, "unit": product.get("unit", ""), "weight": weight, "berat": weight * qty, "secondary": product.get("secondary", ""), "secondaryQty": float(product.get("secondaryQty", 0) or 0), "location": product.get("location", "")})
+        stack_code = item.stackCode.strip().upper()
+        if stack_code and stack_code not in VALID_STACK_CODES:
+            raise HTTPException(status_code=400, detail="Tumpukan asal tidak valid")
+        load_items.append({"productId": item.productId, "documentNo": item_ref, "sku": product.get("sku", ""), "name": product.get("name", ""), "qty": qty, "unit": product.get("unit", ""), "weight": weight, "berat": weight * qty, "secondary": product.get("secondary", ""), "secondaryQty": float(product.get("secondaryQty", 0) or 0), "location": product.get("location", ""), "stackCode": stack_code})
 
     ordered_products = [products[product_id] for product_id in item_order]
     unit_loading, queue_prefix = _loading_unit_from_products(ordered_products)
@@ -299,6 +312,10 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
             product = await db.products.find_one({"id": item.get("productId")}, {"_id": 0})
             if not product:
                 raise HTTPException(status_code=404, detail=f"Produk {item.get('name', '')} tidak ditemukan")
+            if item.get("stackCode"):
+                from_stack = await db.stack_allocations.find_one({"productId": product["id"], "stackCode": item["stackCode"]}, {"_id": 0, "primaryQty": 1})
+                if not from_stack or float(from_stack.get("primaryQty", 0) or 0) + 1e-9 < qty:
+                    raise HTTPException(status_code=400, detail=f"Stok {product.get('name', '')} pada {item['stackCode']} tidak mencukupi")
 
             result = await db.products.update_one(
                 {"id": product["id"], field: {"$gte": qty}},
@@ -310,6 +327,8 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
                     detail=f"Stok {product.get('name', '')} berubah atau tidak mencukupi. Periksa stok lalu coba lagi.",
                 )
             stock_changes.append((product["id"], qty))
+            if item.get("stackCode"):
+                await decrease_stack_allocation(product["id"], item["stackCode"], qty, user.get("name", "Sistem (pengeluaran)"))
 
             transactions.append({
                 "id": new_id(),

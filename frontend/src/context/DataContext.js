@@ -27,6 +27,8 @@ const EMPTY = {
   stackTreatments: [],
   consignmentStock: [],
   consignmentLayouts: [],
+  consignmentLayoutHistory: [],
+  consignmentOpnames: [],
   settings: DEFAULT_SETTINGS,
 };
 
@@ -37,7 +39,7 @@ export const DataProvider = ({ children }) => {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [p, suppliersRes, sj, loads, po, t, stacks, treatments, consignmentStockRes, consignmentLayoutsRes, settingsRes, usersRes] = await Promise.all([
+      const [p, suppliersRes, sj, loads, po, t, stacks, treatments, consignmentStockRes, consignmentLayoutsRes, consignmentHistoryRes, consignmentOpnamesRes, settingsRes, usersRes] = await Promise.all([
         api.get('/products'),
         api.get('/suppliers'),
         api.get('/surat-jalan'),
@@ -48,6 +50,8 @@ export const DataProvider = ({ children }) => {
         api.get('/stack-treatments'),
         api.get('/consignment-stock'),
         api.get('/consignment-layouts'),
+        api.get('/consignment-layout-history'),
+        api.get('/consignment-opnames'),
         api.get('/settings'),
         hasPermission(user?.role, 'users') ? api.get('/users') : Promise.resolve({ data: [] }),
       ]);
@@ -63,6 +67,8 @@ export const DataProvider = ({ children }) => {
         stackTreatments: treatments.data,
         consignmentStock: consignmentStockRes.data,
         consignmentLayouts: consignmentLayoutsRes.data,
+        consignmentLayoutHistory: consignmentHistoryRes.data,
+        consignmentOpnames: consignmentOpnamesRes.data,
         settings: { ...DEFAULT_SETTINGS, ...settingsRes.data },
       });
     } catch (e) {
@@ -184,6 +190,7 @@ export const DataProvider = ({ children }) => {
   const deleteStackAllocation = async (id) => { await api.delete(`/stack-allocations/${id}`); await fetchAll(); };
   const addStackTreatment = async (payload) => { await api.post('/stack-treatments', payload); await fetchAll(); };
   const saveConsignmentLayout = async (payload) => { await api.put('/consignment-layouts', payload); await fetchAll(); };
+  const addConsignmentOpname = async (payload) => { await api.post('/consignment-opnames', payload); await fetchAll(); };
 
   return (
     <DataContext.Provider value={{
@@ -205,6 +212,7 @@ export const DataProvider = ({ children }) => {
       addStackAllocation, updateStackAllocation, deleteStackAllocation,
       addStackTreatment,
       saveConsignmentLayout,
+      addConsignmentOpname,
     }}>
       {children}
     </DataContext.Provider>
