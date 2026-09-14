@@ -4,7 +4,14 @@ import { DEFAULT_CATEGORIES } from '../mock';
 import { useData } from '../context/DataContext';
 import { apiError } from '../lib/api';
 import { toast } from 'sonner';
-import { DEFAULT_WAREHOUSES, warehousesFromSettings } from '../lib/warehouses';
+import { DEFAULT_WAREHOUSES, stackCodes, warehousesFromSettings } from '../lib/warehouses';
+
+const nextZoneCode = (zones) => {
+  const used = new Set(zones.map((zone) => String(zone.code || '').trim().toUpperCase()));
+  return Array.from({ length: 26 }, (_, index) => String.fromCharCode(65 + index)).find((code) => !used.has(code)) || 'Z';
+};
+
+const stackPreview = (warehouse) => stackCodes([{ ...warehouse, active: true }]);
 
 const Toggle = ({ on, onClick, disabled = false }) => (
   <button
@@ -100,6 +107,8 @@ const Pengaturan = () => {
 
   const updateWarehouse = (index, patch) => setWarehouses((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item));
   const updateZone = (warehouseIndex, zoneIndex, patch) => setWarehouses((items) => items.map((item, itemIndex) => itemIndex === warehouseIndex ? { ...item, zones: item.zones.map((zone, currentZone) => currentZone === zoneIndex ? { ...zone, ...patch } : zone) } : item));
+  const addZone = (warehouseIndex) => setWarehouses((items) => items.map((item, index) => index === warehouseIndex ? { ...item, zones: [...item.zones, { code: nextZoneCode(item.zones), count: 1 }] } : item));
+  const removeZone = (warehouseIndex, zoneIndex) => setWarehouses((items) => items.map((item, index) => index === warehouseIndex && item.zones.length > 1 ? { ...item, zones: item.zones.filter((_, currentZone) => currentZone !== zoneIndex) } : item));
   const addWarehouse = (type = 'GBB') => setWarehouses((items) => [...items, type === 'MP'
     ? { code: '', name: '', type: 'MP', length: 230, width: 30, zones: [{ code: 'A', count: 8 }, { code: 'B', count: 8 }], active: true }
     : { code: '', name: '', type: 'GBB', length: 50, width: 30, zones: [{ code: 'A', count: 4 }, { code: 'B', count: 4 }, { code: 'C', count: 4 }], active: true }]);
@@ -107,6 +116,18 @@ const Pengaturan = () => {
   const saveWarehouses = async () => {
     const cleaned = warehouses.map((item) => ({ ...item, code: item.code.trim().toUpperCase(), name: item.name.trim(), zones: item.zones.map((zone) => ({ code: zone.code.trim().toUpperCase(), count: Number(zone.count) })) }));
     if (cleaned.some((item) => !item.code || !item.name || item.zones.some((zone) => !zone.code || zone.count < 1))) return toast.error('Kode, nama gudang, dan jumlah tumpukan wajib diisi');
+    const previous = warehousesFromSettings(settings?.warehouses);
+    const nextByCode = new Map(cleaned.map((item) => [item.code, item]));
+    const risks = previous.flatMap((old) => {
+      const next = nextByCode.get(old.code);
+      if (!next) return [`${old.name || old.code} akan dihapus`];
+      const reduced = (old.zones || []).filter((oldZone) => {
+        const nextZone = (next.zones || []).find((zone) => zone.code === oldZone.code);
+        return !nextZone || Number(nextZone.count) < Number(oldZone.count);
+      }).map((zone) => `${old.code}/${zone.code}`);
+      return [old.active !== false && next.active === false ? `${old.name || old.code} akan dinonaktifkan` : '', ...reduced.map((zone) => `jumlah tumpukan ${zone} akan dikurangi`)].filter(Boolean);
+    });
+    if (risks.length && !window.confirm(`Perubahan berikut dapat membatasi pemakaian lokasi baru:\n\n• ${risks.join('\n• ')}\n\nData stok yang sudah ada tetap dijaga. Lanjutkan?`)) return;
     setSavingWarehouses(true);
     try { await updateSettings(payload({ warehouses: cleaned })); toast.success('Master gudang dan tumpukan tersimpan'); }
     catch (e) { toast.error(apiError(e)); }
@@ -177,7 +198,8 @@ const Pengaturan = () => {
           <div className="space-y-3">
             {warehouses.map((item, index) => <div key={`${item.code}-${index}`} className="rounded-xl border border-[#151d28] bg-[#0b0f17] p-3">
               <div className="grid grid-cols-1 sm:grid-cols-6 gap-2 items-end"><div><label className="text-[10px] text-[#8b93a1]">Kode</label><input disabled={!isAdmin} value={item.code} onChange={(e) => updateWarehouse(index, { code: e.target.value })} placeholder="25 / MP2" className="w-full bg-transparent border-b border-[#242f3d] py-1.5 text-sm outline-none" /></div><div className="sm:col-span-2"><label className="text-[10px] text-[#8b93a1]">Nama</label><input disabled={!isAdmin} value={item.name} onChange={(e) => updateWarehouse(index, { name: e.target.value })} placeholder="GBB 25" className="w-full bg-transparent border-b border-[#242f3d] py-1.5 text-sm outline-none" /></div><div><label className="text-[10px] text-[#8b93a1]">Tipe</label><div className="py-1.5 text-sm">{item.type}</div></div><div><label className="text-[10px] text-[#8b93a1]">P × L (m)</label><div className="flex gap-1"><input disabled={!isAdmin} type="number" value={item.length} onChange={(e) => updateWarehouse(index, { length: Number(e.target.value) })} className="w-1/2 bg-transparent border-b border-[#242f3d] py-1.5 text-sm outline-none" /><input disabled={!isAdmin} type="number" value={item.width} onChange={(e) => updateWarehouse(index, { width: Number(e.target.value) })} className="w-1/2 bg-transparent border-b border-[#242f3d] py-1.5 text-sm outline-none" /></div></div><div className="flex justify-end gap-2"><button type="button" disabled={!isAdmin} onClick={() => updateWarehouse(index, { active: item.active === false })} className={`text-xs px-2.5 py-1.5 rounded-md border ${item.active === false ? 'border-[#4b5563] text-[#9ca3af]' : 'border-[#22c55e]/50 text-[#4ade80]'}`}>{item.active === false ? 'Nonaktif' : 'Aktif'}</button>{isAdmin && <button type="button" onClick={() => removeWarehouse(index)} className="p-1.5 text-[#f87171]" title="Hapus gudang"><Trash2 size={15} /></button>}</div></div>
-              <div className="mt-3 flex flex-wrap gap-2">{item.zones.map((zone, zoneIndex) => <div key={`${zone.code}-${zoneIndex}`} className="flex items-center gap-2 rounded-lg border border-[#242f3d] px-2 py-1"><span className="text-xs text-[#8b93a1]">Zona</span><input disabled={!isAdmin} value={zone.code} onChange={(e) => updateZone(index, zoneIndex, { code: e.target.value })} className="w-8 bg-transparent text-center text-sm outline-none" /><span className="text-xs text-[#8b93a1]">Tumpukan</span><input disabled={!isAdmin} type="number" min="1" value={zone.count} onChange={(e) => updateZone(index, zoneIndex, { count: Number(e.target.value) })} className="w-12 bg-transparent text-center text-sm outline-none" /></div>)}</div>
+              <div className="mt-3 flex flex-wrap gap-2">{item.zones.map((zone, zoneIndex) => <div key={`${zone.code}-${zoneIndex}`} className="flex items-center gap-2 rounded-lg border border-[#242f3d] px-2 py-1"><span className="text-xs text-[#8b93a1]">Zona</span><input disabled={!isAdmin} value={zone.code} onChange={(e) => updateZone(index, zoneIndex, { code: e.target.value })} className="w-8 bg-transparent text-center text-sm outline-none" /><span className="text-xs text-[#8b93a1]">Tumpukan</span><input disabled={!isAdmin} type="number" min="1" value={zone.count} onChange={(e) => updateZone(index, zoneIndex, { count: Number(e.target.value) })} className="w-12 bg-transparent text-center text-sm outline-none" />{isAdmin && <button type="button" disabled={item.zones.length === 1} onClick={() => removeZone(index, zoneIndex)} className="text-[#f87171] disabled:opacity-30" title="Hapus zona"><Trash2 size={14} /></button>}</div>)}{isAdmin && <button type="button" onClick={() => addZone(index)} className="rounded-lg border border-dashed border-[#294263] px-3 py-1 text-xs text-[#60a5fa]"><Plus size={13} className="inline mr-1" />Zona</button>}</div>
+              <div className="mt-3 rounded-lg border border-dashed border-[#29364a] px-3 py-2 text-[11px] text-[#6b7688]">Preview: <span className="font-mono text-[#93c5fd]">{stackPreview(item).slice(0, 8).join(', ') || 'lengkapi kode dan zona'}</span>{stackPreview(item).length > 8 && ` … +${stackPreview(item).length - 8} tumpukan`}</div>
             </div>)}
           </div>
           {isAdmin && <button onClick={saveWarehouses} disabled={savingWarehouses} className="btn-primary inline-flex items-center gap-2 text-sm font-semibold px-4 py-2.5 rounded-lg mt-4 disabled:opacity-60"><Save size={15} /> {savingWarehouses ? 'Menyimpan…' : 'Simpan Master Gudang'}</button>}
