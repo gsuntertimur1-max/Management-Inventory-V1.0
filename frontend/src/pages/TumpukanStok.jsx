@@ -77,9 +77,10 @@ const TumpukanStok = () => {
   return <div className="space-y-5" data-testid="stack-map-page">
     <div className="flex flex-col xl:flex-row xl:items-end xl:justify-between gap-4">
       <div><div className="label-mono mb-2">Gudang Sunter Timur I & II</div><h1 className="font-display text-3xl md:text-4xl font-bold">Peta Tumpukan Stok</h1><p className="text-sm text-[#8b93a1] mt-2">Susunan komoditas berdasarkan kemasan sekunder.</p></div>
-      <div className="grid grid-cols-3 gap-2">
-        <div className="card-surface p-3"><div className="flex items-center justify-between gap-2"><div className="text-xs text-[#6b7688]">Terisi</div><button title="Unduh kartu tumpukan PDF gudang terpilih" onClick={() => downloadApiFile(`/export/warehouse-stack-cards.pdf?warehouse=${encodeURIComponent(warehouse)}`, `kartu_tumpukan_${warehouse}.pdf`)} className="p-1.5 rounded-md border border-[#294263] text-[#93c5fd] hover:bg-[#13233a]"><Printer size={14} /></button></div><div className="font-display text-lg md:text-xl font-bold mt-1 text-white">{occupied}/{stackCodes(warehouses).length}</div></div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+        <div className="card-surface p-3"><div className="text-xs text-[#6b7688]">Terisi</div><div className="font-display text-lg md:text-xl font-bold mt-1 text-white">{occupied}/{stackCodes(warehouses).length}</div></div>
         {[['Ditempatkan', formatNum(totalAllocated), 'text-[#60a5fa]'], ['Belum ditempatkan', formatNum(unallocated), unallocated ? 'text-[#f59e0b]' : 'text-[#22c55e]']].map(([label, value, color]) => <div key={label} className="card-surface p-3"><div className="text-xs text-[#6b7688]">{label}</div><div className={`font-display text-lg md:text-xl font-bold mt-1 ${color}`}>{value}</div></div>)}
+        <button title="Unduh kartu tumpukan PDF gudang terpilih" onClick={() => downloadApiFile(`/export/warehouse-stack-cards.pdf?warehouse=${encodeURIComponent(warehouse)}`, `kartu_tumpukan_${warehouse}.pdf`)} className="card-surface p-3 text-left hover:border-[#3b82f6] transition-colors"><div className="flex items-start gap-2 text-[#93c5fd]"><Printer size={16} className="mt-0.5 shrink-0" /><span className="text-xs font-semibold leading-5">Download Kartu Tumpukan PDF {warehouse === 'MP1' ? 'MP1' : `GBB ${warehouse}`}</span></div></button>
       </div>
     </div>
 
