@@ -1,24 +1,92 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import api, { setToken, apiError } from '../lib/api';
+import { hasPermission, roleLabel } from '../lib/permissions';
+import { DEFAULT_CATEGORIES } from '../mock';
 
 const DataContext = createContext(null);
 export const useData = () => useContext(DataContext);
 
-const EMPTY = { products: [], suppliers: [], suratJalan: [], purchaseOrders: [], users: [], transactions: [] };
+const DEFAULT_SETTINGS = {
+  warehouse: 'Gudang Sunter Timur I & II',
+  address: 'Jl. Sunter Agung, Jakarta Utara',
+  categories: DEFAULT_CATEGORIES,
+  lowAlert: true,
+  expAlert: true,
+  autoQueue: true,
+};
+
+const EMPTY = {
+  products: [],
+  suppliers: [],
+  suratJalan: [],
+  outboundLoads: [],
+  purchaseOrders: [],
+  users: [],
+  transactions: [],
+  monitoringStock: [],
+  auditLog: [],
+  stackAllocations: [],
+  stackTreatments: [],
+  consignmentStock: [],
+  consignmentLayouts: [],
+  consignmentLayoutHistory: [],
+  consignmentOpnames: [],
+  settings: DEFAULT_SETTINGS,
+};
 
 export const DataProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [checking, setChecking] = useState(true);
   const [state, setState] = useState(EMPTY);
+  const [theme, setThemeState] = useState(() => localStorage.getItem('bulog_theme') || 'dark');
+
+  const setTheme = useCallback((nextTheme) => {
+    setThemeState(nextTheme === 'light' ? 'light' : 'dark');
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem('bulog_theme', theme);
+  }, [theme]);
 
   const fetchAll = useCallback(async () => {
     try {
-      const [p, s, sj, po, t] = await Promise.all([
-        api.get('/products'), api.get('/suppliers'), api.get('/surat-jalan'),
-        api.get('/purchase-orders'), api.get('/transactions'),
+      const [p, suppliersRes, sj, loads, po, t, monitoringRes, auditRes, stacks, treatments, consignmentStockRes, consignmentLayoutsRes, consignmentHistoryRes, consignmentOpnamesRes, settingsRes, usersRes] = await Promise.all([
+        api.get('/products'),
+        api.get('/suppliers'),
+        api.get('/surat-jalan'),
+        api.get('/outbound-loads'),
+        api.get('/purchase-orders-v2'),
+        api.get('/transactions'),
+        api.get('/monitoring-stock'),
+        api.get('/audit-log'),
+        api.get('/stack-allocations'),
+        api.get('/stack-treatments'),
+        api.get('/consignment-stock'),
+        api.get('/consignment-layouts'),
+        api.get('/consignment-layout-history'),
+        api.get('/consignment-opnames'),
+        api.get('/settings'),
+        hasPermission(user?.role, 'users') ? api.get('/users') : Promise.resolve({ data: [] }),
       ]);
-      const users = user?.role === 'Administrator' ? (await api.get('/users')).data : [];
-      setState({ products: p.data, suppliers: s.data, suratJalan: sj.data, purchaseOrders: po.data, users, transactions: t.data });
+      setState({
+        products: p.data,
+        suppliers: suppliersRes.data,
+        suratJalan: sj.data,
+        outboundLoads: loads.data,
+        purchaseOrders: po.data,
+        users: usersRes.data,
+        transactions: t.data,
+        monitoringStock: monitoringRes.data,
+        auditLog: auditRes.data,
+        stackAllocations: stacks.data,
+        stackTreatments: treatments.data,
+        consignmentStock: consignmentStockRes.data,
+        consignmentLayouts: consignmentLayoutsRes.data,
+        consignmentLayoutHistory: consignmentHistoryRes.data,
+        consignmentOpnames: consignmentOpnamesRes.data,
+        settings: { ...DEFAULT_SETTINGS, ...settingsRes.data },
+      });
     } catch (e) {
       console.error('fetchAll failed', e);
     }
@@ -53,40 +121,117 @@ export const DataProvider = ({ children }) => {
     setState(EMPTY);
   };
 
-  const addProduct = async (p) => { await api.post('/products', p); await fetchAll(); };
-  const updateProduct = async (id, patch) => { await api.put(`/products/${id}`, patch); await fetchAll(); };
-  const deleteProduct = async (id) => { await api.delete(`/products/${id}`); await fetchAll(); };
-  const addTransaction = async (payload) => {
-    const { data } = await api.post('/transactions', payload);
+  const addProduct = async (p) => { await api.post('/products-master', p); await fetchAll(); };
+  const updateProduct = async (id, patch) => { await api.put(`/products-master/${id}`, patch); await fetchAll(); };
+  const deleteProduct = async (id) => { await api.delete(`/products-master/${id}`); await fetchAll(); };
+  const addTransaction = async (payload) => { await api.post('/transactions', payload); await fetchAll(); };
+  const addReceipt = async (payload) => { const { data } = await api.post('/receipts', payload); await fetchAll(); return data; };
+
+  const createOutboundLoad = async (payload) => {
+    const { data } = await api.post('/outbound-loads', payload);
+    setState((prev) => ({ ...prev, outboundLoads: [data, ...prev.outboundLoads] }));
+    return data;
+  };
+
+  const refreshOutboundLoads = useCallback(async () => {
+    const { data } = await api.get('/outbound-loads');
+    setState((prev) => ({ ...prev, outboundLoads: data }));
+    return data;
+  }, []);
+
+  const startOutboundLoad = async (id) => {
+    const { data } = await api.post(`/outbound-loads/${id}/start`);
+    setState((prev) => ({
+      ...prev,
+      outboundLoads: prev.outboundLoads.map((item) => item.id === id ? data : item),
+    }));
+    return data;
+  };
+
+  const completeOutboundLoad = async (id) => {
+    const { data } = await api.post(`/outbound-loads/${id}/complete`);
     await fetchAll();
     return data;
   };
-  const updateSJStatus = async (id, status) => {
-    const { data } = await api.put(`/surat-jalan/${id}/status`, { status });
-    await fetchAll();
+  const createConsignmentReturn = async (id, payload) => { const { data } = await api.post(`/outbound-loads/${id}/return`, payload); await fetchAll(); return data; };
+  const settleOutboundDocument = async (id, payload) => { const { data } = await api.post(`/outbound-loads/${id}/settle`, payload); await fetchAll(); return data; };
+
+  const updateSJStatus = async (id, status) => { await api.put(`/surat-jalan/${id}/status`, { status }); await fetchAll(); };
+
+  const addSupplier = async (sup) => {
+    const { data } = await api.post('/suppliers', sup);
+    setState((prev) => ({ ...prev, suppliers: [...prev.suppliers, data] }));
     return data;
   };
-  const addSupplier = async (sup) => { await api.post('/suppliers', sup); await fetchAll(); };
-  const addPO = async (po) => { await api.post('/purchase-orders', po); await fetchAll(); };
-  const addUser = async (u) => { await api.post('/users', u); await fetchAll(); };
-  const updateUser = async (id, patch) => { await api.put(`/users/${id}`, patch); await fetchAll(); };
-  const deleteUser = async (id) => { await api.delete(`/users/${id}`); await fetchAll(); };
+
+  const addPO = async (po) => {
+    const { data } = await api.post('/purchase-orders-v2', po);
+    setState((prev) => ({ ...prev, purchaseOrders: [data, ...prev.purchaseOrders] }));
+    return data;
+  };
+
+  const addUser = async (u) => {
+    const { data } = await api.post('/users', u);
+    setState((prev) => ({ ...prev, users: [...prev.users, data] }));
+    return data;
+  };
+  const updateUser = async (id, patch) => {
+    const { data } = await api.put(`/users/${id}`, patch);
+    setState((prev) => ({
+      ...prev,
+      users: prev.users.map((item) => item.id === id ? data : item),
+    }));
+    return data;
+  };
+  const deleteUser = async (id) => {
+    await api.delete(`/users/${id}`);
+    setState((prev) => ({ ...prev, users: prev.users.filter((item) => item.id !== id) }));
+  };
   const changeUserPassword = async (id, password) => { await api.put(`/users/${id}/password`, { password }); };
+  const updateSettings = async (payload) => {
+    const { data } = await api.put('/settings', payload);
+    setState((prev) => ({ ...prev, settings: { ...DEFAULT_SETTINGS, ...data } }));
+    return data;
+  };
   const resetData = async () => { await api.post('/admin/reset-data'); await fetchAll(); };
   const importCsv = async (file) => {
     const fd = new FormData();
     fd.append('file', file);
-    const { data } = await api.post('/import/csv', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+    const { data } = await api.post('/import/master-csv', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
     await fetchAll();
     return data;
   };
+  const addStackAllocation = async (payload) => { await api.post('/stack-allocations', payload); await fetchAll(); };
+  const updateStackAllocation = async (id, payload) => { await api.put(`/stack-allocations/${id}`, payload); await fetchAll(); };
+  const deleteStackAllocation = async (id) => { await api.delete(`/stack-allocations/${id}`); await fetchAll(); };
+  const addStackTreatment = async (payload) => { await api.post('/stack-treatments', payload); await fetchAll(); };
+  const addStockMutation = async (payload) => { const { data } = await api.post('/stock-mutations', payload); await fetchAll(); return data; };
+  const saveConsignmentLayout = async (payload) => { await api.put('/consignment-layouts', payload); await fetchAll(); };
+  const addConsignmentOpname = async (payload) => { await api.post('/consignment-opnames', payload); await fetchAll(); };
 
   return (
     <DataContext.Provider value={{
-      user, checking, canWrite: ['Administrator', 'Supervisor', 'Operator'].includes(user?.role),
+      user,
+      checking,
+      roleLabel: roleLabel(user?.role),
+      canWrite: hasPermission(user?.role, 'currentWrite'),
+      canManageMasterData: hasPermission(user?.role, 'masterWrite'),
+      canInbound: hasPermission(user?.role, 'inbound'),
+      canOutbound: hasPermission(user?.role, 'outbound'),
+      canRebagging: hasPermission(user?.role, 'rebagging'),
+      canQC: hasPermission(user?.role, 'qc'),
+      canManageUsers: hasPermission(user?.role, 'users'),
+      canManageSettings: hasPermission(user?.role, 'settings'),
+      theme, setTheme,
       login, logout, ...state, fetchAll,
-      addProduct, updateProduct, deleteProduct, addTransaction, updateSJStatus,
-      addSupplier, addPO, addUser, updateUser, deleteUser, changeUserPassword, resetData, importCsv,
+      addProduct, updateProduct, deleteProduct, addTransaction, addReceipt,
+      createOutboundLoad, refreshOutboundLoads, startOutboundLoad, completeOutboundLoad, createConsignmentReturn, settleOutboundDocument, updateSJStatus,
+      addSupplier, addPO, addUser, updateUser, deleteUser, changeUserPassword, updateSettings, resetData, importCsv,
+      addStackAllocation, updateStackAllocation, deleteStackAllocation,
+      addStackTreatment,
+      addStockMutation,
+      saveConsignmentLayout,
+      addConsignmentOpname,
     }}>
       {children}
     </DataContext.Provider>
