@@ -194,6 +194,14 @@ const DaftarProduk = () => {
                   <div className="rounded-lg border border-[#2b3b52] px-3 py-2 text-xs text-[#c7d0dc] self-end">Total: <b className="font-mono">{formatRp(Number(modal.data.loadingFeeLabor || 0) + Number(modal.data.loadingFeeDaily || 0) + Number(modal.data.loadingFeeWarehouse || 0))}</b> per {modal.data.unit || 'unit'}</div>
                 </div>
               </div>
+              <div className="mt-4 rounded-xl border border-[#294263] bg-[#0d1728] p-4">
+                <div className="text-sm font-semibold">Biaya Bongkar dan Tambahan Lembur</div>
+                <p className="text-xs text-[#8fb8ef] mt-1">Tarif tambahan per {modal.data.unit || 'unit'}. Lembur dihitung otomatis saat selesai ≥ 16.00 WIB; Sabtu/Minggu memakai tambahan hari libur.</p>
+                <div className="mt-3"><label className="text-xs text-[#93c5fd] block mb-1">Status tagihan bongkar</label><select value={modal.data.unloadingFeeChargeMode || 'TIDAK_ADA'} onChange={(e) => setModal({ ...modal, data: { ...modal.data, unloadingFeeChargeMode: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2 text-sm"><option value="PENGIRIM">Ditagihkan ke pengirim</option><option value="TERMASUK">Termasuk harga / dokumen</option><option value="TIDAK_ADA">Tidak ada biaya bongkar</option></select></div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+                  {[['unloadingFee', 'Bongkar normal'], ['loadingOvertime', 'Lembur sore pemuatan'], ['loadingHoliday', 'Tambahan hari libur pemuatan'], ['loadingHolidayOvertime', 'Tambahan sore hari libur pemuatan'], ['unloadingOvertime', 'Lembur sore bongkar'], ['unloadingHoliday', 'Tambahan hari libur bongkar'], ['unloadingHolidayOvertime', 'Tambahan sore hari libur bongkar']].map(([prefix, label]) => <div key={prefix} className="rounded-lg border border-[#2b3b52] p-3"><div className="text-xs font-semibold text-[#c7d0dc] mb-2">{label}</div><div className="grid grid-cols-3 gap-2">{[['Labor','Buruh'],['Daily','UH'],['Warehouse','Gudang']].map(([suffix, short]) => <div key={suffix}><label className="text-[10px] text-[#8fb8ef] block mb-1">{short}</label><input type="number" min="0" step="1" value={modal.data[`${prefix}${suffix}`] ?? 0} onChange={(e) => setModal({ ...modal, data: { ...modal.data, [`${prefix}${suffix}`]: Number(e.target.value) } })} className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded px-2 py-1.5 text-xs font-mono" /></div>)}</div></div>)}
+                </div>
+              </div>
               <div className="flex justify-end gap-2 mt-6">
                 <button onClick={() => setModal(null)} className="px-4 py-2.5 rounded-lg border border-[#242f3d] text-sm hover:bg-[#141a24]">Batal</button>
                 <button data-testid="product-save-btn" onClick={save} className="btn-primary px-5 py-2.5 rounded-lg text-sm font-semibold">Simpan Master</button>
