@@ -564,6 +564,7 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
                     "documentNo": item.get("documentNo", load.get("ref", "")),
                     "secondary": item.get("secondary", ""),
                     "secondaryQty": float(item.get("secondaryQty", 0) or 0),
+                    "measureUnit": item.get("measureUnit", "kg") or "kg",
                     "sec": (
                         f"{int(float(item.get('qty', 0) or 0) // float(item.get('secondaryQty', 0) or 1))} "
                         f"{item.get('secondary', '')} + "
