@@ -62,12 +62,12 @@ function AppRoutes() {
       <Route path="/catat" element={<Protected permission="operations"><CatatStok /></Protected>} />
       <Route path="/mutasi" element={<Protected permission="mutasi"><MutasiStok /></Protected>} />
       <Route path="/pengeluaran" element={<Protected permission="outbound"><Pengeluaran /></Protected>} />
-      <Route path="/surat-jalan" element={<Protected><WorkflowModule type="suratjalan" /></Protected>} />
-      <Route path="/retur" element={<Protected permission="outbound"><WorkflowModule type="retur" /></Protected>} />
+      <Route path="/surat-jalan" element={<Protected permission="outbound"><Pengeluaran /></Protected>} />
+      <Route path="/retur" element={<Protected permission="outbound"><Pengeluaran /></Protected>} />
       <Route path="/repacking" element={<Protected permission="rebagging"><WorkflowModule type="repacking" /></Protected>} />
       <Route path="/qc" element={<Protected permission="qc"><WorkflowModule type="qc" /></Protected>} />
-      <Route path="/master-gudang" element={<Protected permission="settings"><WorkflowModule type="gudang" /></Protected>} />
-      <Route path="/treatment" element={<Protected permission="operations"><WorkflowModule type="treatment" /></Protected>} />
+      <Route path="/master-gudang" element={<Protected permission="settings"><Pengaturan /></Protected>} />
+      <Route path="/treatment" element={<Protected permission="operations"><TumpukanStok /></Protected>} />
       <Route path="/riwayat" element={<Protected><Riwayat /></Protected>} />
       <Route path="/po" element={<Protected><PurchaseOrder /></Protected>} />
       <Route path="/supplier" element={<Protected><Supplier /></Protected>} />
