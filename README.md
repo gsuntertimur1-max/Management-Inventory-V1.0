@@ -62,3 +62,6 @@ Login Google lama tidak diaktifkan karena bergantung pada layanan Emergent. Logi
 - `backend/seed_data.csv` hanya berisi header agar data stok/pemasok tidak dipublikasikan.
 - Gunakan database uji yang terpisah saat verifikasi. Kode ini tidak memigrasikan atau menghapus database aktif secara otomatis.
 - Bila secret pernah masuk ke riwayat Git repository publik, ganti/rotasi secret tersebut sebelum deployment.
+
+
+Rollback deployment marker: restore inventory-dev to base commit 1345a29.
