@@ -1,1 +1,4 @@
-Restore trigger for inventory-dev. Base app source is commit 1345a29.
+Restore trigger for inventory-dev.
+Base app source is commit 1345a29.
+Railway deploy trigger after Dockerfile port fix.
+Triggered at 2026-09-14T08:28:11.780Z.
