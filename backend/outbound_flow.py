@@ -15,6 +15,9 @@ from backend.server import (
     now_iso,
     operational_now,
     require_write,
+    ensure_channel_stock,
+    normalize_channel,
+    channel_balance,
 )
 from backend.stack_allocations import valid_stack_codes, allocate_stock_to_stack, decrease_stack_allocation, reconcile_product_allocations
 
@@ -34,6 +37,7 @@ class OutboundItemInput(BaseModel):
     qty: float = Field(gt=0)
     documentNo: str = ""
     stackCode: str = ""
+    channel: str = ""
 
 
 class OutboundCreateInput(BaseModel):
@@ -101,7 +105,7 @@ def _weighing_entries(average: float, minimum: float, maximum: float) -> list[di
     return [{"no": index, "gross": value / 100} for index, value in enumerate(values, 1)]
 
 
-async def _reserved_qty(product_id: str, kondisi: str, exclude_id: str = "") -> float:
+async def _reserved_qty(product_id: str, kondisi: str, exclude_id: str = "", channel: str = "") -> float:
     query = {"status": {"$in": ["Menunggu", "Sedang Dimuat"]}}
     if exclude_id:
         query["id"] = {"$ne": exclude_id}
@@ -111,7 +115,7 @@ async def _reserved_qty(product_id: str, kondisi: str, exclude_id: str = "") -> 
         if doc.get("kondisi", "BAIK") != kondisi:
             continue
         for item in doc.get("items", []):
-            if item.get("productId") == product_id:
+            if item.get("productId") == product_id and (not channel or normalize_channel(item.get("channel"), normalize_channel(doc.get("channel"))) == channel):
                 total += float(item.get("qty", 0) or 0)
     return total
 
@@ -207,6 +211,18 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
                 ),
             )
 
+    channel_requested = defaultdict(float)
+    for item in body.items:
+        channel = normalize_channel(item.channel, normalize_channel(products[item.productId].get("channel")))
+        channel_requested[(item.productId, channel)] += float(item.qty)
+    for (product_id, channel), qty in channel_requested.items():
+        product = products[product_id]
+        await ensure_channel_stock(product)
+        reserved = await _reserved_qty(product_id, body.kondisi, channel=channel)
+        available = max(channel_balance(product, channel, "damaged" if body.kondisi == "RUSAK" else "stock") - reserved, 0)
+        if qty > available + 1e-9:
+            raise HTTPException(status_code=400, detail=f"Stok {channel} untuk {product.get('name', 'produk')} tidak mencukupi. Tersedia {available:g} {product.get('unit', '')}")
+
     load_items = []
     for item in body.items:
         product = products[item.productId]
@@ -216,9 +232,10 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         qty = float(item.qty)
         weight = float(product.get("weight", 0) or 0)
         stack_code = item.stackCode.strip().upper()
+        channel = normalize_channel(item.channel, normalize_channel(product.get("channel")))
         if stack_code and stack_code not in await valid_stack_codes():
             raise HTTPException(status_code=400, detail="Tumpukan asal tidak valid")
-        load_items.append({"productId": item.productId, "documentNo": item_ref, "sku": product.get("sku", ""), "name": product.get("name", ""), "qty": qty, "unit": product.get("unit", ""), "weight": weight, "berat": weight * qty, "secondary": product.get("secondary", ""), "secondaryQty": float(product.get("secondaryQty", 0) or 0), "location": product.get("location", ""), "stackCode": stack_code})
+        load_items.append({"productId": item.productId, "documentNo": item_ref, "sku": product.get("sku", ""), "name": product.get("name", ""), "channel": channel, "qty": qty, "unit": product.get("unit", ""), "weight": weight, "berat": weight * qty, "secondary": product.get("secondary", ""), "secondaryQty": float(product.get("secondaryQty", 0) or 0), "location": product.get("location", ""), "stackCode": stack_code})
 
     ordered_products = [products[product_id] for product_id in item_order]
     unit_loading, queue_prefix = _loading_unit_from_products(ordered_products)
@@ -346,9 +363,11 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
                 if not from_stack or float(from_stack.get("primaryQty", 0) or 0) + 1e-9 < qty:
                     raise HTTPException(status_code=400, detail=f"Stok {product.get('name', '')} pada {item['stackCode']} tidak mencukupi")
 
+            channel = normalize_channel(item.get("channel"), normalize_channel(product.get("channel")))
+            await ensure_channel_stock(product)
             result = await db.products.update_one(
-                {"id": product["id"], field: {"$gte": qty}},
-                {"$inc": {field: -qty}},
+                {"id": product["id"], field: {"$gte": qty}, f"channelStock.{channel}.{field}": {"$gte": qty}},
+                {"$inc": {field: -qty, f"channelStock.{channel}.{field}": -qty}},
             )
             if result.matched_count == 0:
                 raise HTTPException(
@@ -377,6 +396,7 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
                 "total_weight": float(product.get("weight", 0) or 0) * qty,
                 "secondary": product.get("secondary", ""),
                 "secondaryQty": float(product.get("secondaryQty", 0) or 0),
+                "channel": channel,
                 "penerima": load.get("party", "-"),
                 "pengambil": load.get("pengambil", ""),
                 "polisi": load.get("polisi", ""),
@@ -421,6 +441,7 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
                 {
                     "name": item.get("name", ""),
                     "sku": item.get("sku", ""),
+                    "channel": item.get("channel", ""),
                     "qty": float(item.get("qty", 0) or 0),
                     "unit": item.get("unit", ""),
                     "berat": float(item.get("berat", 0) or 0),
@@ -525,14 +546,18 @@ async def create_consignment_return(load_id: str, body: ConsignmentReturnInput, 
                 for placement in placements:
                     if placement.stackCode.strip().upper() not in await valid_stack_codes():
                         raise HTTPException(status_code=400, detail=f"Pilih lokasi tumpukan untuk barang Good {source.get('name', '')}")
-                await db.products.update_one({"id": item.productId}, {"$inc": {"stock": good_qty}})
+                return_channel = normalize_channel(source.get("channel"), normalize_channel(product.get("channel")))
+                await ensure_channel_stock(product)
+                await db.products.update_one({"id": item.productId}, {"$inc": {"stock": good_qty, f"channelStock.{return_channel}.stock": good_qty}})
                 stock_changes.append((item.productId, "stock", good_qty))
                 for placement in placements:
                     await allocate_stock_to_stack(product, placement.stackCode, float(placement.goodQty), user.get("name", ""))
             if item.damagedQty:
-                await db.products.update_one({"id": item.productId}, {"$inc": {"damaged": float(item.damagedQty)}})
+                return_channel = normalize_channel(source.get("channel"), normalize_channel(product.get("channel")))
+                await ensure_channel_stock(product)
+                await db.products.update_one({"id": item.productId}, {"$inc": {"damaged": float(item.damagedQty), f"channelStock.{return_channel}.damaged": float(item.damagedQty)}})
                 stock_changes.append((item.productId, "damaged", float(item.damagedQty)))
-            link_items.append({"productId": item.productId, "name": source.get("name", ""), "unit": source.get("unit", ""), "goodQty": good_qty, "damagedQty": float(item.damagedQty), "stackCode": placements[0].stackCode.strip().upper() if len(placements) == 1 else "", "placements": [{"goodQty": float(placement.goodQty), "stackCode": placement.stackCode.strip().upper()} for placement in placements]})
+            link_items.append({"productId": item.productId, "name": source.get("name", ""), "unit": source.get("unit", ""), "channel": source.get("channel", ""), "goodQty": good_qty, "damagedQty": float(item.damagedQty), "stackCode": placements[0].stackCode.strip().upper() if len(placements) == 1 else "", "placements": [{"goodQty": float(placement.goodQty), "stackCode": placement.stackCode.strip().upper()} for placement in placements]})
         if not link_items:
             raise HTTPException(status_code=400, detail="Isi jumlah barang yang dikembalikan")
         link = {"id": new_id(), "type": body.returnType, "no": document_no, "time": now_iso(), "items": link_items, "note": body.note.strip(), "operator": user.get("name", "")}
@@ -540,7 +565,7 @@ async def create_consignment_return(load_id: str, body: ConsignmentReturnInput, 
         complete = all(sum(_linked_totals(prospective, product_id)) >= float(source.get("qty", 0) or 0) - 1e-9 for product_id, source in original.items())
         status = "Selesai Dokumen" if complete else f"{body.returnType} Tercatat · Menunggu SO"
         await db.outbound_loads.update_one({"id": load_id}, {"$push": {"document_links": link}, "$set": {"document_status": status}})
-        txns = [{"id": new_id(), "load_id": load_id, "time": link["time"], "ref": document_no, "type": "MASUK", "kondisi": "PENGEMBALIAN", "document_type": body.returnType, "parent_document": load.get("ref", ""), "product": x["name"], "change": x["goodQty"] + x["damagedQty"], "good_change": x["goodQty"], "damaged_change": x["damagedQty"], "unit": x["unit"], "penerima": load.get("party", ""), "operator": user.get("name", ""), "keterangan": body.note.strip()} for x in link_items]
+        txns = [{"id": new_id(), "load_id": load_id, "time": link["time"], "ref": document_no, "type": "MASUK", "kondisi": "PENGEMBALIAN", "document_type": body.returnType, "parent_document": load.get("ref", ""), "product": x["name"], "change": x["goodQty"] + x["damagedQty"], "good_change": x["goodQty"], "damaged_change": x["damagedQty"], "unit": x["unit"], "channel": x.get("channel", ""), "penerima": load.get("party", ""), "operator": user.get("name", ""), "keterangan": body.note.strip()} for x in link_items]
         await db.transactions.insert_many(txns)
         return link
     except Exception:
@@ -570,10 +595,10 @@ async def settle_outbound_document(load_id: str, body: SettlementInput, user: di
         returned, sold = _linked_totals(load, item.productId)
         if float(item.qty) > float(source.get("qty", 0) or 0) - returned - sold + 1e-9:
             raise HTTPException(status_code=400, detail=f"Jumlah SO {source.get('name', '')} melebihi sisa dokumen")
-        items.append({"productId": item.productId, "name": source.get("name", ""), "unit": source.get("unit", ""), "qty": float(item.qty)})
+        items.append({"productId": item.productId, "name": source.get("name", ""), "unit": source.get("unit", ""), "channel": source.get("channel", ""), "qty": float(item.qty)})
     link = {"id": new_id(), "type": "SO", "no": document_no, "time": now_iso(), "items": items, "note": body.note.strip(), "operator": user.get("name", "")}
     prospective = {**load, "document_links": [*load.get("document_links", []), link]}
     complete = all(sum(_linked_totals(prospective, pid)) >= float(source.get("qty", 0) or 0) - 1e-9 for pid, source in original.items())
     await db.outbound_loads.update_one({"id": load_id}, {"$push": {"document_links": link}, "$set": {"document_status": "Selesai Dokumen" if complete else "SO Sebagian · Belum Selesai"}})
-    await db.transactions.insert_many([{"id": new_id(), "load_id": load_id, "time": link["time"], "ref": document_no, "type": "DOKUMEN", "kondisi": "—", "document_type": "SO", "parent_document": load.get("ref", ""), "product": item["name"], "change": 0, "settled_qty": item["qty"], "unit": item["unit"], "penerima": load.get("party", ""), "operator": user.get("name", ""), "keterangan": body.note.strip()} for item in items])
+    await db.transactions.insert_many([{"id": new_id(), "load_id": load_id, "time": link["time"], "ref": document_no, "type": "DOKUMEN", "kondisi": "—", "document_type": "SO", "parent_document": load.get("ref", ""), "product": item["name"], "change": 0, "settled_qty": item["qty"], "unit": item["unit"], "channel": item.get("channel", ""), "penerima": load.get("party", ""), "operator": user.get("name", ""), "keterangan": body.note.strip()} for item in items])
     return link
