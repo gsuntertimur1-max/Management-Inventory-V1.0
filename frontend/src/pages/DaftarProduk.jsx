@@ -7,12 +7,12 @@ import { apiError, downloadApiFile } from '../lib/api';
 import { formatRp, formatNum, catColor, DEFAULT_CATEGORIES } from '../mock';
 import { toast } from 'sonner';
 import { packagingText, totalWeight } from '../lib/packaging';
-import { stackCodes } from '../lib/warehouses';
 
 const empty = {
   name: '', sku: '', category: 'F&B / Bahan Makanan', cost: 0,
   location: '', supplier: '', min: 0, unit: 'Pack', weight: 0, secondary: '', secondaryQty: 0,
 };
+const STACKS = [...Array.from({ length: 8 }, (_, i) => String(i + 17)).flatMap((unit) => ['A', 'B', 'C'].flatMap((zone) => Array.from({ length: 4 }, (_, i) => `${unit}/${zone}${String(i + 1).padStart(2, '0')}`))), ...['A', 'B'].flatMap((zone) => Array.from({ length: 8 }, (_, i) => `MP1/${zone}${String(i + 1).padStart(2, '0')}`))];
 
 const masterPayload = (data) => ({
   name: data.name || '',
@@ -31,7 +31,6 @@ const masterPayload = (data) => ({
 const DaftarProduk = () => {
   const navigate = useNavigate();
   const { products, suppliers, settings, addProduct, updateProduct, deleteProduct, canManageMasterData } = useData();
-  const STACKS = stackCodes(settings?.warehouses);
   const categories = settings?.categories?.length ? settings.categories : DEFAULT_CATEGORIES;
   const activeCategories = categories.filter((item) => item.active !== false);
   const [q, setQ] = useState('');

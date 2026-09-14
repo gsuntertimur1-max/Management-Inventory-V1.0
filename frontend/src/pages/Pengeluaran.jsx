@@ -6,8 +6,8 @@ import { formatNum, formatDate } from '../mock';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { apiError, downloadApiFile } from '../lib/api';
-import { stackCodes } from '../lib/warehouses';
 
+const STACKS = [...Array.from({ length: 8 }, (_, i) => String(i + 17)).flatMap((unit) => ['A', 'B', 'C'].flatMap((zone) => Array.from({ length: 4 }, (_, i) => `${unit}/${zone}${String(i + 1).padStart(2, '0')}`))), ...['A', 'B'].flatMap((zone) => Array.from({ length: 8 }, (_, i) => `MP1/${zone}${String(i + 1).padStart(2, '0')}`))];
 
 const STATUS = {
   'Menunggu': { c: '#eab308', bg: 'rgba(234,179,8,.15)' },
@@ -35,8 +35,7 @@ const printDateWib = (value) => {
 };
 
 const Pengeluaran = () => {
-  const { outboundLoads, suratJalan, settings, startOutboundLoad, completeOutboundLoad, createConsignmentReturn, settleOutboundDocument } = useData();
-  const STACKS = stackCodes(settings?.warehouses);
+  const { outboundLoads, suratJalan, startOutboundLoad, completeOutboundLoad, createConsignmentReturn, settleOutboundDocument } = useData();
   const navigate = useNavigate();
   const [filter, setFilter] = useState('Semua Status');
   const [query, setQuery] = useState('');

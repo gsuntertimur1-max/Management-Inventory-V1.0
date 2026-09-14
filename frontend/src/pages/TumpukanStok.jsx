@@ -4,16 +4,17 @@ import { toast } from 'sonner';
 import { useData } from '../context/DataContext';
 import { apiError, downloadApiFile } from '../lib/api';
 import { formatNum } from '../mock';
-import { stackCodes, warehousesFromSettings, zonesForWarehouse } from '../lib/warehouses';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 
+const WAREHOUSES = [...Array.from({ length: 8 }, (_, i) => String(i + 17)), 'MP1'];
+const codesFor = (wh) => (wh === 'MP1' ? ['A', 'B'] : ['A', 'B', 'C'])
+  .flatMap((zone) => Array.from({ length: wh === 'MP1' ? 8 : 4 }, (_, i) => `${wh}/${zone}${String(i + 1).padStart(2, '0')}`));
 const blank = (stackCode) => ({ productId: '', stackCode, length: 1, width: 1, height: 1, arrangements: [{ hamparan: 1, kaki: 1, height: 1 }], extraSecondary: 0, extraPrimary: 0, note: '' });
 
 const TumpukanStok = () => {
-  const { products, stackAllocations, stackTreatments, consignmentStock, consignmentLayouts, consignmentLayoutHistory, canWrite, settings, addStackAllocation, updateStackAllocation, deleteStackAllocation, addStackTreatment, saveConsignmentLayout } = useData();
-  const warehouses = warehousesFromSettings(settings?.warehouses).filter((item) => item.active !== false);
-  const [warehouse, setWarehouse] = useState(warehouses[0]?.code || '17');
-  const [selected, setSelected] = useState(`${warehouses[0]?.code || '17'}/A01`);
+  const { products, stackAllocations, stackTreatments, consignmentStock, consignmentLayouts, consignmentLayoutHistory, canWrite, addStackAllocation, updateStackAllocation, deleteStackAllocation, addStackTreatment, saveConsignmentLayout } = useData();
+  const [warehouse, setWarehouse] = useState('17');
+  const [selected, setSelected] = useState('17/A01');
   const [modal, setModal] = useState(null);
   const [busy, setBusy] = useState(false);
   const [treatmentModal, setTreatmentModal] = useState(null);
@@ -31,7 +32,6 @@ const TumpukanStok = () => {
   const consignmentSecondary = consignmentModal ? consignmentModal.arrangements.reduce((sum, row) => sum + Number(row.hamparan || 0) * Number(row.kaki || 0) * Number(row.height || 0), 0) + Number(consignmentModal.extraSecondary || 0) : 0;
   const consignmentCalculated = consignmentModal ? consignmentSecondary * Number(consignmentModal.secondaryQty || 0) + Number(consignmentModal.extraPrimary || 0) : 0;
 
-  const codesFor = (value) => stackCodes(warehouses).filter((code) => code.startsWith(`${value}/`));
   const chooseWarehouse = (value) => { setWarehouse(value); setSelected(codesFor(value)[0]); };
   const openEdit = (item) => setModal({ mode: 'edit', id: item.id, data: { productId: item.productId, stackCode: item.stackCode, length: item.length || 1, width: item.width || 1, height: item.height || 1, arrangements: item.arrangements?.length ? item.arrangements : [{ hamparan: item.length || 1, kaki: item.width || 1, height: item.height || 1 }], extraSecondary: item.extraSecondary || 0, extraPrimary: item.extraPrimary || item.primaryRemainder || 0, note: item.note || '', originalPrimaryQty: item.primaryQty } });
   const save = async () => {
@@ -53,8 +53,7 @@ const TumpukanStok = () => {
   const occupied = new Set(stackAllocations.map((item) => item.stackCode)).size;
   const totalAllocated = stackAllocations.reduce((n, item) => n + Number(item.primaryQty || 0), 0);
   const unallocated = products.reduce((n, item) => n + Math.max(Number(item.stock || 0) - Number(allocated[item.id] || 0), 0), 0);
-  const warehouseConfig = warehouses.find((item) => item.code === warehouse) || warehouses[0];
-  const zones = zonesForWarehouse(warehouseConfig);
+  const zones = warehouse === 'MP1' ? ['B', 'A'] : ['C', 'B', 'A'];
   const lastSpraying = stackTreatments.find((item) => item.type === 'SPRAYING' && item.warehouse === warehouse);
   const lastFumigation = stackTreatments.find((item) => item.type !== 'SPRAYING' && item.stackCode === selected);
   const openTreatment = (type) => {
@@ -78,22 +77,22 @@ const TumpukanStok = () => {
     <div className="flex flex-col xl:flex-row xl:items-end xl:justify-between gap-4">
       <div><div className="label-mono mb-2">Gudang Sunter Timur I & II</div><h1 className="font-display text-3xl md:text-4xl font-bold">Peta Tumpukan Stok</h1><p className="text-sm text-[#8b93a1] mt-2">Susunan komoditas berdasarkan kemasan sekunder.</p></div>
       <div className="grid grid-cols-3 gap-2">
-        {[['Terisi', `${occupied}/${stackCodes(warehouses).length}`, 'text-white'], ['Ditempatkan', formatNum(totalAllocated), 'text-[#60a5fa]'], ['Belum ditempatkan', formatNum(unallocated), unallocated ? 'text-[#f59e0b]' : 'text-[#22c55e]']].map(([label, value, color]) => <div key={label} className="card-surface p-3"><div className="text-xs text-[#6b7688]">{label}</div><div className={`font-display text-lg md:text-xl font-bold mt-1 ${color}`}>{value}</div></div>)}
+        {[['Terisi', `${occupied}/112`, 'text-white'], ['Ditempatkan', formatNum(totalAllocated), 'text-[#60a5fa]'], ['Belum ditempatkan', formatNum(unallocated), unallocated ? 'text-[#f59e0b]' : 'text-[#22c55e]']].map(([label, value, color]) => <div key={label} className="card-surface p-3"><div className="text-xs text-[#6b7688]">{label}</div><div className={`font-display text-lg md:text-xl font-bold mt-1 ${color}`}>{value}</div></div>)}
       </div>
     </div>
 
-    <div className="card-surface p-3 overflow-x-auto"><div className="flex gap-2 min-w-max">{warehouses.map((wh) => <button key={wh.code} onClick={() => chooseWarehouse(wh.code)} className={`px-4 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2 ${warehouse === wh.code ? 'bg-[#2563eb] text-white' : 'bg-[#101722] text-[#8b93a1]'}`}><Warehouse size={16} />{wh.name}</button>)}</div></div>
+    <div className="card-surface p-3 overflow-x-auto"><div className="flex gap-2 min-w-max">{WAREHOUSES.map((wh) => <button key={wh} onClick={() => chooseWarehouse(wh)} className={`px-4 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2 ${warehouse === wh ? 'bg-[#2563eb] text-white' : 'bg-[#101722] text-[#8b93a1]'}`}><Warehouse size={16} />{wh === 'MP1' ? 'MP1' : `GBB ${wh}`}</button>)}</div></div>
 
     <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_390px] gap-5">
       <section className="card-surface p-4 md:p-5">
-        <div className="flex justify-between mb-4"><div><h2 className="font-display text-xl font-bold">{warehouseConfig?.name}</h2><p className="text-xs text-[#6b7688] mt-1">{warehouseConfig?.length} × {warehouseConfig?.width} meter · {warehouseConfig?.type === 'MP' ? 'pintu utama depan dan belakang' : 'dua posisi pintu'} · Klik tumpukan untuk melihat isinya.</p></div><span className="hidden sm:flex items-center gap-2 text-xs text-[#6b7688]"><DoorOpen size={16} />Pintu depan</span></div>
-        {warehouseConfig?.type !== 'MP' && <div className="mb-2 rounded-lg border border-dashed border-[#35445b] bg-[#0b0f17] py-2 text-center text-[11px] text-[#8b93a1]">Lorong / jalan keliling GBB · batas antar-tumpukan</div>}
-        <div className={`grid ${warehouseConfig?.type === 'MP' ? 'grid-cols-2' : ''} gap-2 md:gap-3`} style={warehouseConfig?.type === 'MP' ? undefined : { gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>{zones.map((zone) => <div key={zone} className="space-y-2 min-w-0"><div className="text-center text-sm font-bold text-[#93c5fd] py-2 rounded-lg bg-[#0d1728]">Tumpukan {zone}</div>{codesFor(warehouse).filter((code) => code.includes(`/${zone}`)).map((code) => {
+        <div className="flex justify-between mb-4"><div><h2 className="font-display text-xl font-bold">{warehouse === 'MP1' ? 'MP1' : `GBB ${warehouse}`}</h2><p className="text-xs text-[#6b7688] mt-1">{warehouse === 'MP1' ? '230 × 30 meter · membentang di antara GBB 17–20 dan GBB 21–24' : '50 × 30 meter · dua posisi pintu'} · Klik tumpukan untuk melihat isinya.</p></div><span className="hidden sm:flex items-center gap-2 text-xs text-[#6b7688]"><DoorOpen size={16} />Pintu depan</span></div>
+        {warehouse !== 'MP1' && <div className="mb-2 rounded-lg border border-dashed border-[#35445b] bg-[#0b0f17] py-2 text-center text-[11px] text-[#8b93a1]">Lorong / jalan keliling GBB · batas antar-tumpukan</div>}
+        <div className={`grid ${warehouse === 'MP1' ? 'grid-cols-2' : ''} gap-2 md:gap-3`} style={warehouse === 'MP1' ? undefined : { gridTemplateColumns: '3fr 4fr 3fr' }}>{zones.map((zone) => <div key={zone} className="space-y-2 min-w-0"><div className="text-center text-sm font-bold text-[#93c5fd] py-2 rounded-lg bg-[#0d1728]">Tumpukan {zone}{warehouse !== 'MP1' && <span className="ml-1 text-[10px] text-[#6b7688]">· {zone === 'B' ? '20 m' : '15 m'}</span>}</div>{codesFor(warehouse).filter((code) => code.includes(`/${zone}`)).map((code) => {
           const items = grouped[code] || [];
           const productNames = items.map((item) => item.productName).filter(Boolean);
           return <button key={code} onClick={() => setSelected(code)} title={productNames.join(', ')} className={`w-full min-h-[100px] p-2.5 rounded-xl border text-left ${selected === code ? 'border-[#3b82f6] bg-[#102044]' : items.length ? 'border-[#214a3a] bg-[#0d1c19]' : 'border-[#202a38] bg-[#0b0f17]'}`}><div className="flex justify-between"><span className="font-mono text-xs md:text-sm font-bold">{code}</span><span className={`w-2 h-2 rounded-full ${items.length ? 'bg-[#22c55e]' : 'bg-[#374151]'}`} /></div>{items.length ? <><div className="mt-3 text-xs leading-5 text-[#d9e3ef] line-clamp-2">{productNames[0]}</div>{productNames.length > 1 && <div className="mt-1 text-[10px] text-[#8b93a1]">+ {productNames.length - 1} komoditi lain</div>}</> : <div className="mt-3 text-xs text-[#8b93a1]">Kosong</div>}</button>;
         })}</div>)}</div>
-        <div className="mt-4 flex justify-center gap-2 border border-dashed border-[#29364a] rounded-lg py-2.5 text-xs text-[#6b7688]"><DoorOpen size={15} />{warehouseConfig?.type === 'MP' ? 'Pintu utama depan dan belakang' : 'Pintu belakang terhubung menuju MP1'}</div>
+        <div className="mt-4 flex justify-center gap-2 border border-dashed border-[#29364a] rounded-lg py-2.5 text-xs text-[#6b7688]"><DoorOpen size={15} />{warehouse === 'MP1' ? 'Pintu utama depan dan belakang · lebar 30 meter' : 'Pintu belakang terhubung menuju MP1'}</div>
       </section>
 
       <aside className="card-surface p-5 h-fit xl:sticky xl:top-24">

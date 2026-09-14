@@ -10,23 +10,27 @@ from backend.server import build_xlsx, db, get_current_user, new_id, now_iso, re
 router = APIRouter(prefix="/api")
 
 
-async def valid_stack_codes() -> set[str]:
-    settings = await db.settings.find_one({"_id": "app"}, {"_id": 0, "warehouses": 1}) or {}
-    warehouses = settings.get("warehouses") or [
-        *[{"code": str(unit), "zones": [{"code": zone, "count": 4} for zone in ("A", "B", "C")]} for unit in range(17, 25)],
-        {"code": "MP1", "zones": [{"code": zone, "count": 8} for zone in ("A", "B")]},
-    ]
-    return {
-        f"{str(warehouse.get('code', '')).upper()}/{str(zone.get('code', '')).upper()}{number:02d}"
-        for warehouse in warehouses
-        for zone in warehouse.get("zones", [])
-        for number in range(1, int(zone.get("count", 0) or 0) + 1)
+def valid_stack_codes() -> set[str]:
+    unit_codes = {
+        f"{unit}/{zone}{number:02d}"
+        for unit in range(17, 25)
+        for zone in ("A", "B", "C")
+        for number in range(1, 5)
     }
+    mp_codes = {
+        f"MP1/{zone}{number:02d}"
+        for zone in ("A", "B")
+        for number in range(1, 9)
+    }
+    return unit_codes | mp_codes
+
+
+VALID_STACK_CODES = valid_stack_codes()
 
 
 async def allocate_stock_to_stack(product: dict, stack_code: str, qty: float, operator: str = "") -> None:
     stack_code = stack_code.strip().upper()
-    if stack_code not in await valid_stack_codes():
+    if stack_code not in VALID_STACK_CODES:
         raise HTTPException(status_code=400, detail="Lokasi tumpukan penerimaan tidak valid")
     per_secondary = float(product.get("secondaryQty", 0) or 0)
     if per_secondary <= 0 or not product.get("secondary"):
@@ -92,7 +96,7 @@ async def record_stack_history(action: str, allocation: dict, operator: str) -> 
 
 async def _build_allocation(body: StackAllocationBody, allocation_id: Optional[str] = None) -> dict:
     stack_code = body.stackCode.strip().upper()
-    if stack_code not in await valid_stack_codes():
+    if stack_code not in VALID_STACK_CODES:
         raise HTTPException(status_code=400, detail="Kode tumpukan tidak valid")
 
     product = await db.products.find_one({"id": body.productId}, {"_id": 0})
@@ -251,7 +255,7 @@ async def migrate_default_locations() -> None:
             await db.stack_allocations.update_one({"id": minyak_2l["id"]}, {"$set": {
                 "extraPrimary": 3, "primaryRemainder": 3, "primaryQty": corrected_qty,
             }})
-    products = await db.products.find({"location": {"$in": sorted(await valid_stack_codes())}}, {"_id": 0}).to_list(5000)
+    products = await db.products.find({"location": {"$in": sorted(VALID_STACK_CODES)}}, {"_id": 0}).to_list(5000)
     for product in products:
         if not product.get("secondary") or float(product.get("secondaryQty", 0) or 0) <= 0:
             continue
@@ -317,7 +321,7 @@ async def list_stack_treatments(user: dict = Depends(get_current_user)):
 async def create_stack_treatment(body: StackTreatmentBody, user: dict = Depends(require_write)):
     warehouse = body.warehouse.strip().upper()
     stack_code = body.stackCode.strip().upper()
-    if warehouse not in {code.split("/", 1)[0] for code in await valid_stack_codes()}:
+    if warehouse not in {str(x) for x in range(17, 25)} | {"MP1"}:
         raise HTTPException(status_code=400, detail="GBB tidak valid")
     if not body.startDate.strip():
         raise HTTPException(status_code=400, detail="Tanggal pelaksanaan wajib diisi")
@@ -325,7 +329,7 @@ async def create_stack_treatment(body: StackTreatmentBody, user: dict = Depends(
         raise HTTPException(status_code=400, detail="Tanggal buka sungkup wajib diisi")
     products = []
     if body.type != "SPRAYING":
-        if stack_code not in await valid_stack_codes():
+        if stack_code not in VALID_STACK_CODES:
             raise HTTPException(status_code=400, detail="Pilih tumpukan untuk fumigasi")
         allocations = await db.stack_allocations.find({"stackCode": stack_code}, {"_id": 0}).to_list(1000)
         products = [{"productId": x.get("productId"), "name": x.get("productName"), "qty": x.get("primaryQty"), "unit": x.get("unit")} for x in allocations if "BERAS" in str(x.get("productName", "")).upper()]
@@ -340,7 +344,7 @@ async def create_stack_treatment(body: StackTreatmentBody, user: dict = Depends(
 @router.get("/export/stack-card.xlsx")
 async def export_stack_card(stackCode: str, user: dict = Depends(get_current_user)):
     code = stackCode.strip().upper()
-    if code not in await valid_stack_codes():
+    if code not in VALID_STACK_CODES:
         raise HTTPException(status_code=400, detail="Kode tumpukan tidak valid")
     items = await db.stack_allocations.find({"stackCode": code}, {"_id": 0}).sort("productName", 1).to_list(1000)
     headers = ["KARTU TUMPUKAN", code, "", "", "", "", "", ""]

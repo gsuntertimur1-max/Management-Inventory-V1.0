@@ -16,7 +16,7 @@ from backend.server import (
     operational_now,
     require_write,
 )
-from backend.stack_allocations import valid_stack_codes, allocate_stock_to_stack, decrease_stack_allocation, reconcile_product_allocations
+from backend.stack_allocations import VALID_STACK_CODES, allocate_stock_to_stack, decrease_stack_allocation, reconcile_product_allocations
 
 router = APIRouter(prefix="/api")
 
@@ -216,7 +216,7 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         qty = float(item.qty)
         weight = float(product.get("weight", 0) or 0)
         stack_code = item.stackCode.strip().upper()
-        if stack_code and stack_code not in await valid_stack_codes():
+        if stack_code and stack_code not in VALID_STACK_CODES:
             raise HTTPException(status_code=400, detail="Tumpukan asal tidak valid")
         load_items.append({"productId": item.productId, "documentNo": item_ref, "sku": product.get("sku", ""), "name": product.get("name", ""), "qty": qty, "unit": product.get("unit", ""), "weight": weight, "berat": weight * qty, "secondary": product.get("secondary", ""), "secondaryQty": float(product.get("secondaryQty", 0) or 0), "location": product.get("location", ""), "stackCode": stack_code})
 
@@ -523,7 +523,7 @@ async def create_consignment_return(load_id: str, body: ConsignmentReturnInput, 
                 raise HTTPException(status_code=404, detail="Produk pengembalian tidak ditemukan")
             if good_qty:
                 for placement in placements:
-                    if placement.stackCode.strip().upper() not in await valid_stack_codes():
+                    if placement.stackCode.strip().upper() not in VALID_STACK_CODES:
                         raise HTTPException(status_code=400, detail=f"Pilih lokasi tumpukan untuk barang Good {source.get('name', '')}")
                 await db.products.update_one({"id": item.productId}, {"$inc": {"stock": good_qty}})
                 stock_changes.append((item.productId, "stock", good_qty))
