@@ -1,10 +1,11 @@
 from typing import Literal, List
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from pymongo import ReturnDocument
 
-from backend.server import db, get_current_user, new_id, now_iso, require_write
+from backend.server import build_xlsx, db, get_current_user, new_id, now_iso, operational_now, require_write, normalize_channel
 
 router = APIRouter(prefix="/api")
 
@@ -65,9 +66,10 @@ async def consignment_stock(destination: str = "") -> list[dict]:
             qty = max(float(item.get("qty", 0) or 0) - _settled_qty(load, product_id), 0)
             if qty <= 0:
                 continue
-            key = (load.get("consignment_destination", ""), product_id)
+            channel = normalize_channel(item.get("channel"), "KOM")
+            key = (load.get("consignment_destination", ""), product_id, channel)
             row = result.setdefault(key, {
-                "destination": key[0], "productId": product_id, "sku": item.get("sku", ""),
+                "destination": key[0], "productId": product_id, "channel": channel, "sku": item.get("sku", ""),
                 "name": item.get("name", ""), "unit": item.get("unit", ""),
                 "weight": float(item.get("weight", 0) or 0),
                 "secondary": item.get("secondary", ""), "secondaryQty": float(item.get("secondaryQty", 0) or 0),
@@ -79,12 +81,62 @@ async def consignment_stock(destination: str = "") -> list[dict]:
                 row["documents"].append(load["ref"])
             if load.get("request_document") and load["request_document"] not in row["requestDocuments"]:
                 row["requestDocuments"].append(load["request_document"])
-    return sorted(result.values(), key=lambda row: (row["destination"] != "Gudang Bazar", row["name"].lower(), row["sku"]))
+    return sorted(result.values(), key=lambda row: (row["destination"] != "Gudang Bazar", row["name"].lower(), row["channel"], row["sku"]))
 
 
 @router.get("/consignment-stock")
 async def list_consignment_stock(destination: str = "", user: dict = Depends(get_current_user)):
     return await consignment_stock(destination.strip())
+
+
+async def monitoring_stock() -> list[dict]:
+    rows = []
+    products = await db.products.find({}, {"_id": 0}).sort("name", 1).to_list(5000)
+    for product in products:
+        balances = product.get("channelStock") if isinstance(product.get("channelStock"), dict) else {}
+        if not balances:
+            channel = normalize_channel(product.get("channel"), "KOM")
+            balances = {channel: {"stock": float(product.get("stock", 0) or 0), "damaged": float(product.get("damaged", 0) or 0)}}
+        for channel in ("PSO", "KOM"):
+            balance = balances.get(channel) or {}
+            qty = float(balance.get("stock", 0) or 0)
+            damaged = float(balance.get("damaged", 0) or 0)
+            if qty <= 0 and damaged <= 0:
+                continue
+            weight = float(product.get("weight", 0) or 0)
+            rows.append({
+                "channel": channel, "location": product.get("location") or "Gudang Utama",
+                "locationType": "GUDANG", "productId": product.get("id", ""), "sku": product.get("sku", ""),
+                "name": product.get("name", ""), "unit": product.get("unit", ""), "qty": qty,
+                "damaged": damaged, "weight": weight, "totalWeight": qty * weight,
+                "secondary": product.get("secondary", ""), "secondaryQty": float(product.get("secondaryQty", 0) or 0),
+                "documents": [],
+            })
+    for item in await consignment_stock():
+        rows.append({
+            "channel": normalize_channel(item.get("channel"), "KOM"), "location": item["destination"],
+            "locationType": "KONSINYASI", "productId": item["productId"], "sku": item.get("sku", ""),
+            "name": item.get("name", ""), "unit": item.get("unit", ""), "qty": float(item.get("qty", 0) or 0),
+            "damaged": 0.0, "weight": float(item.get("weight", 0) or 0), "totalWeight": float(item.get("totalWeight", 0) or 0),
+            "secondary": item.get("secondary", ""), "secondaryQty": float(item.get("secondaryQty", 0) or 0),
+            "documents": item.get("documents", []),
+        })
+    return sorted(rows, key=lambda row: (row["location"] not in {"Gudang Bazar", "Gudang E-commerce"}, row["location"], row["channel"], row["name"].lower(), row["sku"]))
+
+
+@router.get("/monitoring-stock")
+async def list_monitoring_stock(user: dict = Depends(get_current_user)):
+    return await monitoring_stock()
+
+
+@router.get("/export/monitoring-stock.xlsx")
+async def export_monitoring_stock(user: dict = Depends(get_current_user)):
+    rows = await monitoring_stock()
+    headers = ["Saluran", "Lokasi", "Jenis Lokasi", "SKU", "Nama Komoditi", "Kuantum Pack/PCS", "Satuan", "Kuantum Berat (kg)", "Stok Rusak", "Dokumen Memo/ND"]
+    values = [[row["channel"], row["location"], row["locationType"], row["sku"], row["name"], row["qty"], row["unit"], row["totalWeight"], row["damaged"], ", ".join(row.get("documents", []))] for row in rows]
+    output = build_xlsx(headers, values, "Monitoring Stok")
+    filename = f"monitoring_stok_{operational_now().strftime('%Y%m%d_%H%M')}.xlsx"
+    return StreamingResponse(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 @router.get("/consignment-layouts")
