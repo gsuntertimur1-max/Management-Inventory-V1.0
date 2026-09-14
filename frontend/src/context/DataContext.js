@@ -25,6 +25,7 @@ const EMPTY = {
   transactions: [],
   monitoringStock: [],
   auditLog: [],
+  repackingJobs: [],
   stackAllocations: [],
   stackTreatments: [],
   consignmentStock: [],
@@ -51,7 +52,7 @@ export const DataProvider = ({ children }) => {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [p, suppliersRes, sj, loads, po, t, monitoringRes, auditRes, stacks, treatments, consignmentStockRes, consignmentLayoutsRes, consignmentHistoryRes, consignmentOpnamesRes, settingsRes, usersRes] = await Promise.all([
+      const [p, suppliersRes, sj, loads, po, t, monitoringRes, auditRes, repackingRes, stacks, treatments, consignmentStockRes, consignmentLayoutsRes, consignmentHistoryRes, consignmentOpnamesRes, settingsRes, usersRes] = await Promise.all([
         api.get('/products'),
         api.get('/suppliers'),
         api.get('/surat-jalan'),
@@ -60,6 +61,7 @@ export const DataProvider = ({ children }) => {
         api.get('/transactions'),
         api.get('/monitoring-stock'),
         api.get('/audit-log'),
+        api.get('/repacking-jobs'),
         api.get('/stack-allocations'),
         api.get('/stack-treatments'),
         api.get('/consignment-stock'),
@@ -79,6 +81,7 @@ export const DataProvider = ({ children }) => {
         transactions: t.data,
         monitoringStock: monitoringRes.data,
         auditLog: auditRes.data,
+        repackingJobs: repackingRes.data,
         stackAllocations: stacks.data,
         stackTreatments: treatments.data,
         consignmentStock: consignmentStockRes.data,
@@ -206,6 +209,8 @@ export const DataProvider = ({ children }) => {
   const deleteStackAllocation = async (id) => { await api.delete(`/stack-allocations/${id}`); await fetchAll(); };
   const addStackTreatment = async (payload) => { await api.post('/stack-treatments', payload); await fetchAll(); };
   const addStockMutation = async (payload) => { const { data } = await api.post('/stock-mutations', payload); await fetchAll(); return data; };
+  const addRepackingJob = async (payload) => { const { data } = await api.post('/repacking-jobs', payload); await fetchAll(); return data; };
+  const addQCInspection = async (payload) => { const { data } = await api.post('/qc-inspections', payload); await fetchAll(); return data; };
   const saveConsignmentLayout = async (payload) => { await api.put('/consignment-layouts', payload); await fetchAll(); };
   const addConsignmentOpname = async (payload) => { await api.post('/consignment-opnames', payload); await fetchAll(); };
 
@@ -230,6 +235,8 @@ export const DataProvider = ({ children }) => {
       addStackAllocation, updateStackAllocation, deleteStackAllocation,
       addStackTreatment,
       addStockMutation,
+      addRepackingJob,
+      addQCInspection,
       saveConsignmentLayout,
       addConsignmentOpname,
     }}>
