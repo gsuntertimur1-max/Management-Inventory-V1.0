@@ -192,14 +192,32 @@ const Pengeluaran = () => {
   const printDailyCost = (recipient) => {
     if (!costReport) return;
     const key = recipient === 'BURUH' ? 'labor' : 'daily';
-    const title = recipient === 'BURUH' ? 'REKAP UPAH BURUH PEMUATAN' : 'REKAP UPAH HARIAN GUDANG';
-    const rows = (costReport.loads || []).filter((load) => Number(load.cost?.[key] || 0) > 0).map((load, index) => `<tr><td>${index + 1}</td><td>${escapeHtml(load.ref || load.antrian)}</td><td>${escapeHtml(load.party || '-')}</td><td class="r">Rp ${escapeHtml(formatNum(load.cost[key] || 0))}</td></tr>`).join('');
-    const total = costReport.totals?.[key] || 0;
+    const title = recipient === 'BURUH' ? 'REKAP UPAH BURUH PEMUATAN' : 'REKAP UH GUDANG PEMUATAN';
+    const grouped = {};
+    (costReport.loads || []).forEach((load) => (load.items || []).forEach((item) => {
+      const fee = item.loadingFee || {};
+      const amount = Number(fee[key] || 0);
+      if (!amount) return;
+      const groupKey = item.productId || item.sku || item.name;
+      const row = grouped[groupKey] || { name: item.name || '-', qty: 0, berat: 0, secondary: item.secondary || 'karung', secondaryQty: Number(item.secondaryQty || 0), amount: 0, overtime: 0 };
+      row.qty += Number(item.qty || 0);
+      row.berat += Number(item.berat || 0);
+      row.amount += amount;
+      if (fee.overtime || fee.holiday) row.overtime += amount;
+      grouped[groupKey] = row;
+    }));
+    const rows = Object.values(grouped).sort((a, b) => a.name.localeCompare(b.name)).map((item, index) => {
+      const secondary = item.secondaryQty ? item.qty / item.secondaryQty : 0;
+      return `<tr><td>${index + 1}</td><td><b>${escapeHtml(item.name)}</b><br><small>${escapeHtml(formatNum(item.qty))} pcs/pack · ${escapeHtml(formatNum(item.berat))} kg · ${escapeHtml(formatNum(secondary))} ${escapeHtml(item.secondary)}</small>${item.overtime ? '<br><small>Termasuk lembur/hari libur</small>' : ''}</td><td class="r">Rp ${escapeHtml(formatNum(item.amount))}</td></tr>`;
+    }).join('');
+    const total = Object.values(grouped).reduce((sum, item) => sum + item.amount, 0);
+    const overtimeTotal = Object.values(grouped).reduce((sum, item) => sum + item.overtime, 0);
     const w = window.open('', '_blank', 'width=420,height=760');
     if (!w) return toast.error('Izinkan popup untuk mencetak rekap thermal.');
-    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>@page{size:80mm auto;margin:3mm}*{box-sizing:border-box}body{width:74mm;margin:0 auto;color:#000;font:10px Arial}.center{text-align:center}.title{font-size:14px;font-weight:900;margin:4px 0}.sub{font-size:10px;margin-bottom:8px}table{width:100%;border-collapse:collapse;margin-top:7px}th,td{border-bottom:1px dashed #000;padding:5px 2px;text-align:left;vertical-align:top}.r{text-align:right}.total{font-size:14px;font-weight:900;margin:10px 0}.line{border-top:1px solid #000;margin-top:36px;padding-top:3px;text-align:center;font-size:9px}</style></head><body><div class="center"><b>PERUM BULOG</b><div>Gudang Sunter Timur I & II</div><div class="title">${title}</div><div class="sub">Tanggal: ${escapeHtml(costReport.date)}</div></div><table><thead><tr><th>No</th><th>SO / Dokumen</th><th>Tujuan</th><th class="r">Nilai</th></tr></thead><tbody>${rows || '<tr><td colspan="4">Tidak ada biaya</td></tr>'}</tbody></table><div class="total">TOTAL: Rp ${escapeHtml(formatNum(total))}</div><div class="line">Petugas Gudang</div><div class="line">Penerima ${recipient === 'BURUH' ? 'Buruh' : 'UH Gudang'}</div></body></html>`);
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>@page{size:80mm auto;margin:3mm}*{box-sizing:border-box}body{width:74mm;margin:0 auto;color:#000;font:10px Arial}.center{text-align:center}.title{font-size:13px;font-weight:900;margin:4px 0}.sub{font-size:10px;margin-bottom:8px}table{width:100%;border-collapse:collapse;margin-top:7px}th,td{border-bottom:1px dashed #000;padding:5px 2px;text-align:left;vertical-align:top}.r{text-align:right}.total{font-size:14px;font-weight:900;margin:10px 0}.line{border-top:1px solid #000;margin-top:36px;padding-top:3px;text-align:center;font-size:9px}small{font-size:8px}</style></head><body><div class="center"><b>PERUM BULOG</b><div>Gudang Sunter Timur I & II</div><div class="title">${title}</div><div class="sub">Tanggal: ${escapeHtml(costReport.date)}</div></div><table><thead><tr><th>No</th><th>Komoditi / Kuantum</th><th class="r">Biaya</th></tr></thead><tbody>${rows || '<tr><td colspan="3">Tidak ada biaya</td></tr>'}</tbody></table>${overtimeTotal ? `<div>Lembur/hari libur tercatat: Rp ${escapeHtml(formatNum(overtimeTotal))}</div>` : ''}<div class="total">TOTAL: Rp ${escapeHtml(formatNum(total))}</div><div class="line">Petugas Gudang</div><div class="line">Penerima ${recipient === 'BURUH' ? 'Buruh' : 'UH Gudang'}</div></body></html>`);
     w.document.close(); w.focus(); setTimeout(() => w.print(), 350);
   };
+
   const settleDailyCost = async (recipient) => {
     if (!window.confirm(`Tandai total ${recipient === 'BURUH' ? 'upah buruh' : 'UH Gudang'} tanggal ${costDate} sebagai lunas?`)) return;
     setCostBusy(true);
