@@ -1,5 +1,6 @@
 import csv
 import io
+from openpyxl import load_workbook
 import random
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -421,8 +422,22 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
 
 @router.post("/import/master-csv")
 async def import_master_csv(file: UploadFile = File(...), user: dict = Depends(require_write)):
-    content = (await file.read()).decode("utf-8-sig", errors="replace")
-    reader = csv.DictReader(io.StringIO(content), delimiter=";")
+    raw = await file.read()
+    if (file.filename or "").lower().endswith(".xlsx"):
+        try:
+            workbook = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+            sheet = workbook.active
+            values = list(sheet.iter_rows(values_only=True))
+            if not values:
+                raise HTTPException(status_code=400, detail="File XLSX kosong")
+            headers = [str(value or "").strip().lower() for value in values[0]]
+            reader = [dict(zip(headers, ["" if value is None else str(value) for value in row])) for row in values[1:]]
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="File XLSX tidak dapat dibaca") from exc
+    else:
+        raise HTTPException(status_code=400, detail="Gunakan file XLSX (.xlsx) dari template aplikasi")
     inserted = 0
     updated = 0
     supplier_names = set()
@@ -443,10 +458,13 @@ async def import_master_csv(file: UploadFile = File(...), user: dict = Depends(r
             "min": _number(row.get("stok_minimum"), 0),
             "unit": (row.get("satuan") or "Pcs").strip() or "Pcs",
             "weight": _number(row.get("berat_unit"), 0),
+            "measureUnit": (row.get("satuan_kuantum") or "kg").strip().lower() or "kg",
             "secondary": (row.get("kemasan_sekunder") or "").strip(),
             "secondaryQty": _number(row.get("isi_kemasan_sekunder"), 0),
             "channel": normalize_channel(row.get("saluran") or row.get("channel")),
         }
+        if master["measureUnit"] not in {"kg", "liter", "pcs"}:
+            raise HTTPException(status_code=400, detail=f"Satuan kuantum SKU {sku} harus kg, liter, atau pcs")
         if master["secondary"] and master["secondaryQty"] <= 0:
             raise HTTPException(
                 status_code=400,
@@ -489,6 +507,17 @@ async def import_master_csv(file: UploadFile = File(...), user: dict = Depends(r
         })
 
     return {"inserted": inserted, "updated": updated}
+
+
+@router.get("/export/master-template.xlsx")
+async def export_master_template(user: dict = Depends(get_current_user)):
+    headers = ["sku", "nama", "kategori", "saluran", "satuan", "satuan_kuantum", "berat_unit", "kemasan_sekunder", "isi_kemasan_sekunder", "harga_beli", "supplier", "lokasi", "stok_minimum"]
+    rows = [
+        ["B0010001X", "CONTOH BERAS MEDIUM 5 KG", "Beras", "PSO", "Pack", "kg", 5, "Karung", 8, 0, "Nama Supplier", "GBB 17", 0],
+        ["B0100152X", "CONTOH MINYAK 2 L", "Minyak", "KOM", "Botol", "liter", 2, "Dus", 6, 0, "Nama Supplier", "GBB 18", 0],
+    ]
+    output = build_xlsx(headers, rows, "Master Produk")
+    return StreamingResponse(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": 'attachment; filename="template_import_master_produk.xlsx"'})
 
 
 @router.get("/export/transactions-v2.xlsx")
