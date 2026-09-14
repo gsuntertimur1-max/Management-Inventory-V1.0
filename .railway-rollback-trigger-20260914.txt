@@ -1,0 +1,1 @@
+Rollback trigger for inventory-dev. App source restored to 0e8602e content.
