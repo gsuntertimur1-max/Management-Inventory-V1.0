@@ -26,10 +26,10 @@ export const canonicalRole = (role) => ({
 }[role] || role || 'Pemantau');
 
 const ROLE_PERMISSIONS = {
-  Administrator: new Set(['masterWrite', 'inbound', 'outbound', 'rebagging', 'qc', 'users', 'settings']),
-  Supervisor: new Set(['masterWrite', 'inbound', 'outbound', 'rebagging']),
+  Administrator: new Set(['masterWrite', 'inbound', 'outbound', 'mutasi', 'rebagging', 'qc', 'opname', 'users', 'settings']),
+  Supervisor: new Set(['masterWrite', 'inbound', 'outbound', 'mutasi', 'rebagging', 'opname']),
   Operator: new Set(['rebagging']),
-  QC: new Set(['qc']),
+  QC: new Set(['qc', 'opname']),
   Pemantau: new Set(),
 };
 
@@ -50,4 +50,3 @@ export const hasPermission = (role, permission) => {
 };
 
 export const roleLabel = (role) => ROLE_LABELS[role] || role || '—';
-
