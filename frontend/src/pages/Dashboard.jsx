@@ -16,7 +16,7 @@ const StatCard = ({ icon: Icon, label, value, sub, color }) => (
 );
 
 const Dashboard = () => {
-  const { products, transactions, outboundLoads, consignmentStock, settings } = useData();
+  const { products, transactions, outboundLoads, consignmentStock, monitoringStock, settings } = useData();
   const navigate = useNavigate();
   const [q, setQ] = useState('');
 
@@ -41,7 +41,7 @@ const Dashboard = () => {
       .sort((a, b) => a.daysToExpiry - b.daysToExpiry);
   }, [products]);
 
-  const filtered = products.filter((p) => p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase())).sort((a, b) => a.name.localeCompare(b.name));
+  const filtered = (monitoringStock || []).filter((p) => p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase()) || p.location.toLowerCase().includes(q.toLowerCase())).sort((a, b) => `${a.location}-${a.channel}-${a.name}`.localeCompare(`${b.location}-${b.channel}-${b.name}`));
   const remainingDocumentItems = (load) => (load.items || []).map((source) => {
     let settled = 0;
     (load.document_links || []).forEach((link) => (link.items || []).forEach((item) => {
@@ -148,23 +148,26 @@ const Dashboard = () => {
       </div>
 
       <div className="card-surface p-6">
-        <h2 className="font-display text-xl font-bold mb-4">Sisa Stok per Barang (A → Z)</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4"><div><h2 className="font-display text-xl font-bold">Monitoring Stok Seluruh Lokasi</h2><p className="text-xs text-[#8b93a1] mt-1">Saldo Gudang, E-commerce, dan Bazar dipisahkan menurut PSO/KOM.</p></div><button onClick={() => downloadApiFile('/export/monitoring-stock.xlsx', 'monitoring_stok.xlsx').catch((e) => toast.error(apiError(e)))} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#294263] text-xs text-[#93c5fd]"><Printer size={14} /> Unduh Monitoring</button></div>
         <div className="relative mb-4 max-w-md">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6b7688]" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari nama barang atau SKU..." className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg pl-9 pr-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari produk, SKU, atau lokasi..." className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg pl-9 pr-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" />
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm tbl">
-            <thead><tr className="text-left border-b border-[#1a222e]">{['Nama Barang', 'Sisa Stok', 'Rusak', 'Lokasi'].map((h) => <th key={h} className="py-2.5 pr-4 font-semibold">{h}</th>)}</tr></thead>
+            <thead><tr className="text-left border-b border-[#1a222e]">{['Saluran', 'Lokasi', 'SKU', 'Nama Komoditi', 'Kuantum Pack/PCS', 'Berat', 'Rusak'].map((h) => <th key={h} className="py-2.5 pr-4 font-semibold">{h}</th>)}</tr></thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={4} className="py-8 text-center text-[#6b7688]">Belum ada produk terdaftar. Tambah produk atau import data SKU.</td></tr>
+                <tr><td colSpan={7} className="py-8 text-center text-[#6b7688]">Belum ada produk terdaftar. Tambah produk atau import data SKU.</td></tr>
               ) : filtered.map((p) => (
-                <tr key={p.id} className="tbl-row border-b border-[#131a24]">
-                  <td className="py-3 pr-4 font-medium">{p.name}</td>
-                  <td className="py-3 pr-4 font-mono">{formatNum(p.stock)} {p.unit}</td>
-                  <td className="py-3 pr-4 font-mono">{p.damaged || 0}</td>
+                <tr key={`${p.location}-${p.productId}-${p.channel}`} className="tbl-row border-b border-[#131a24]">
+                  <td className="py-3 pr-4"><span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${p.channel === 'PSO' ? 'bg-[#2563eb]/15 text-[#60a5fa]' : 'bg-[#a855f7]/15 text-[#c084fc]'}`}>{p.channel}</span></td>
                   <td className="py-3 pr-4 text-[#8b93a1]">{p.location}</td>
+                  <td className="py-3 pr-4 font-mono text-xs text-[#93c5fd]">{p.sku || '—'}</td>
+                  <td className="py-3 pr-4 font-medium">{p.name}</td>
+                  <td className="py-3 pr-4 font-mono">{formatNum(p.qty)} {p.unit}</td>
+                  <td className="py-3 pr-4 font-mono">{p.weight > 0 ? `${formatNum(p.totalWeight)} kg` : '—'}</td>
+                  <td className="py-3 pr-4 font-mono">{formatNum(p.damaged || 0)}</td>
                 </tr>
               ))}
             </tbody>
