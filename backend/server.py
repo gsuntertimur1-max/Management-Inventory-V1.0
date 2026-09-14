@@ -17,12 +17,15 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, UploadFile, File
+from fastapi.responses import StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ReturnDocument
 from pymongo.errors import OperationFailure
 from pydantic import BaseModel, Field
 from typing import List, Literal, Optional
+from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment
 
 REQUIRED_ENV = ("MONGO_URL", "DB_NAME", "JWT_SECRET")
 missing_env = [name for name in REQUIRED_ENV if not os.environ.get(name)]
@@ -106,7 +109,10 @@ async def next_sequence(key: str, floor: int = 0) -> int:
 
 
 def public_user(doc: dict) -> dict:
-    return {k: v for k, v in doc.items() if k not in ("_id", "password_hash")}
+    result = {k: v for k, v in doc.items() if k not in ("_id", "password_hash")}
+    if "role" in result:
+        result["role_label"] = role_label(result.get("role"))
+    return result
 
 
 async def get_current_user(request: Request) -> dict:
@@ -142,17 +148,72 @@ async def get_current_user(request: Request) -> dict:
 
 
 async def require_admin(user: dict = Depends(get_current_user)) -> dict:
-    if user.get("role") != "Administrator":
+    if canonical_role(user.get("role")) != ROLE_SUPERADMIN:
         raise HTTPException(status_code=403, detail="Hanya Administrator yang diizinkan")
     return user
 
 
-WRITE_ROLES = {"Administrator", "Supervisor", "Operator"}
+ROLE_SUPERADMIN = "Administrator"
+ROLE_ADMIN = "Supervisor"
+ROLE_OPERATOR = "Operator"
+ROLE_QC = "QC"
+ROLE_VIEWER = "Pemantau"
+
+ROLE_ALIASES = {
+    "Superadmin": ROLE_SUPERADMIN,
+    "Admin": ROLE_ADMIN,
+}
+
+ROLE_LABELS = {
+    ROLE_SUPERADMIN: "Superadmin",
+    ROLE_ADMIN: "Admin",
+    ROLE_OPERATOR: "Operator",
+    ROLE_QC: "QC",
+    ROLE_VIEWER: "Pemantau",
+}
+
+
+def canonical_role(role: Optional[str]) -> str:
+    value = (role or ROLE_VIEWER).strip()
+    return ROLE_ALIASES.get(value, value)
+
+
+ROLE_PERMISSIONS = {
+    ROLE_SUPERADMIN: {"masterWrite", "inbound", "outbound", "mutasi", "rebagging", "qc", "opname", "users", "settings"},
+    ROLE_ADMIN: {"masterWrite", "inbound", "outbound", "mutasi", "rebagging", "opname"},
+    ROLE_OPERATOR: {"rebagging"},
+    ROLE_QC: {"qc", "opname"},
+    ROLE_VIEWER: set(),
+}
+
+
+def has_role_permission(role: Optional[str], permission: str) -> bool:
+    canonical = canonical_role(role)
+    if permission == "currentWrite":
+        return canonical in {ROLE_SUPERADMIN, ROLE_ADMIN}
+    if permission == "operations":
+        return canonical in {ROLE_SUPERADMIN, ROLE_ADMIN}
+    return permission in ROLE_PERMISSIONS.get(canonical, set())
+
+
+def role_label(role: Optional[str]) -> str:
+    canonical = canonical_role(role)
+    return ROLE_LABELS.get(canonical, canonical)
+
+
+# The current Railway branch has no separate Rebagging/QC endpoints yet. The
+# generic write dependency therefore covers only the currently exposed master,
+# inbound, and outbound operations. Future modules should use the dedicated
+# permission helpers above instead of widening this set.
+WRITE_ROLES = {ROLE_SUPERADMIN, ROLE_ADMIN}
 
 
 async def require_write(user: dict = Depends(get_current_user)) -> dict:
-    if user.get("role") not in WRITE_ROLES:
-        raise HTTPException(status_code=403, detail="Peran Pemantau hanya dapat melihat data")
+    if not has_role_permission(user.get("role"), "currentWrite"):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Peran {role_label(user.get('role'))} tidak memiliki hak untuk mengubah data pada modul ini",
+        )
     return user
 
 
@@ -203,11 +264,13 @@ def suppliers_from_products(products: List[dict]) -> List[dict]:
 
 async def seed_master(force: bool = False):
     if force:
-        await db.transactions.delete_many({})
-        await db.surat_jalan.delete_many({})
-        await db.purchase_orders.delete_many({})
-        await db.products.delete_many({})
-        await db.suppliers.delete_many({})
+        # Reset penuh: semua master dan dokumen operasional dikosongkan agar SKU baru tidak bercampur.
+        for collection in (
+            db.stack_allocations, db.stack_history, db.stack_treatments, db.transactions,
+            db.surat_jalan, db.purchase_orders, db.outbound_loads, db.products,
+            db.suppliers, db.counters,
+        ):
+            await collection.delete_many({})
     text = (ROOT_DIR / 'seed_data.csv').read_text(encoding='utf-8')
     rows = parse_seed_rows(text)
     if await db.products.count_documents({}) == 0:
@@ -248,6 +311,10 @@ async def initialize_app():
     await db.users.create_index("username", unique=True)
     await db.user_sessions.create_index("session_token")
     await db.products.create_index("sku")
+    await db.stack_allocations.create_index([("productId", 1), ("stackCode", 1)], unique=True)
+    await create_unique_index_safely(db.consignment_layouts, [("destination", 1), ("productId", 1)])
+    await db.consignment_layout_history.create_index([("destination", 1), ("time", -1)])
+    await db.consignment_opnames.create_index([("destination", 1), ("time", -1)])
     await db.login_attempts.create_index("identifier")
     await create_unique_index_safely(db.surat_jalan, "no", sparse=True)
     await create_unique_index_safely(db.purchase_orders, "no", sparse=True)
@@ -270,14 +337,14 @@ class UserCreate(BaseModel):
     name: str
     username: str
     email: str = ''
-    role: Literal['Administrator', 'Supervisor', 'Operator', 'Pemantau'] = 'Operator'
+    role: Literal['Administrator', 'Supervisor', 'Operator', 'QC', 'Pemantau', 'Superadmin', 'Admin'] = 'Operator'
     password: str
 
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None
     email: Optional[str] = None
-    role: Optional[Literal['Administrator', 'Supervisor', 'Operator', 'Pemantau']] = None
+    role: Optional[Literal['Administrator', 'Supervisor', 'Operator', 'QC', 'Pemantau', 'Superadmin', 'Admin']] = None
     active: Optional[bool] = None
 
 
@@ -299,6 +366,7 @@ class ProductBody(BaseModel):
     unit: str = 'Pcs'
     weight: float = Field(default=0, ge=0)
     secondary: str = ''
+    secondaryQty: float = Field(default=0, ge=0)
 
 
 class ProductUpdate(BaseModel):
@@ -315,6 +383,7 @@ class ProductUpdate(BaseModel):
     unit: Optional[str] = None
     weight: Optional[float] = Field(default=None, ge=0)
     secondary: Optional[str] = None
+    secondaryQty: Optional[float] = Field(default=None, ge=0)
 
 
 class SupplierBody(BaseModel):
@@ -357,6 +426,94 @@ class POBody(BaseModel):
     total: float = Field(ge=0)
     status: str = 'Draft'
     date: str = ''
+
+
+DEFAULT_CATEGORY_ITEMS = [
+    {"name": "Beras", "color": "#f59e0b", "active": True},
+    {"name": "Minyak", "color": "#eab308", "active": True},
+    {"name": "Gula", "color": "#ec4899", "active": True},
+    {"name": "Tepung", "color": "#a855f7", "active": True},
+    {"name": "Sarden", "color": "#3b82f6", "active": True},
+    {"name": "Teh", "color": "#22c55e", "active": True},
+    {"name": "Margarin", "color": "#f97316", "active": True},
+    {"name": "Kecap", "color": "#8b5cf6", "active": True},
+    {"name": "Kopi", "color": "#b45309", "active": True},
+    {"name": "Susu", "color": "#22d3ee", "active": True},
+]
+
+
+class CategorySetting(BaseModel):
+    name: str
+    color: str = '#64748b'
+    active: bool = True
+
+
+class WarehouseZoneSetting(BaseModel):
+    code: str
+    count: int = Field(ge=1, le=99)
+
+
+class WarehouseSetting(BaseModel):
+    code: str
+    name: str
+    type: Literal['GBB', 'MP'] = 'GBB'
+    length: float = Field(gt=0, le=10000)
+    width: float = Field(gt=0, le=10000)
+    zones: List[WarehouseZoneSetting] = Field(min_length=1, max_length=8)
+    active: bool = True
+
+
+def default_warehouses() -> list[dict]:
+    return [
+        *[
+            {"code": str(unit), "name": f"GBB {unit}", "type": "GBB", "length": 50, "width": 30,
+             "zones": [{"code": "A", "count": 4}, {"code": "B", "count": 4}, {"code": "C", "count": 4}], "active": True}
+            for unit in range(17, 25)
+        ],
+        {"code": "MP1", "name": "MP1", "type": "MP", "length": 230, "width": 30,
+         "zones": [{"code": "A", "count": 8}, {"code": "B", "count": 8}], "active": True},
+    ]
+
+
+class SettingsBody(BaseModel):
+    warehouse: str = 'Gudang Sunter Timur I & II'
+    address: str = 'Jl. Sunter Agung, Jakarta Utara'
+    warehouseHead: str = 'Irsa Maulian Nugraha'
+    categories: List[CategorySetting] = Field(default_factory=lambda: [CategorySetting(**item) for item in DEFAULT_CATEGORY_ITEMS])
+    lowAlert: bool = True
+    expAlert: bool = True
+    autoQueue: bool = True
+    warehouses: List[WarehouseSetting] = Field(default_factory=default_warehouses, max_length=50)
+
+
+DEFAULT_SETTINGS = SettingsBody().model_dump()
+
+
+def build_xlsx(headers: list[str], rows: list[list], sheet_name: str) -> io.BytesIO:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = sheet_name[:31]
+
+    ws.append(headers)
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(horizontal='center')
+
+    for row in rows:
+        ws.append(row)
+
+    for column in ws.columns:
+        max_len = 0
+        letter = column[0].column_letter
+        for cell in column:
+            value = '' if cell.value is None else str(cell.value)
+            max_len = max(max_len, len(value))
+        ws.column_dimensions[letter].width = min(max(max_len + 2, 10), 42)
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return output
 
 
 # ---------- auth ----------
@@ -431,7 +588,7 @@ async def google_session(body: SessionBody, response: Response):
 
 @api_router.get("/auth/me")
 async def me(user: dict = Depends(get_current_user)):
-    return user
+    return public_user(user)
 
 
 @api_router.post("/auth/logout")
@@ -448,10 +605,86 @@ async def logout(request: Request, response: Response):
     return {"ok": True}
 
 
+# ---------- settings ----------
+@api_router.get("/settings")
+async def get_settings(user: dict = Depends(get_current_user)):
+    doc = await db.settings.find_one({"_id": "app"}, {"_id": 0})
+    result = {**DEFAULT_SETTINGS, **(doc or {})}
+    result["categories"] = [dict(item) for item in result.get("categories", [])]
+    # Kategori lama yang telah terpakai tetap ditampilkan supaya tidak kehilangan konteks produk.
+    names = {str(item.get("name", "")).strip().lower() for item in result.get("categories", [])}
+    used_categories = await db.products.distinct("category", {"category": {"$ne": ""}})
+    for name in used_categories:
+        cleaned = str(name or "").strip()
+        if cleaned and cleaned.lower() not in names:
+            result["categories"].append({"name": cleaned, "color": "#64748b", "active": True})
+            names.add(cleaned.lower())
+    return result
+
+
+@api_router.put("/settings")
+async def update_settings(body: SettingsBody, admin: dict = Depends(require_admin)):
+    payload = body.model_dump()
+    normalized_categories = []
+    names = set()
+    for item in payload.get("categories", []):
+        name = str(item.get("name", "")).strip()
+        color = str(item.get("color", "#64748b")).strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Nama kategori wajib diisi")
+        if name.lower() in names:
+            raise HTTPException(status_code=400, detail=f"Kategori {name} tercatat lebih dari sekali")
+        if not color.startswith("#") or len(color) not in (4, 7):
+            raise HTTPException(status_code=400, detail=f"Warna kategori {name} tidak valid")
+        names.add(name.lower())
+        normalized_categories.append({"name": name, "color": color, "active": bool(item.get("active", True))})
+    used_categories = {str(item).strip().lower() for item in await db.products.distinct("category", {"category": {"$ne": ""}}) if str(item).strip()}
+    missing = used_categories - names
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Kategori masih dipakai produk dan tidak dapat dihapus: {', '.join(sorted(missing))}")
+    payload["categories"] = normalized_categories
+    normalized_warehouses = []
+    warehouse_codes, stack_codes = set(), set()
+    for item in payload.get("warehouses", []):
+        code = str(item.get("code", "")).strip().upper()
+        name = str(item.get("name", "")).strip()
+        if not code or not code.replace("-", "").isalnum() or "/" in code:
+            raise HTTPException(status_code=400, detail="Kode gudang hanya boleh huruf, angka, atau tanda hubung")
+        if not name:
+            raise HTTPException(status_code=400, detail=f"Nama gudang {code or '-'} wajib diisi")
+        if code in warehouse_codes:
+            raise HTTPException(status_code=400, detail=f"Kode gudang {code} tercatat lebih dari sekali")
+        zones, zone_codes = [], set()
+        for zone in item.get("zones", []):
+            zone_code = str(zone.get("code", "")).strip().upper()
+            count = int(zone.get("count", 0) or 0)
+            if not zone_code.isalpha() or len(zone_code) > 3 or zone_code in zone_codes:
+                raise HTTPException(status_code=400, detail=f"Zona pada {code} tidak valid atau ganda")
+            if count < 1 or count > 99:
+                raise HTTPException(status_code=400, detail=f"Jumlah tumpukan zona {zone_code} pada {code} harus 1–99")
+            zone_codes.add(zone_code)
+            zones.append({"code": zone_code, "count": count})
+            stack_codes.update({f"{code}/{zone_code}{number:02d}" for number in range(1, count + 1)})
+        if not zones:
+            raise HTTPException(status_code=400, detail=f"Gudang {code} harus memiliki minimal satu zona")
+        warehouse_codes.add(code)
+        normalized_warehouses.append({"code": code, "name": name, "type": item.get("type", "GBB"), "length": float(item.get("length", 0)), "width": float(item.get("width", 0)), "zones": zones, "active": bool(item.get("active", True))})
+    used_stacks = set(await db.stack_allocations.distinct("stackCode")) | {str(x) for x in await db.products.distinct("location", {"location": {"$ne": ""}})}
+    unavailable = sorted(code for code in used_stacks if "/" in code and code not in stack_codes)
+    if unavailable:
+        raise HTTPException(status_code=400, detail=f"Tidak dapat menghapus atau mengurangi tumpukan yang sudah dipakai: {', '.join(unavailable[:5])}{'…' if len(unavailable) > 5 else ''}")
+    payload["warehouses"] = normalized_warehouses
+    payload["updated_at"] = now_iso()
+    payload["updated_by"] = admin["name"]
+    await db.settings.update_one({"_id": "app"}, {"$set": payload}, upsert=True)
+    return {**DEFAULT_SETTINGS, **payload}
+
+
 # ---------- users (admin) ----------
 @api_router.get("/users")
 async def list_users(user: dict = Depends(require_admin)):
-    return await db.users.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", 1).to_list(500)
+    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", 1).to_list(500)
+    return [public_user(item) for item in users]
 
 
 @api_router.post("/users")
@@ -465,7 +698,7 @@ async def create_user(body: UserCreate, admin: dict = Depends(require_admin)):
         raise HTTPException(status_code=400, detail="Username sudah digunakan")
     doc = {
         "id": new_id(), "name": body.name.strip(), "username": username,
-        "email": body.email.strip(), "role": body.role, "active": True,
+        "email": body.email.strip(), "role": canonical_role(body.role), "active": True,
         "auth_provider": "local", "password_hash": hash_password(body.password),
         "created_at": now_iso(),
     }
@@ -479,17 +712,19 @@ async def update_user(user_id: str, body: UserUpdate, admin: dict = Depends(requ
     target = await db.users.find_one({"id": user_id}, {"_id": 0})
     if not target:
         raise HTTPException(status_code=404, detail="Pengguna tidak ditemukan")
+    if "role" in patch:
+        patch["role"] = canonical_role(patch["role"])
     if target["id"] == admin["id"] and (patch.get("role") not in (None, "Administrator") or patch.get("active") is False):
         raise HTTPException(status_code=400, detail="Tidak dapat menurunkan/menonaktifkan akun sendiri")
     if patch:
         await db.users.update_one({"id": user_id}, {"$set": patch})
     updated = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
-    return updated
+    return public_user(updated)
 
 
 @api_router.put("/users/{user_id}/password")
 async def change_password(user_id: str, body: PasswordBody, user: dict = Depends(get_current_user)):
-    if user.get("role") != "Administrator" and user["id"] != user_id:
+    if not has_role_permission(user.get("role"), "users") and user["id"] != user_id:
         raise HTTPException(status_code=403, detail="Tidak diizinkan mengubah password pengguna lain")
     if len(body.password) < 6:
         raise HTTPException(status_code=400, detail="Password minimal 6 karakter")
@@ -507,7 +742,7 @@ async def delete_user(user_id: str, admin: dict = Depends(require_admin)):
     target = await db.users.find_one({"id": user_id})
     if not target:
         raise HTTPException(status_code=404, detail="Pengguna tidak ditemukan")
-    if target.get("role") == "Administrator":
+    if canonical_role(target.get("role")) == ROLE_SUPERADMIN:
         admins = await db.users.count_documents({"role": "Administrator"})
         if admins <= 1:
             raise HTTPException(status_code=400, detail="Minimal harus ada satu Administrator")
@@ -624,12 +859,14 @@ async def create_transaction(body: TxnBody, user: dict = Depends(require_write))
     sj = None
     if body.type == "KELUAR":
         operational_date = op_now.strftime("%Y-%m-%d")
-        day_start = op_now.replace(hour=0, minute=0, second=0, microsecond=0)
-        day_end = day_start + timedelta(days=1)
-        day_query = {"time": {"$gte": day_start.astimezone(timezone.utc).isoformat(), "$lt": day_end.astimezone(timezone.utc).isoformat()}}
-        queue_floor = await max_suffix(db.surat_jalan, "antrian", "A-", day_query)
-        queue_number = await next_sequence(f"queue:{operational_date}", queue_floor)
-        antrian = f"A-{queue_number:03d}"
+        settings = await db.settings.find_one({"_id": "app"}, {"_id": 0, "autoQueue": 1}) or {}
+        if settings.get("autoQueue", True):
+            day_start = op_now.replace(hour=0, minute=0, second=0, microsecond=0)
+            day_end = day_start + timedelta(days=1)
+            day_query = {"time": {"$gte": day_start.astimezone(timezone.utc).isoformat(), "$lt": day_end.astimezone(timezone.utc).isoformat()}}
+            queue_floor = await max_suffix(db.surat_jalan, "antrian", "A-", day_query)
+            queue_number = await next_sequence(f"queue:{operational_date}", queue_floor)
+            antrian = f"A-{queue_number:03d}"
 
         month_prefix = op_now.strftime("SJ-%Y%m")
         sj_floor = await max_suffix(db.surat_jalan, "no", f"{month_prefix}-")
@@ -720,6 +957,77 @@ async def create_po(body: POBody, user: dict = Depends(require_write)):
     return doc
 
 
+# ---------- exports ----------
+@api_router.get("/export/products.xlsx")
+async def export_products(user: dict = Depends(get_current_user)):
+    products = await db.products.find({}, {"_id": 0}).sort("name", 1).to_list(5000)
+    headers = [
+        "Nama Produk", "SKU", "Kategori", "Stok Baik", "Stok Rusak", "Satuan",
+        "Harga Modal", "Nilai Total", "Supplier", "Lokasi", "Stok Minimum",
+        "Berat/Unit (kg)", "Kemasan Sekunder", "Isi/Kemasan Sekunder",
+        "Berat/Kemasan Sekunder (kg)", "Kedaluwarsa"
+    ]
+    rows = [
+        [
+            p.get("name", ""), p.get("sku", ""), p.get("category", ""),
+            p.get("stock", 0), p.get("damaged", 0), p.get("unit", ""),
+            p.get("cost", 0), (p.get("stock", 0) or 0) * (p.get("cost", 0) or 0),
+            p.get("supplier", ""), p.get("location", ""), p.get("min", 0),
+            p.get("weight", 0), p.get("secondary", ""), p.get("secondaryQty", 0),
+            (p.get("weight", 0) or 0) * (p.get("secondaryQty", 0) or 0), p.get("exp", "")
+        ]
+        for p in products
+    ]
+    output = build_xlsx(headers, rows, "Daftar Produk")
+    filename = f"daftar_produk_{operational_now().strftime('%Y%m%d_%H%M')}.xlsx"
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@api_router.get("/export/transactions.xlsx")
+async def export_transactions_current_month(user: dict = Depends(get_current_user)):
+    now = operational_now()
+    start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if start.month == 12:
+        end = start.replace(year=start.year + 1, month=1)
+    else:
+        end = start.replace(month=start.month + 1)
+
+    transactions = await db.transactions.find(
+        {
+            "time": {
+                "$gte": start.astimezone(timezone.utc).isoformat(),
+                "$lt": end.astimezone(timezone.utc).isoformat(),
+            }
+        },
+        {"_id": 0},
+    ).sort("time", 1).to_list(10000)
+
+    headers = [
+        "Waktu", "No. Referensi", "Antrian", "Tipe", "Kondisi", "Produk", "SKU",
+        "Perubahan", "Pihak Terkait", "No. Polisi", "Dicatat Oleh", "Keterangan"
+    ]
+    rows = [
+        [
+            t.get("time", ""), t.get("ref", ""), t.get("antrian", ""),
+            t.get("type", ""), t.get("kondisi", ""), t.get("product", ""),
+            t.get("sku", ""), t.get("change", 0), t.get("penerima", ""),
+            t.get("polisi", ""), t.get("operator", ""), t.get("keterangan", "")
+        ]
+        for t in transactions
+    ]
+    output = build_xlsx(headers, rows, "Riwayat Transaksi")
+    filename = f"riwayat_transaksi_{start.strftime('%Y_%m')}.xlsx"
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 # ---------- import & admin ----------
 @api_router.post("/import/csv")
 async def import_csv(file: UploadFile = File(...), user: dict = Depends(require_write)):
@@ -747,7 +1055,7 @@ async def import_csv(file: UploadFile = File(...), user: dict = Depends(require_
 @api_router.post("/admin/reset-data")
 async def reset_data(admin: dict = Depends(require_admin)):
     await seed_master(force=True)
-    return {"ok": True}
+    return {"ok": True, "message": "Data operasional direset. Master produk dan supplier dimuat dari CSV seed bila tersedia."}
 
 
 @api_router.get("/")
@@ -770,4 +1078,3 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
