@@ -23,6 +23,28 @@ class MasterProductBody(BaseModel):
     loadingFeeDaily: float = Field(default=0, ge=0)
     loadingFeeWarehouse: float = Field(default=0, ge=0)
     loadingFeeChargeMode: str = "TIDAK_ADA"
+    unloadingFeeLabor: float = Field(default=0, ge=0)
+    unloadingFeeDaily: float = Field(default=0, ge=0)
+    unloadingFeeWarehouse: float = Field(default=0, ge=0)
+    unloadingFeeChargeMode: str = "TIDAK_ADA"
+    loadingOvertimeLabor: float = Field(default=0, ge=0)
+    loadingOvertimeDaily: float = Field(default=0, ge=0)
+    loadingOvertimeWarehouse: float = Field(default=0, ge=0)
+    loadingHolidayLabor: float = Field(default=0, ge=0)
+    loadingHolidayDaily: float = Field(default=0, ge=0)
+    loadingHolidayWarehouse: float = Field(default=0, ge=0)
+    loadingHolidayOvertimeLabor: float = Field(default=0, ge=0)
+    loadingHolidayOvertimeDaily: float = Field(default=0, ge=0)
+    loadingHolidayOvertimeWarehouse: float = Field(default=0, ge=0)
+    unloadingOvertimeLabor: float = Field(default=0, ge=0)
+    unloadingOvertimeDaily: float = Field(default=0, ge=0)
+    unloadingOvertimeWarehouse: float = Field(default=0, ge=0)
+    unloadingHolidayLabor: float = Field(default=0, ge=0)
+    unloadingHolidayDaily: float = Field(default=0, ge=0)
+    unloadingHolidayWarehouse: float = Field(default=0, ge=0)
+    unloadingHolidayOvertimeLabor: float = Field(default=0, ge=0)
+    unloadingHolidayOvertimeDaily: float = Field(default=0, ge=0)
+    unloadingHolidayOvertimeWarehouse: float = Field(default=0, ge=0)
 
 
 def clean_master(body: MasterProductBody) -> dict:
@@ -37,10 +59,16 @@ def clean_master(body: MasterProductBody) -> dict:
     doc["loadingFeeChargeMode"] = str(doc.get("loadingFeeChargeMode") or "TIDAK_ADA").strip().upper()
     if doc["loadingFeeChargeMode"] not in {"PENGAMBIL", "TERMASUK", "TIDAK_ADA"}:
         raise HTTPException(status_code=400, detail="Status biaya muat tidak valid")
-    for key in ("loadingFeeLabor", "loadingFeeDaily", "loadingFeeWarehouse"):
+    fee_keys = [key for key in doc if key.startswith(("loadingFee", "unloadingFee", "loadingOvertime", "loadingHoliday", "unloadingOvertime", "unloadingHoliday")) and key.endswith(("Labor", "Daily", "Warehouse"))]
+    for key in fee_keys:
         doc[key] = float(doc.get(key, 0) or 0)
+    doc["unloadingFeeChargeMode"] = str(doc.get("unloadingFeeChargeMode") or "TIDAK_ADA").strip().upper()
+    if doc["unloadingFeeChargeMode"] not in {"PENGIRIM", "TERMASUK", "TIDAK_ADA"}:
+        raise HTTPException(status_code=400, detail="Status biaya bongkar tidak valid")
     if doc["loadingFeeChargeMode"] == "TIDAK_ADA" and sum(doc[key] for key in ("loadingFeeLabor", "loadingFeeDaily", "loadingFeeWarehouse")) > 0:
         raise HTTPException(status_code=400, detail="Pilih Ditagihkan atau Termasuk Harga bila tarif biaya muat diisi")
+    if doc["unloadingFeeChargeMode"] == "TIDAK_ADA" and sum(doc[key] for key in ("unloadingFeeLabor", "unloadingFeeDaily", "unloadingFeeWarehouse")) > 0:
+        raise HTTPException(status_code=400, detail="Pilih Ditagihkan atau Termasuk Harga bila tarif biaya bongkar diisi")
     if doc["secondary"] and doc["secondaryQty"] <= 0:
         raise HTTPException(status_code=400, detail="Isi kemasan sekunder harus lebih dari 0")
     if doc["secondaryQty"] > 0 and not doc["secondary"]:
