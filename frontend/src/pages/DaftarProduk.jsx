@@ -11,7 +11,7 @@ import { stackCodes } from '../lib/warehouses';
 
 const empty = {
   name: '', sku: '', category: 'F&B / Bahan Makanan', cost: 0,
-  location: '', supplier: '', min: 0, unit: 'Pack', weight: 0, secondary: '', secondaryQty: 0, channel: 'KOM', loadingFeeLabor: 0, loadingFeeDaily: 0, loadingFeeWarehouse: 0, loadingFeeChargeMode: 'TIDAK_ADA',
+  location: '', supplier: '', min: 0, unit: 'Pack', weight: 0, measureUnit: 'kg', secondary: '', secondaryQty: 0, channel: 'KOM', loadingFeeLabor: 0, loadingFeeDaily: 0, loadingFeeWarehouse: 0, loadingFeeChargeMode: 'TIDAK_ADA',
 };
 
 const masterPayload = (data) => ({
@@ -24,6 +24,7 @@ const masterPayload = (data) => ({
   min: Number(data.min || 0),
   unit: data.unit || 'Pcs',
   weight: Number(data.weight || 0),
+  measureUnit: data.measureUnit || 'kg',
   secondary: data.secondary || '',
   secondaryQty: Number(data.secondaryQty || 0),
   channel: data.channel === 'PSO' ? 'PSO' : 'KOM',
@@ -170,12 +171,13 @@ const DaftarProduk = () => {
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {[['name', 'Nama Produk', 'text'], ['sku', 'SKU', 'text'], ['cost', 'Harga Modal (Rp)', 'number'], ['min', 'Stok Minimum', 'number'], ['weight', 'Berat/Unit (kg)', 'number']].map(([k, l, t]) => (
+                {[['name', 'Nama Produk', 'text'], ['sku', 'SKU', 'text'], ['cost', 'Harga Modal (Rp)', 'number'], ['min', 'Stok Minimum', 'number'], ['weight', `Kuantum per ${modal.data.unit || 'unit'} (${modal.data.measureUnit || 'kg'})`, 'number']].map(([k, l, t]) => (
                   <div key={k}>
                     <label className="text-xs font-medium mb-1 block text-[#8b93a1]">{l}</label>
                     <input data-testid={`product-form-${k}`} type={t} value={modal.data[k] ?? ''} onChange={(e) => setModal({ ...modal, data: { ...modal.data, [k]: t === 'number' ? Number(e.target.value) : e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]" />
                   </div>
                 ))}
+                <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Satuan Kuantum</label><select value={modal.data.measureUnit || 'kg'} onChange={(e) => setModal({ ...modal, data: { ...modal.data, measureUnit: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]"><option value="kg">Kilogram (kg)</option><option value="liter">Liter</option><option value="pcs">Pcs</option></select></div>
                 <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Saluran Produk</label><select value={modal.data.channel || 'KOM'} onChange={(e) => setModal({ ...modal, data: { ...modal.data, channel: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]"><option value="PSO">PSO — Public Service Obligation</option><option value="KOM">KOM — Komersial</option></select></div>
                 <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Lokasi Tumpukan Default</label><select value={modal.data.location || ''} onChange={(e) => setModal({ ...modal, data: { ...modal.data, location: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm"><option value="">Belum ditentukan</option>{STACKS.map((code) => <option key={code} value={code}>{code}</option>)}</select></div>
                 <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Kategori</label><select value={modal.data.category || ''} onChange={(e) => setModal({ ...modal, data: { ...modal.data, category: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]">{[...activeCategories, ...(!activeCategories.some((item) => item.name === modal.data.category) && modal.data.category ? [{ name: modal.data.category, active: false }] : [])].map((c) => <option key={c.name}>{c.name}{c.active === false ? ' (Nonaktif)' : ''}</option>)}</select></div>
