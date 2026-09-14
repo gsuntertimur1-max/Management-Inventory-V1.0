@@ -107,6 +107,7 @@ const DaftarProduk = () => {
         <div className="flex gap-2">
           {canManageMasterData && <button onClick={() => navigate('/import')} className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-[#242f3d] hover:bg-[#141a24] transition-colors"><Upload size={15} /> Import Data</button>}
           <button onClick={exportProducts} disabled={exporting} className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-[#242f3d] hover:bg-[#141a24] transition-colors disabled:opacity-60 disabled:cursor-wait"><Download size={15} /> {exporting ? 'Menyiapkan…' : 'Unduh Excel'}</button>
+          <button onClick={() => downloadApiFile('/export/products.pdf', 'daftar_inventori_produk.pdf')} className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-[#242f3d] hover:bg-[#141a24] transition-colors"><Download size={15} /> Unduh PDF</button>
           {canManageMasterData && <button data-testid="add-product-btn" onClick={() => setModal({ mode: 'add', data: { ...empty } })} className="btn-primary inline-flex items-center gap-2 text-sm font-semibold px-4 py-2.5 rounded-lg"><Plus size={15} /> Tambah Produk</button>}
         </div>
       </div>
