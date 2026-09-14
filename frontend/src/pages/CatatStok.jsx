@@ -10,7 +10,7 @@ import { stackCodes } from '../lib/warehouses';
 
 const CONSIGNMENT_DESTINATIONS = ['Gudang E-commerce', 'Gudang Bazar'];
 const CONSIGNMENT_ZONES = ['18/A01', '18/A02', '18/A03', '18/A04', '18/B01 (½)', '18/B02 (½)', '18/B03 (½)', '18/B04 (½)'];
-const emptyRow = () => ({ productId: '', inputMode: 'QTY', inputValue: 1, qty: 1, exp: '', stackCode: '', documentNo: '' });
+const emptyRow = () => ({ productId: '', inputMode: 'QTY', inputValue: 1, qty: 1, exp: '', stackCode: '', documentNo: '', channel: '' });
 
 const CatatStok = () => {
   const { products, suppliers, purchaseOrders, settings, addReceipt, createOutboundLoad, canInbound, canOutbound } = useData();
@@ -98,6 +98,7 @@ const CatatStok = () => {
         inputValue: Math.max(Number(item.qty || 0) - Number(item.receivedQty || 0), 0),
         qty: Math.max(Number(item.qty || 0) - Number(item.receivedQty || 0), 0),
         exp: '',
+        channel: item.channel || products.find((product) => product.id === item.productId)?.channel || 'KOM',
       }))
       .filter((item) => item.productId && item.qty > 0);
     setParty(po.supplier || '');
@@ -170,7 +171,7 @@ const CatatStok = () => {
       if (type === 'MASUK') {
         const result = await addReceipt({
           poId,
-          items: chosen.map((row) => ({ productId: row.productId, qty: Number(row.qty), exp: row.exp || '', stackCode: row.stackCode || row.product.location || '' })),
+          items: chosen.map((row) => ({ productId: row.productId, qty: Number(row.qty), exp: row.exp || '', stackCode: row.stackCode || row.product.location || '', channel: row.channel || row.product.channel || 'KOM' })),
           party,
           ref,
           polisi,
@@ -187,7 +188,7 @@ const CatatStok = () => {
         navigate('/riwayat');
       } else {
         const load = await createOutboundLoad({
-          items: chosen.map((row) => ({ productId: row.productId, qty: Number(row.qty), documentNo: row.documentNo || documentRefs[0], stackCode: row.stackCode || '' })),
+          items: chosen.map((row) => ({ productId: row.productId, qty: Number(row.qty), documentNo: row.documentNo || documentRefs[0], stackCode: row.stackCode || '', channel: row.channel || row.product.channel || 'KOM' })),
           party: party.trim(),
           ref: documentRefs[0],
           polisi,
@@ -275,11 +276,11 @@ const CatatStok = () => {
                 <div key={index} className={`grid gap-2 items-end p-3 rounded-lg border border-[#1a222e] bg-[#0b0f17] ${type === 'MASUK' ? 'grid-cols-1 md:grid-cols-[minmax(190px,1fr)_105px_145px_175px_52px]' : 'grid-cols-1 md:grid-cols-[minmax(170px,1fr)_100px_135px_150px_140px_52px]'}`}>
                   <div>
                     <label className="text-[10px] text-[#6b7688] mb-1 block">Produk</label>
-                    <select value={row.productId} disabled={Boolean(selectedPO)} onChange={(e) => setTransactionInput(index, { productId: e.target.value, inputMode: 'QTY', inputValue: 1 })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb] disabled:opacity-70">
+                    <select value={row.productId} disabled={Boolean(selectedPO)} onChange={(e) => { const chosenProduct = products.find((item) => item.id === e.target.value); setTransactionInput(index, { productId: e.target.value, inputMode: 'QTY', inputValue: 1, channel: chosenProduct?.channel || 'KOM' }); }} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb] disabled:opacity-70">
                       <option value="">Pilih produk...</option>
                       {products.map((item) => <option key={item.id} value={item.id}>{item.name} ({formatNum(item.stock || 0)} {item.unit})</option>)}
                     </select>
-                    {selectedPO && product && <div className="text-[10px] text-[#60a5fa] mt-1">Sisa PO: {formatNum(remaining)} {product.unit}</div>}
+                    {selectedPO && product && <div className="text-[10px] text-[#60a5fa] mt-1">Sisa PO: {formatNum(remaining)} {product.unit}</div>}<label className="text-[10px] text-[#6b7688] mt-2 mb-1 block">Saluran</label><select value={row.channel || product?.channel || 'KOM'} onChange={(e) => setRow(index, { channel: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2 text-xs"><option value="PSO">PSO</option><option value="KOM">KOM</option></select>
                   </div>
                   <div>
                     <label className="text-[10px] text-[#6b7688] mb-1 block">Input Berdasarkan</label>
