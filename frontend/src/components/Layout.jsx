@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutGrid, Boxes, Layers, ArrowLeftRight, Send, History, ClipboardList, Truck, MonitorSmartphone, Users, Settings, PlusCircle, LogOut, Menu, ChevronDown, PackageSearch, Workflow, ShoppingCart, ShieldCheck, ClipboardCheck } from 'lucide-react';
+import { LayoutGrid, Boxes, Layers, ArrowLeftRight, Send, History, ClipboardList, Truck, MonitorSmartphone, Users, Settings, PlusCircle, LogOut, Menu, ChevronDown, PackageSearch, Workflow, ShoppingCart, ShieldCheck, ClipboardCheck, SearchCheck, Repeat2, FileText, RotateCcw, Factory, BadgeCheck, Warehouse } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { hasPermission, roleLabel } from '../lib/permissions';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from './ui/sheet';
@@ -12,6 +12,7 @@ const NAV_GROUPS = [
   {
     label: 'Inventori', icon: PackageSearch, items: [
       { to: '/produk', label: 'Daftar Produk', icon: Boxes },
+      { to: '/monitoring', label: 'Monitoring Stok', icon: SearchCheck },
       { to: '/tumpukan', label: 'Tumpukan Stok', icon: Layers },
       { to: '/opname-konsinyasi', label: 'Opname Bazar/E-commerce', icon: ClipboardCheck },
     ],
@@ -19,8 +20,18 @@ const NAV_GROUPS = [
   {
     label: 'Operasional', icon: Workflow, items: [
       { to: '/catat', label: 'Catat Stok', icon: ArrowLeftRight, permission: 'operations' },
+      { to: '/mutasi', label: 'Mutasi Stok', icon: Repeat2, permission: 'mutasi' },
       { to: '/pengeluaran', label: 'Pengeluaran', icon: Send, permission: 'outbound' },
+      { to: '/surat-jalan', label: 'Surat Jalan', icon: FileText },
+      { to: '/retur', label: 'Retur', icon: RotateCcw, permission: 'outbound' },
       { to: '/antrian', label: 'Layar Antrian', icon: MonitorSmartphone },
+    ],
+  },
+  {
+    label: 'Produksi & QC', icon: Factory, items: [
+      { to: '/repacking', label: 'Repacking', icon: Factory, permission: 'rebagging' },
+      { to: '/qc', label: 'QC', icon: BadgeCheck, permission: 'qc' },
+      { to: '/treatment', label: 'Spraying & Fumigasi', icon: ShieldCheck, permission: 'operations' },
     ],
   },
   {
@@ -34,6 +45,7 @@ const NAV_GROUPS = [
     label: 'Administrasi', icon: ShieldCheck, items: [
       { to: '/pengguna', label: 'Pengguna', icon: Users, permission: 'users' },
       { to: '/pengaturan', label: 'Pengaturan', icon: Settings, permission: 'settings' },
+      { to: '/master-gudang', label: 'Master Gudang', icon: Warehouse, permission: 'settings' },
     ],
   },
 ];
