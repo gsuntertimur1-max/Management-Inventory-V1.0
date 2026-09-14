@@ -294,7 +294,7 @@ async def export_bon_muat_pdf(load_id: str, user: dict = Depends(get_current_use
         c.setFont("Helvetica-Bold",6.5); c.drawString(5*mm,y,str(item.get("name",""))[:48]); y-=4*mm
         secondary = float(item.get("secondaryQty", 0) or 0)
         sacks = float(item.get("qty", 0) or 0) / secondary if secondary else 0
-        c.setFont("Helvetica",6.1); c.drawString(7*mm,y,f"{_num(item.get('qty'))} pcs | {_num(item.get('berat'))} kg | {_num(sacks)} {item.get('secondary','karung')}"); y-=4.5*mm
+        c.setFont("Helvetica",6.1); c.drawString(7*mm,y,f"{_num(item.get('qty'))} {item.get('unit','pcs')} | {_num(item.get('berat'))} {item.get('measureUnit','kg')} | {_num(sacks)} {item.get('secondary','karung')}"); y-=4.5*mm
         fee = item.get("loadingFee", {}); c.setFont("Helvetica-Bold",6.2); c.drawString(7*mm,y,f"Biaya muat: Rp {_num(fee.get('total',0))}"); y-=6*mm
     total_fee = float((load.get("loading_cost") or {}).get("total", 0) or 0)
     c.setDash(2,2); c.line(4*mm,y,width-4*mm,y); c.setDash(); y-=6*mm; c.setFont("Helvetica-Bold",8); c.drawCentredString(mid,y,f"TOTAL BIAYA MUAT: Rp {_num(total_fee)}"); y-=7*mm; c.setFont("Helvetica-Bold",7); c.drawCentredString(mid,y,"Serahkan bon ini kepada petugas pemuatan"); y-=5*mm; c.setFont("Helvetica",6.5); c.drawCentredString(mid,y,"Terima kasih - GBB Sunter Timur I & II"); c.save()
