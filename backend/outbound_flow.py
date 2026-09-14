@@ -74,19 +74,32 @@ class DailyLoadingSettlementInput(BaseModel):
     note: str = ""
 
 
-def _loading_fee(product: dict, qty: float) -> dict:
-    labor = float(product.get("loadingFeeLabor", 0) or 0) * qty
-    daily = float(product.get("loadingFeeDaily", 0) or 0) * qty
-    warehouse = float(product.get("loadingFeeWarehouse", 0) or 0) * qty
-    mode = str(product.get("loadingFeeChargeMode") or "TIDAK_ADA").strip().upper()
-    if mode not in {"PENGAMBIL", "TERMASUK", "TIDAK_ADA"}:
-        mode = "TIDAK_ADA"
-    total = labor + daily + warehouse
-    return {
-        "mode": mode, "labor": labor, "daily": daily, "warehouse": warehouse,
-        "total": total, "chargeable": total if mode == "PENGAMBIL" else 0.0,
-    }
+def _crew_group(unit_loading: str) -> str:
+    text = str(unit_loading or "").upper()
+    if "RTR" in text: return "GRUP 3 - RTR"
+    if "MP1" in text or any(f"UNIT {x}" in text for x in ("21", "22", "23", "24")): return "GRUP 2 - MP1/21-24"
+    return "GRUP 1 - GBB 17-20"
 
+
+def _loading_fee(product: dict, qty: float, when=None, apply_overtime=None, apply_holiday=None) -> dict:
+    current = when or operational_now()
+    if isinstance(current, str):
+        current = datetime.fromisoformat(current.replace("Z", "+00:00")).astimezone(operational_now().tzinfo)
+    is_holiday = current.weekday() >= 5
+    is_overtime = current.hour >= 16
+    if apply_overtime is not None: is_overtime = bool(apply_overtime)
+    if apply_holiday is not None: is_holiday = bool(apply_holiday)
+    components = {"labor": 0.0, "daily": 0.0, "warehouse": 0.0}
+    keys = {"labor": "Labor", "daily": "Daily", "warehouse": "Warehouse"}
+    for target, suffix in keys.items():
+        value = float(product.get(f"loadingFee{suffix}", 0) or 0)
+        if is_overtime: value += float(product.get(f"loadingOvertime{suffix}", 0) or 0)
+        if is_holiday: value += float(product.get(f"loadingHoliday{suffix}", 0) or 0)
+        if is_holiday and is_overtime: value += float(product.get(f"loadingHolidayOvertime{suffix}", 0) or 0)
+        components[target] = value * qty
+    mode = str(product.get("loadingFeeChargeMode") or "TIDAK_ADA").strip().upper()
+    total = sum(components.values())
+    return {"mode": mode, **components, "total": total, "chargeable": total if mode == "PENGAMBIL" else 0.0, "overtime": is_overtime, "holiday": is_holiday}
 
 class ReturnPlacementInput(BaseModel):
     goodQty: float = Field(gt=0)
@@ -439,6 +452,14 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
 
     operation_id = new_id()
     completed_at = now_iso()
+    completed_local = operational_now()
+    final_items = []
+    for original in load.get("items", []):
+        item = dict(original)
+        product_for_fee = await db.products.find_one({"id": item.get("productId")}, {"_id": 0}) or item
+        item["loadingFee"] = _loading_fee(product_for_fee, float(item.get("qty", 0) or 0), completed_local)
+        final_items.append(item)
+    final_loading_cost = {key: sum(float(item.get("loadingFee", {}).get(key, 0) or 0) for item in final_items) for key in ("labor", "daily", "warehouse", "total", "chargeable")}
     stock_changes = []
     transactions = []
     kondisi = load.get("kondisi", "BAIK")
@@ -568,6 +589,8 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
                 "status": "Selesai",
                 "completed_at": completed_at,
                 "completed_by": user.get("name", ""),
+                "items": final_items,
+                "loading_cost": {**final_loading_cost, "group": _crew_group(load.get("unit_loading", "")), "overtime": completed_local.hour >= 16, "holiday": completed_local.weekday() >= 5},
                 "surat_jalan_id": sj_id,
                 "surat_jalan_no": sj_no,
                 "document_status": "Menunggu CR/SO" if load.get("document_type") == "CT" else "Menunggu SO/Retur" if load.get("document_type") in {"MEMO", "ND"} else "Selesai",
