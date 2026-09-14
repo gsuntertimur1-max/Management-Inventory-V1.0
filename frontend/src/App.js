@@ -7,7 +7,9 @@ import Layout from './components/Layout';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import DaftarProduk from './pages/DaftarProduk';
+import MonitoringStok from './pages/MonitoringStok';
 import CatatStok from './pages/CatatStok';
+import MutasiStok from './pages/MutasiStok';
 import Riwayat from './pages/Riwayat';
 import Pengeluaran from './pages/Pengeluaran';
 import PurchaseOrder from './pages/PurchaseOrder';
@@ -18,6 +20,7 @@ import Pengaturan from './pages/Pengaturan';
 import ImportData from './pages/ImportData';
 import TumpukanStok from './pages/TumpukanStok';
 import OpnameKonsinyasi from './pages/OpnameKonsinyasi';
+import WorkflowModule from './pages/WorkflowModule';
 import { hasPermission, roleLabel } from './lib/permissions';
 
 const Loading = () => (
@@ -52,11 +55,19 @@ function AppRoutes() {
       <Route path="/login" element={<Login />} />
       <Route path="/" element={<Protected><Dashboard /></Protected>} />
       <Route path="/produk" element={<Protected><DaftarProduk /></Protected>} />
+      <Route path="/monitoring" element={<Protected><MonitoringStok /></Protected>} />
       <Route path="/import" element={<Protected permission="masterWrite"><ImportData /></Protected>} />
       <Route path="/tumpukan" element={<Protected><TumpukanStok /></Protected>} />
       <Route path="/opname-konsinyasi" element={<Protected><OpnameKonsinyasi /></Protected>} />
       <Route path="/catat" element={<Protected permission="operations"><CatatStok /></Protected>} />
+      <Route path="/mutasi" element={<Protected permission="mutasi"><MutasiStok /></Protected>} />
       <Route path="/pengeluaran" element={<Protected permission="outbound"><Pengeluaran /></Protected>} />
+      <Route path="/surat-jalan" element={<Protected><WorkflowModule type="suratjalan" /></Protected>} />
+      <Route path="/retur" element={<Protected permission="outbound"><WorkflowModule type="retur" /></Protected>} />
+      <Route path="/repacking" element={<Protected permission="rebagging"><WorkflowModule type="repacking" /></Protected>} />
+      <Route path="/qc" element={<Protected permission="qc"><WorkflowModule type="qc" /></Protected>} />
+      <Route path="/master-gudang" element={<Protected permission="settings"><WorkflowModule type="gudang" /></Protected>} />
+      <Route path="/treatment" element={<Protected permission="operations"><WorkflowModule type="treatment" /></Protected>} />
       <Route path="/riwayat" element={<Protected><Riwayat /></Protected>} />
       <Route path="/po" element={<Protected><PurchaseOrder /></Protected>} />
       <Route path="/supplier" element={<Protected><Supplier /></Protected>} />
