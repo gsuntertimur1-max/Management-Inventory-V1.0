@@ -275,7 +275,7 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         channel = normalize_channel(item.channel, normalize_channel(product.get("channel")))
         if stack_code and stack_code not in await valid_stack_codes():
             raise HTTPException(status_code=400, detail="Tumpukan asal tidak valid")
-        load_items.append({"productId": item.productId, "documentNo": item_ref, "sku": product.get("sku", ""), "name": product.get("name", ""), "channel": channel, "qty": qty, "unit": product.get("unit", ""), "weight": weight, "berat": weight * qty, "secondary": product.get("secondary", ""), "secondaryQty": float(product.get("secondaryQty", 0) or 0), "location": product.get("location", ""), "stackCode": stack_code, "loadingFee": _loading_fee(product, qty)})
+        load_items.append({"productId": item.productId, "documentNo": item_ref, "sku": product.get("sku", ""), "name": product.get("name", ""), "channel": channel, "qty": qty, "unit": product.get("unit", ""), "weight": weight, "measureUnit": product.get("measureUnit", "kg") or "kg", "berat": weight * qty, "secondary": product.get("secondary", ""), "secondaryQty": float(product.get("secondaryQty", 0) or 0), "location": product.get("location", ""), "stackCode": stack_code, "loadingFee": _loading_fee(product, qty)})
 
     ordered_products = [products[product_id] for product_id in item_order]
     unit_loading, queue_prefix = _loading_unit_from_products(ordered_products)
