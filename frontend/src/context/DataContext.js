@@ -23,6 +23,8 @@ const EMPTY = {
   purchaseOrders: [],
   users: [],
   transactions: [],
+  monitoringStock: [],
+  auditLog: [],
   stackAllocations: [],
   stackTreatments: [],
   consignmentStock: [],
@@ -49,13 +51,15 @@ export const DataProvider = ({ children }) => {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [p, suppliersRes, sj, loads, po, t, stacks, treatments, consignmentStockRes, consignmentLayoutsRes, consignmentHistoryRes, consignmentOpnamesRes, settingsRes, usersRes] = await Promise.all([
+      const [p, suppliersRes, sj, loads, po, t, monitoringRes, auditRes, stacks, treatments, consignmentStockRes, consignmentLayoutsRes, consignmentHistoryRes, consignmentOpnamesRes, settingsRes, usersRes] = await Promise.all([
         api.get('/products'),
         api.get('/suppliers'),
         api.get('/surat-jalan'),
         api.get('/outbound-loads'),
         api.get('/purchase-orders-v2'),
         api.get('/transactions'),
+        api.get('/monitoring-stock'),
+        api.get('/audit-log'),
         api.get('/stack-allocations'),
         api.get('/stack-treatments'),
         api.get('/consignment-stock'),
@@ -73,6 +77,8 @@ export const DataProvider = ({ children }) => {
         purchaseOrders: po.data,
         users: usersRes.data,
         transactions: t.data,
+        monitoringStock: monitoringRes.data,
+        auditLog: auditRes.data,
         stackAllocations: stacks.data,
         stackTreatments: treatments.data,
         consignmentStock: consignmentStockRes.data,
@@ -199,6 +205,7 @@ export const DataProvider = ({ children }) => {
   const updateStackAllocation = async (id, payload) => { await api.put(`/stack-allocations/${id}`, payload); await fetchAll(); };
   const deleteStackAllocation = async (id) => { await api.delete(`/stack-allocations/${id}`); await fetchAll(); };
   const addStackTreatment = async (payload) => { await api.post('/stack-treatments', payload); await fetchAll(); };
+  const addStockMutation = async (payload) => { const { data } = await api.post('/stock-mutations', payload); await fetchAll(); return data; };
   const saveConsignmentLayout = async (payload) => { await api.put('/consignment-layouts', payload); await fetchAll(); };
   const addConsignmentOpname = async (payload) => { await api.post('/consignment-opnames', payload); await fetchAll(); };
 
@@ -222,6 +229,7 @@ export const DataProvider = ({ children }) => {
       addSupplier, addPO, addUser, updateUser, deleteUser, changeUserPassword, updateSettings, resetData, importCsv,
       addStackAllocation, updateStackAllocation, deleteStackAllocation,
       addStackTreatment,
+      addStockMutation,
       saveConsignmentLayout,
       addConsignmentOpname,
     }}>
