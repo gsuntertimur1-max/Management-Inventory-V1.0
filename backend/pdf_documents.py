@@ -169,7 +169,7 @@ async def export_warehouse_stack_cards_pdf(warehouse: str, user: dict = Depends(
         spraying = next((x for x in treatments if x.get("type") == "SPRAYING"), None)
         fumigasi = next((x for x in treatments if x.get("type") != "SPRAYING"), None)
         story += [Paragraph("K A R T U &nbsp; T U M P U K A N", title), Paragraph(f"GBB Sunter Timur I &amp; II · {warehouse_code} · {stack_code}", ParagraphStyle("warehouse-card-sub", parent=title, fontSize=9, leading=12, spaceAfter=12)), Spacer(1,5*mm)]
-        headers=["NO","TANGGAL","SKU","NAMA PRODUK","NETTO","KOLLY","SPRAYING","FUMIGASI","KETERANGAN","PERHITUNGAN TUMPUKAN"]
+        headers=["NO","TANGGAL","SKU","NAMA PRODUK","KUANTUM","KOLLY","SPRAYING","FUMIGASI","KETERANGAN","PERHITUNGAN TUMPUKAN"]
         data=[[Paragraph(x,center) for x in headers]]
         for index,item in enumerate(items,1):
             row=[index,_date(item.get("createdAt")),item.get("sku",""),item.get("productName",""),_num(float(item.get("primaryQty",0) or 0)*float(item.get("weight",0) or 0)),_num(item.get("secondaryCount",0)),_date(spraying.get("startDate")) if spraying else "-",_date(fumigasi.get("startDate")) if fumigasi else "-",item.get("note",""),_arrangement(item)]
@@ -204,10 +204,10 @@ async def export_stack_card_pdf(stackCode: str, user: dict = Depends(get_current
     small = ParagraphStyle("small", parent=styles["BodyText"], fontName="Helvetica", fontSize=6.5, leading=8)
     center = ParagraphStyle("center", parent=small, alignment=TA_CENTER)
     story = [Paragraph("K A R T U &nbsp; T U M P U K A N", title), Paragraph("GBB Sunter Timur I &amp; II", ParagraphStyle("sub", parent=title, fontSize=9, leading=12, spaceAfter=12)), Spacer(1, 5 * mm)]
-    headers = ["NO", "TANGGAL", "GUDANG", "LOKASI", "SKU", "NAMA PRODUK", "NETTO", "KOLLY", "SPRAYING", "FUMIGASI", "KETERANGAN", "PERHITUNGAN TUMPUKAN"]
+    headers = ["NO", "TANGGAL", "GUDANG", "LOKASI", "SKU", "NAMA PRODUK", "KUANTUM", "KOLLY", "SPRAYING", "FUMIGASI", "KETERANGAN", "PERHITUNGAN TUMPUKAN"]
     data = [[Paragraph(x, center) for x in headers]]
     for index, item in enumerate(items, 1):
-        row = [index, _date(item.get("createdAt")), warehouse, code, item.get("sku", ""), item.get("productName", ""), _num(float(item.get("primaryQty", 0) or 0) * float(item.get("weight", 0) or 0)), _num(item.get("secondaryCount", 0)), _date(spraying.get("startDate")) if spraying else "-", _date(fumigasi.get("startDate")) if fumigasi else "-", item.get("note", ""), _arrangement(item)]
+        row = [index, _date(item.get("createdAt")), warehouse, code, item.get("sku", ""), item.get("productName", ""), f"{_num(float(item.get('primaryQty', 0) or 0) * float(item.get('weight', 0) or 0))} {item.get('measureUnit', 'kg')}", _num(item.get("secondaryCount", 0)), _date(spraying.get("startDate")) if spraying else "-", _date(fumigasi.get("startDate")) if fumigasi else "-", item.get("note", ""), _arrangement(item)]
         data.append([Paragraph(str(x), center if i in {0, 1, 2, 3, 4, 6, 7, 8, 9} else small) for i, x in enumerate(row)])
     widths = [8, 18, 15, 20, 22, 50, 18, 16, 22, 22, 31, 52]
     table = LongTable(data, colWidths=[x * mm for x in widths], repeatRows=1)
@@ -259,7 +259,7 @@ def _draw_sj_copy(c: canvas.Canvas, sj: dict, x: float, y: float, width: float, 
         item_doc = item.get("documentNo", "")
         if item_doc and item_doc != current_doc:
             c.setFillColor(colors.HexColor("#F3F7F9")); c.rect(left, cy-5*mm, right-left, 5*mm, fill=1, stroke=1); c.setFillColor(colors.HexColor("#244B63")); c.setFont("Helvetica-Bold", 6.5); c.drawString(left+2*mm, cy-3.3*mm, f"Dokumen: {item_doc}"); c.setFillColor(colors.black); cy -= 5*mm; current_doc = item_doc
-        c.rect(left, cy-row_h, right-left, row_h); c.setFont("Helvetica-Bold", 6.5); c.drawString(left+2*mm, cy-4*mm, str(item.get("name", ""))[:54]); c.setFont("Helvetica", 5.8); c.drawString(left+2*mm, cy-8*mm, f"SKU {item.get('sku','')} | Lokasi {item.get('location','-')}"); c.setFont("Helvetica-Bold", 7); c.drawRightString(right-2*mm, cy-5*mm, f"{_num(item.get('qty'))} {item.get('unit','')} | {_num(item.get('berat'))} Kg"); c.drawRightString(right-2*mm, cy-10*mm, item.get("sec", "")); cy -= row_h
+        c.rect(left, cy-row_h, right-left, row_h); c.setFont("Helvetica-Bold", 6.5); c.drawString(left+2*mm, cy-4*mm, str(item.get("name", ""))[:54]); c.setFont("Helvetica", 5.8); c.drawString(left+2*mm, cy-8*mm, f"SKU {item.get('sku','')} | Lokasi {item.get('location','-')}"); c.setFont("Helvetica-Bold", 7); c.drawRightString(right-2*mm, cy-5*mm, f"{_num(item.get('qty'))} {item.get('unit','')} | {_num(item.get('berat'))} {item.get('measureUnit','kg')}"); c.drawRightString(right-2*mm, cy-10*mm, item.get("sec", "")); cy -= row_h
     box("Nopol / Nama Sopir", f"{sj.get('polisi', '-')} / {sj.get('pengambil', '-')}", 10*mm, 35*mm)
     c.setFont("Helvetica", 7); c.drawCentredString(left+45*mm, cy-3*mm, "Pengangkut"); c.drawCentredString(right-45*mm, cy-3*mm, "Yang Menyerahkan,"); c.setFont("Helvetica-Bold", 6.5); c.drawCentredString(left+45*mm, cy-8*mm, sj.get("pengambil", "") or "-"); c.drawCentredString(right-45*mm, cy-8*mm, "KOMPLEKS GUDANG SUNTER TIMUR I & II"); c.line(left+25*mm, cy-28*mm, left+65*mm, cy-28*mm); c.drawCentredString(right-45*mm, cy-28*mm, warehouse_head)
     footer_y = 18 * mm; c.setStrokeColor(colors.HexColor("#527D96")); c.line(left, footer_y + 11*mm, right, footer_y + 11*mm); c.setFillColor(colors.HexColor("#244B63")); c.setFont("Helvetica-Bold", 8); c.drawString(left, footer_y + 5*mm, "Delivery Tracking"); c.setFillColor(colors.black); c.setFont("Helvetica", 5.8); c.drawString(left, footer_y, "Dicetak oleh: KOMPLEKS GUDANG SUNTER TIMUR I & II"); c.drawRightString(right, footer_y, f"Tanggal cetak: {_date(operational_now().isoformat(), True)}")
