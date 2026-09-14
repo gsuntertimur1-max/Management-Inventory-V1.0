@@ -78,13 +78,13 @@ const TumpukanStok = () => {
     <div className="flex flex-col xl:flex-row xl:items-end xl:justify-between gap-4">
       <div><div className="label-mono mb-2">Gudang Sunter Timur I & II</div><h1 className="font-display text-3xl md:text-4xl font-bold">Peta Tumpukan Stok</h1><p className="text-sm text-[#8b93a1] mt-2">Susunan komoditas berdasarkan kemasan sekunder.</p></div>
       <div className="grid grid-cols-3 gap-2">
-        {[['Terisi', `${occupied}/${stackCodes(warehouses).length}`, 'text-white'], ['Ditempatkan', formatNum(totalAllocated), 'text-[#60a5fa]'], ['Belum ditempatkan', formatNum(unallocated), unallocated ? 'text-[#f59e0b]' : 'text-[#22c55e]']].map(([label, value, color]) => <div key={label} className="card-surface p-3"><div className="text-xs text-[#6b7688]">{label}</div><div className={`font-display text-lg md:text-xl font-bold mt-1 ${color}`}>{value}</div></div>)}
+        <div className="card-surface p-3"><div className="flex items-center justify-between gap-2"><div className="text-xs text-[#6b7688]">Terisi</div><button title="Unduh kartu tumpukan PDF gudang terpilih" onClick={() => downloadApiFile(`/export/warehouse-stack-cards.pdf?warehouse=${encodeURIComponent(warehouse)}`, `kartu_tumpukan_${warehouse}.pdf`)} className="p-1.5 rounded-md border border-[#294263] text-[#93c5fd] hover:bg-[#13233a]"><Printer size={14} /></button></div><div className="font-display text-lg md:text-xl font-bold mt-1 text-white">{occupied}/{stackCodes(warehouses).length}</div></div>
+        {[['Ditempatkan', formatNum(totalAllocated), 'text-[#60a5fa]'], ['Belum ditempatkan', formatNum(unallocated), unallocated ? 'text-[#f59e0b]' : 'text-[#22c55e]']].map(([label, value, color]) => <div key={label} className="card-surface p-3"><div className="text-xs text-[#6b7688]">{label}</div><div className={`font-display text-lg md:text-xl font-bold mt-1 ${color}`}>{value}</div></div>)}
       </div>
     </div>
 
     <div className="card-surface p-3 flex flex-wrap items-center gap-3">
       <div className="overflow-x-auto flex-1"><div className="flex gap-2 min-w-max">{warehouses.map((wh) => <button key={wh.code} onClick={() => chooseWarehouse(wh.code)} className={`px-4 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2 ${warehouse === wh.code ? 'bg-[#2563eb] text-white' : 'bg-[#101722] text-[#8b93a1]'}`}><Warehouse size={16} />{wh.name}</button>)}</div></div>
-      <button onClick={() => downloadApiFile(`/export/warehouse-stack-cards.pdf?warehouse=${encodeURIComponent(warehouse)}`, `kartu_tumpukan_${warehouse}.pdf`)} className="btn-primary inline-flex items-center gap-2 whitespace-nowrap"><Printer size={16} /> Kartu PDF {warehouseConfig?.name || warehouse}</button>
     </div>
 
     <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_390px] gap-5">
