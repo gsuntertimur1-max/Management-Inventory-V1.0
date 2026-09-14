@@ -11,12 +11,14 @@ const Riwayat = () => {
   const [q, setQ] = useState('');
   const [type, setType] = useState('SEMUA');
   const [kondisi, setKondisi] = useState('SEMUA');
+  const [channel, setChannel] = useState('SEMUA');
   const [exporting, setExporting] = useState(false);
 
   const filtered = transactions.filter((t) => {
     const query = q.toLowerCase();
     return (type === 'SEMUA' || t.type === type)
       && (kondisi === 'SEMUA' || t.kondisi === kondisi)
+      && (channel === 'SEMUA' || (t.channel || 'KOM') === channel)
       && (
         (t.ref || '').toLowerCase().includes(query)
         || (t.po_no || '').toLowerCase().includes(query)
@@ -59,6 +61,7 @@ const Riwayat = () => {
         <div className="flex flex-wrap gap-3 mb-4">
           <div className="relative flex-1 min-w-[240px]"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6b7688]" /><input data-testid="riwayat-search-input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari No. Ref/PO, produk, SKU, pihak terkait..." className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg pl-9 pr-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" /></div>
           <select data-testid="riwayat-type-filter" value={type} onChange={(e) => setType(e.target.value)} className="bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none"><option value="SEMUA">SEMUA</option><option value="MASUK">MASUK</option><option value="KELUAR">KELUAR</option></select>
+          <select value={channel} onChange={(e) => setChannel(e.target.value)} className="bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none"><option value="SEMUA">Semua Saluran</option><option value="PSO">PSO</option><option value="KOM">KOM</option></select>
           <select data-testid="riwayat-kondisi-filter" value={kondisi} onChange={(e) => setKondisi(e.target.value)} className="bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none"><option value="SEMUA">SEMUA</option><option value="BAIK">BAIK</option><option value="RUSAK">RUSAK</option></select>
           <button onClick={exportCurrentMonth} disabled={exporting} className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-[#242f3d] hover:bg-[#141a24] disabled:opacity-60 disabled:cursor-wait"><Download size={15} /> {exporting ? 'Menyiapkan…' : 'Unduh Excel Bulan Ini'}</button>
         </div>
@@ -66,12 +69,13 @@ const Riwayat = () => {
 
         <div className="overflow-x-auto">
           <table className="w-full text-sm tbl">
-            <thead><tr className="text-left border-b border-[#1a222e]">{['Waktu', 'No. Referensi', 'Rangkaian Dokumen', 'No. PO', 'Antrian', 'Tipe', 'Kondisi', 'Produk', 'Perubahan', 'Kadaluarsa', 'Pihak Terkait', 'Dicatat Oleh'].map((h) => <th key={h} className="py-2.5 pr-4 font-semibold whitespace-nowrap">{h}</th>)}</tr></thead>
+            <thead><tr className="text-left border-b border-[#1a222e]">{['Waktu', 'No. Referensi', 'Saluran', 'Rangkaian Dokumen', 'No. PO', 'Antrian', 'Tipe', 'Kondisi', 'Produk', 'Perubahan', 'Kadaluarsa', 'Pihak Terkait', 'Dicatat Oleh'].map((h) => <th key={h} className="py-2.5 pr-4 font-semibold whitespace-nowrap">{h}</th>)}</tr></thead>
             <tbody>
-              {filtered.length === 0 ? <tr><td colSpan={12} className="py-8 text-center text-[#6b7688]">Belum ada transaksi. Catat penerimaan atau pengeluaran baru.</td></tr> : filtered.map((t) => (
+              {filtered.length === 0 ? <tr><td colSpan={13} className="py-8 text-center text-[#6b7688]">Belum ada transaksi. Catat penerimaan atau pengeluaran baru.</td></tr> : filtered.map((t) => (
                 <tr key={t.id} className="tbl-row border-b border-[#131a24]">
                   <td className="py-3 pr-4 whitespace-nowrap text-[#8b93a1]">{formatDate(t.time)}</td>
                   <td className="py-3 pr-4 font-mono text-xs">{t.ref || '—'}</td>
+                  <td className="py-3 pr-4"><span className={`text-[10px] font-mono px-2 py-0.5 rounded ${(t.channel || 'KOM') === 'PSO' ? 'bg-[#2563eb]/15 text-[#60a5fa]' : 'bg-[#a855f7]/15 text-[#c084fc]'}`}>{t.channel || 'KOM'}</span></td>
                   <td className="py-3 pr-4 font-mono text-xs whitespace-nowrap"><span className="text-[#93c5fd]">{t.document_type || '—'}</span>{t.parent_document && <span className="text-[#6b7688]"> ← {t.parent_document}</span>}</td>
                   <td className="py-3 pr-4 font-mono text-xs text-[#60a5fa]">{t.po_no || '—'}</td>
                   <td className="py-3 pr-4 font-mono text-xs">{t.antrian || '—'}</td>
