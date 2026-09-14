@@ -1,0 +1,1 @@
+Restore trigger for inventory-dev. Base app source is commit 1345a29.
