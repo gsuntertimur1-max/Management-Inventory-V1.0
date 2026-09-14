@@ -76,6 +76,33 @@ def _number(value, default=0.0) -> float:
         return default
 
 
+def _crew_group_from_location(location: str) -> str:
+    text = str(location or "").upper()
+    if "RTR" in text:
+        return "GRUP 3 - RTR"
+    if "MP1" in text or any(f"UNIT {unit}" in text for unit in ("21", "22", "23", "24")):
+        return "GRUP 2 - MP1/21-24"
+    return "GRUP 1 - GBB 17-20"
+
+
+def _unloading_fee(product: dict, qty: float, at) -> dict:
+    holiday = at.weekday() >= 5
+    overtime = at.hour >= 16
+    parts = {}
+    for target, suffix in (("labor", "Labor"), ("daily", "Daily"), ("warehouse", "Warehouse")):
+        value = float(product.get(f"unloadingFee{suffix}", 0) or 0)
+        if overtime:
+            value += float(product.get(f"unloadingOvertime{suffix}", 0) or 0)
+        if holiday:
+            value += float(product.get(f"unloadingHoliday{suffix}", 0) or 0)
+        if holiday and overtime:
+            value += float(product.get(f"unloadingHolidayOvertime{suffix}", 0) or 0)
+        parts[target] = value * qty
+    total = sum(parts.values())
+    mode = str(product.get("unloadingFeeChargeMode") or "TIDAK_ADA").upper()
+    return {**parts, "total": total, "mode": mode, "chargeable": total if mode == "PENGIRIM" else 0.0, "overtime": overtime, "holiday": holiday}
+
+
 def _validate_exp(value: str) -> str:
     value = (value or "").strip()
     if not value:
@@ -344,6 +371,8 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
                 "gross_min": float(body.grossMin) if body.weighingForm else 0,
                 "gross_max": float(body.grossMax) if body.weighingForm else 0,
                 "weighing_entries": _weighing_entries(float(body.grossWeight), float(body.grossMin), float(body.grossMax)) if body.weighingForm else [],
+                "unloading_group": _crew_group_from_location(item.stackCode or product.get("location", "")),
+                "unloading_cost": _unloading_fee(product, float(item.qty), op_now),
             })
 
         if txns:
