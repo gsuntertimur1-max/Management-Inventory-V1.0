@@ -32,8 +32,8 @@ def test_purchase_order_requires_items():
 
 def test_service_routes_do_not_duplicate_api_prefix():
     paths = {route.path for route in server.app.routes}
-    assert "/auth/login" in paths
-    assert "/api/auth/login" not in paths
+    assert "/api/auth/login" in paths
+    assert "/api/api/auth/login" not in paths
 
 
 @pytest.mark.parametrize(
