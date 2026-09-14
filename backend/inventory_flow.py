@@ -19,6 +19,8 @@ from backend.server import (
     now_iso,
     operational_now,
     require_write,
+    ensure_channel_stock,
+    normalize_channel,
 )
 
 router = APIRouter(prefix="/api")
@@ -40,6 +42,7 @@ class ReceiptItemInput(BaseModel):
     qty: float = Field(gt=0)
     exp: str = ""
     stackCode: str = ""
+    channel: str = ""
 
 
 class ReceiptInput(BaseModel):
@@ -195,6 +198,7 @@ async def create_purchase_order(body: PurchaseOrderInput, user: dict = Depends(r
             "secondary": product.get("secondary", ""),
             "secondaryQty": float(product.get("secondaryQty", 0) or 0),
             "cost": float(product.get("cost", 0) or 0),
+            "channel": normalize_channel(product.get("channel")),
         })
 
     year = operational_now().strftime("%Y")
@@ -239,7 +243,7 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
         if not product:
             raise HTTPException(status_code=404, detail="Produk penerimaan tidak ditemukan")
         _validate_pack_qty(product, float(item.qty))
-        products.append(product)
+        products.append({**product, "_channel": normalize_channel(item.channel, normalize_channel(product.get("channel")))})
         requested_by_product[item.productId] += float(item.qty)
         _validate_exp(item.exp)
 
@@ -272,9 +276,11 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
     try:
         for item, product in zip(body.items, products):
             field = "damaged" if body.kondisi == "RUSAK" else "stock"
+            channel = product.get("_channel", normalize_channel(product.get("channel")))
+            await ensure_channel_stock(product)
             exp = _validate_exp(item.exp)
             previous_exp = product.get("exp", "") or ""
-            update_doc = {"$inc": {field: float(item.qty)}}
+            update_doc = {"$inc": {field: float(item.qty), f"channelStock.{channel}.{field}": float(item.qty)}}
 
             # Di master produk hanya disimpan expired terdekat sebagai ringkasan.
             # Expired aktual tiap penerimaan tetap tersimpan pada transaksi.
@@ -291,6 +297,7 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
                 "qty": float(item.qty),
                 "previousExp": previous_exp,
                 "expChanged": bool(update_doc.get("$set")),
+                "channel": channel,
             })
 
             stack_code = item.stackCode.strip().upper()
@@ -316,6 +323,7 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
                 "total_weight": float(product.get("weight", 0) or 0) * float(item.qty),
                 "secondary": product.get("secondary", ""),
                 "secondaryQty": float(product.get("secondaryQty", 0) or 0),
+                "channel": channel,
                 "exp": exp,
                 "penerima": party,
                 "polisi": body.polisi,
@@ -358,7 +366,7 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
     except Exception:
         await db.transactions.delete_many({"operation_id": operation_id})
         for change in reversed(stock_changes):
-            rollback = {"$inc": {change["field"]: -change["qty"]}}
+            rollback = {"$inc": {change["field"]: -change["qty"], f"channelStock.{change['channel']}.{change['field']}": -change["qty"]}}
             if change["expChanged"]:
                 rollback["$set"] = {"exp": change["previousExp"]}
             await db.products.update_one({"id": change["productId"]}, rollback)
@@ -398,6 +406,7 @@ async def import_master_csv(file: UploadFile = File(...), user: dict = Depends(r
             "weight": _number(row.get("berat_unit"), 0),
             "secondary": (row.get("kemasan_sekunder") or "").strip(),
             "secondaryQty": _number(row.get("isi_kemasan_sekunder"), 0),
+            "channel": normalize_channel(row.get("saluran") or row.get("channel")),
         }
         if master["secondary"] and master["secondaryQty"] <= 0:
             raise HTTPException(
