@@ -110,6 +110,65 @@ async def export_consignment_stock_card_pdf(destination: str, user: dict = Depen
     return _pdf_response(buffer, f"kartu_stok_konsinyasi_{short_location.lower()}.pdf")
 
 
+@router.get("/export/products.pdf")
+async def export_products_pdf(user: dict = Depends(get_current_user)):
+    products = await db.products.find({}, {"_id": 0}).sort([("name", 1), ("sku", 1)]).to_list(10000)
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), leftMargin=10*mm, rightMargin=10*mm, topMargin=23*mm, bottomMargin=11*mm)
+    styles = getSampleStyleSheet()
+    title = ParagraphStyle("products-title", parent=styles["Title"], alignment=TA_CENTER, fontName="Helvetica-Bold", fontSize=14, leading=17, spaceAfter=3)
+    small = ParagraphStyle("products-small", parent=styles["BodyText"], fontName="Helvetica", fontSize=6.5, leading=8)
+    center = ParagraphStyle("products-center", parent=small, alignment=TA_CENTER)
+    story = [Paragraph("DAFTAR INVENTORI PRODUK", title), Paragraph("GBB Sunter Timur I &amp; II", ParagraphStyle("products-sub", parent=title, fontSize=8.5, leading=11, spaceAfter=9))]
+    headers = ["NO", "SKU", "NAMA KOMODITI", "KATEGORI", "SALURAN", "STOK BAIK", "RUSAK", "SATUAN", "BERAT / UNIT", "LOKASI"]
+    data = [[Paragraph(header, center) for header in headers]]
+    for index, item in enumerate(products, 1):
+        row = [index, item.get("sku", ""), item.get("name", ""), item.get("category", "-") or "-", item.get("channel", "KOM") or "KOM", _num(item.get("stock", 0)), _num(item.get("damaged", 0)), item.get("unit", ""), f"{_num(item.get('weight', 0))} kg" if item.get("weight") else "-", item.get("location", "-") or "-"]
+        data.append([Paragraph(str(value), center if col in {0,1,4,5,6,7,8} else small) for col, value in enumerate(row)])
+    table = LongTable(data, colWidths=[8*mm,26*mm,65*mm,38*mm,19*mm,25*mm,20*mm,22*mm,27*mm,37*mm], repeatRows=1)
+    table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),SOFT_HEADER),("TEXTCOLOR",(0,0),(-1,0),colors.white),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("GRID",(0,0),(-1,-1),.35,colors.HexColor("#777777")),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4)]))
+    story.append(table)
+    doc.build(story, onFirstPage=_stack_page, onLaterPages=_stack_page)
+    return _pdf_response(buffer, "daftar_inventori_produk.pdf")
+
+
+@router.get("/export/warehouse-stack-cards.pdf")
+async def export_warehouse_stack_cards_pdf(warehouse: str, user: dict = Depends(get_current_user)):
+    warehouse_code = warehouse.strip().upper()
+    allocations = await db.stack_allocations.find({"stackCode": {"$regex": f"^{warehouse_code}/"}}, {"_id": 0}).sort([("stackCode",1),("productName",1)]).to_list(5000)
+    by_stack = {}
+    for item in allocations:
+        by_stack.setdefault(item.get("stackCode", ""), []).append(item)
+    if not by_stack:
+        raise HTTPException(status_code=404, detail="Belum ada komoditas pada tumpukan gudang ini")
+    settings = await db.settings.find_one({"_id":"app"},{"_id":0}) or {}
+    warehouse_head = settings.get("warehouseHead") or "Irsa Maulian Nugraha"
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), leftMargin=12*mm, rightMargin=12*mm, topMargin=24*mm, bottomMargin=11*mm)
+    styles = getSampleStyleSheet()
+    title = ParagraphStyle("warehouse-card-title", parent=styles["Title"], alignment=TA_CENTER, fontName="Helvetica-Bold", fontSize=15, leading=18, spaceAfter=2)
+    small = ParagraphStyle("warehouse-card-small", parent=styles["BodyText"], fontName="Helvetica", fontSize=6.5, leading=8)
+    center = ParagraphStyle("warehouse-card-center", parent=small, alignment=TA_CENTER)
+    story = []
+    cards = list(by_stack.items())
+    for card_index, (stack_code, items) in enumerate(cards):
+        treatments = await db.stack_treatments.find({"$or":[{"stackCode":stack_code},{"type":"SPRAYING","warehouse":warehouse_code}]},{"_id":0}).sort("startDate",-1).to_list(500)
+        spraying = next((x for x in treatments if x.get("type") == "SPRAYING"), None)
+        fumigasi = next((x for x in treatments if x.get("type") != "SPRAYING"), None)
+        story += [Paragraph("K A R T U &nbsp; T U M P U K A N", title), Paragraph(f"GBB Sunter Timur I &amp; II · {warehouse_code} · {stack_code}", ParagraphStyle("warehouse-card-sub", parent=title, fontSize=9, leading=12, spaceAfter=12)), Spacer(1,5*mm)]
+        headers=["NO","TANGGAL","SKU","NAMA PRODUK","NETTO","KOLLY","SPRAYING","FUMIGASI","KETERANGAN","PERHITUNGAN TUMPUKAN"]
+        data=[[Paragraph(x,center) for x in headers]]
+        for index,item in enumerate(items,1):
+            row=[index,_date(item.get("createdAt")),item.get("sku",""),item.get("productName",""),_num(float(item.get("primaryQty",0) or 0)*float(item.get("weight",0) or 0)),_num(item.get("secondaryCount",0)),_date(spraying.get("startDate")) if spraying else "-",_date(fumigasi.get("startDate")) if fumigasi else "-",item.get("note",""),_arrangement(item)]
+            data.append([Paragraph(str(value),center if col in {0,1,2,4,5,6,7} else small) for col,value in enumerate(row)])
+        table=LongTable(data,colWidths=[8*mm,20*mm,25*mm,58*mm,20*mm,18*mm,24*mm,24*mm,42*mm,57*mm],repeatRows=1)
+        table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),SOFT_HEADER),("TEXTCOLOR",(0,0),(-1,0),colors.white),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("GRID",(0,0),(-1,-1),.35,colors.HexColor("#777777")),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("TOPPADDING",(0,0),(-1,-1),5),("BOTTOMPADDING",(0,0),(-1,-1),5)]))
+        story += [table, Spacer(1,10*mm), Table([["",Paragraph(f"Jakarta, {_date(operational_now().isoformat())}<br/><br/>Kepala Gudang Sunter Timur I &amp; II<br/><br/><br/><b>{warehouse_head}</b>",ParagraphStyle("warehouse-card-sign",parent=small,alignment=TA_CENTER,fontSize=8,leading=14))]],colWidths=[190*mm,65*mm])]
+        if card_index < len(cards)-1: story.append(PageBreak())
+    doc.build(story,onFirstPage=_stack_page,onLaterPages=_stack_page)
+    return _pdf_response(buffer,f"kartu_tumpukan_{warehouse_code}.pdf")
+
+
 @router.get("/export/stack-card.pdf")
 async def export_stack_card_pdf(stackCode: str, user: dict = Depends(get_current_user)):
     code = stackCode.strip().upper()
