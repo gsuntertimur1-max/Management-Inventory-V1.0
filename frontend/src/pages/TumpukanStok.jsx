@@ -82,7 +82,10 @@ const TumpukanStok = () => {
       </div>
     </div>
 
-    <div className="card-surface p-3 overflow-x-auto"><div className="flex gap-2 min-w-max">{warehouses.map((wh) => <button key={wh.code} onClick={() => chooseWarehouse(wh.code)} className={`px-4 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2 ${warehouse === wh.code ? 'bg-[#2563eb] text-white' : 'bg-[#101722] text-[#8b93a1]'}`}><Warehouse size={16} />{wh.name}</button>)}</div></div>
+    <div className="card-surface p-3 flex flex-wrap items-center gap-3">
+      <div className="overflow-x-auto flex-1"><div className="flex gap-2 min-w-max">{warehouses.map((wh) => <button key={wh.code} onClick={() => chooseWarehouse(wh.code)} className={`px-4 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2 ${warehouse === wh.code ? 'bg-[#2563eb] text-white' : 'bg-[#101722] text-[#8b93a1]'}`}><Warehouse size={16} />{wh.name}</button>)}</div></div>
+      <button onClick={() => downloadApiFile(`/export/warehouse-stack-cards.pdf?warehouse=${encodeURIComponent(warehouse)}`, `kartu_tumpukan_${warehouse}.pdf`)} className="btn-primary inline-flex items-center gap-2 whitespace-nowrap"><Printer size={16} /> Kartu PDF {warehouseConfig?.name || warehouse}</button>
+    </div>
 
     <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_390px] gap-5">
       <section className="card-surface p-4 md:p-5">
