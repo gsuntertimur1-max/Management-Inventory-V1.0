@@ -11,7 +11,7 @@ import { stackCodes } from '../lib/warehouses';
 
 const empty = {
   name: '', sku: '', category: 'F&B / Bahan Makanan', cost: 0,
-  location: '', supplier: '', min: 0, unit: 'Pack', weight: 0, secondary: '', secondaryQty: 0,
+  location: '', supplier: '', min: 0, unit: 'Pack', weight: 0, secondary: '', secondaryQty: 0, channel: 'KOM',
 };
 
 const masterPayload = (data) => ({
@@ -26,6 +26,7 @@ const masterPayload = (data) => ({
   weight: Number(data.weight || 0),
   secondary: data.secondary || '',
   secondaryQty: Number(data.secondaryQty || 0),
+  channel: data.channel === 'PSO' ? 'PSO' : 'KOM',
 });
 
 const DaftarProduk = () => {
@@ -36,11 +37,13 @@ const DaftarProduk = () => {
   const activeCategories = categories.filter((item) => item.active !== false);
   const [q, setQ] = useState('');
   const [cat, setCat] = useState('SEMUA');
+  const [channel, setChannel] = useState('SEMUA');
   const [modal, setModal] = useState(null);
   const [exporting, setExporting] = useState(false);
 
   const filtered = products
     .filter((p) => (cat === 'SEMUA' || p.category === cat)
+      && (channel === 'SEMUA' || (p.channel || 'KOM') === channel)
       && (p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase())))
     .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -110,6 +113,7 @@ const DaftarProduk = () => {
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6b7688]" />
             <input data-testid="product-search-input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari nama produk atau kode SKU..." className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg pl-9 pr-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" />
           </div>
+          <select value={channel} onChange={(e) => setChannel(e.target.value)} className="bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb] min-w-[130px]"><option value="SEMUA">Semua Saluran</option><option value="PSO">PSO</option><option value="KOM">KOM</option></select>
           <select value={cat} onChange={(e) => setCat(e.target.value)} className="bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb] min-w-[200px]">
             <option value="SEMUA">SEMUA</option>
             {categories.map((c) => <option key={c.name} value={c.name}>{c.name}{c.active === false ? ' (Nonaktif)' : ''}</option>)}
@@ -118,12 +122,13 @@ const DaftarProduk = () => {
 
         <div className="overflow-x-auto">
           <table className="w-full text-sm tbl">
-            <thead><tr className="text-left border-b border-[#1a222e]">{['Nama Produk', 'SKU', 'Kategori', 'Stok Baik', 'Konversi Kemasan', 'Stok Rusak', 'Harga Modal', 'Nilai Total', 'Supplier / Lokasi', 'Aksi'].map((h) => <th key={h} className="py-2.5 pr-4 font-semibold whitespace-nowrap">{h}</th>)}</tr></thead>
+            <thead><tr className="text-left border-b border-[#1a222e]">{['Nama Produk', 'SKU', 'Saluran', 'Kategori', 'Stok Baik', 'Konversi Kemasan', 'Stok Rusak', 'Harga Modal', 'Nilai Total', 'Supplier / Lokasi', 'Aksi'].map((h) => <th key={h} className="py-2.5 pr-4 font-semibold whitespace-nowrap">{h}</th>)}</tr></thead>
             <tbody>
-              {filtered.length === 0 ? <tr><td colSpan={10} className="py-8 text-center text-[#6b7688]">Tidak ada produk.</td></tr> : filtered.map((p) => (
+              {filtered.length === 0 ? <tr><td colSpan={11} className="py-8 text-center text-[#6b7688]">Tidak ada produk.</td></tr> : filtered.map((p) => (
                 <tr key={p.id} className="tbl-row border-b border-[#131a24]">
                   <td className="py-3 pr-4 font-medium">{p.name}</td>
                   <td className="py-3 pr-4 font-mono text-xs text-[#8b93a1]">{p.sku}</td>
+                  <td className="py-3 pr-4"><span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${(p.channel || "KOM") === "PSO" ? "bg-[#2563eb]/15 text-[#60a5fa]" : "bg-[#a855f7]/15 text-[#c084fc]"}`}>{p.channel || "KOM"}</span></td>
                   <td className="py-3 pr-4"><span className="text-xs px-2 py-0.5 rounded-full whitespace-nowrap" style={{ background: `${catColor(p.category, categories)}1f`, color: catColor(p.category, categories) }}>{p.category}</span></td>
                   <td className="py-3 pr-4 font-mono whitespace-nowrap">{formatNum(p.stock || 0)} {p.unit}</td>
                   <td className="py-3 pr-4 text-xs min-w-[210px]"><div className="text-[#c7d0dc]">{packagingText(p.stock, p, formatNum) || 'Belum diatur'}</div>{Number(p.weight || 0) > 0 && <div className="text-[#6b7688] mt-1">{formatNum(totalWeight(p.stock, p))} kg</div>}</td>
@@ -166,6 +171,7 @@ const DaftarProduk = () => {
                     <input data-testid={`product-form-${k}`} type={t} value={modal.data[k] ?? ''} onChange={(e) => setModal({ ...modal, data: { ...modal.data, [k]: t === 'number' ? Number(e.target.value) : e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]" />
                   </div>
                 ))}
+                <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Saluran Produk</label><select value={modal.data.channel || 'KOM'} onChange={(e) => setModal({ ...modal, data: { ...modal.data, channel: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]"><option value="PSO">PSO — Public Service Obligation</option><option value="KOM">KOM — Komersial</option></select></div>
                 <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Lokasi Tumpukan Default</label><select value={modal.data.location || ''} onChange={(e) => setModal({ ...modal, data: { ...modal.data, location: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm"><option value="">Belum ditentukan</option>{STACKS.map((code) => <option key={code} value={code}>{code}</option>)}</select></div>
                 <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Kategori</label><select value={modal.data.category || ''} onChange={(e) => setModal({ ...modal, data: { ...modal.data, category: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]">{[...activeCategories, ...(!activeCategories.some((item) => item.name === modal.data.category) && modal.data.category ? [{ name: modal.data.category, active: false }] : [])].map((c) => <option key={c.name}>{c.name}{c.active === false ? ' (Nonaktif)' : ''}</option>)}</select></div>
                 <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Supplier Default</label><select value={modal.data.supplier || ''} onChange={(e) => setModal({ ...modal, data: { ...modal.data, supplier: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]"><option value="">Pilih supplier...</option>{suppliers.map((s) => <option key={s.id}>{s.name}</option>)}</select></div>
