@@ -16,6 +16,7 @@ class MasterProductBody(BaseModel):
     min: float = Field(default=0, ge=0)
     unit: str = "Pcs"
     weight: float = Field(default=0, ge=0)
+    measureUnit: str = "kg"
     secondary: str = ""
     secondaryQty: float = Field(default=0, ge=0)
     channel: str = "KOM"
@@ -53,6 +54,9 @@ def clean_master(body: MasterProductBody) -> dict:
     doc["sku"] = doc["sku"].strip()
     doc["unit"] = doc["unit"].strip() or "Pcs"
     doc["secondary"] = doc["secondary"].strip()
+    doc["measureUnit"] = str(doc.get("measureUnit") or "kg").strip().lower()
+    if doc["measureUnit"] not in {"kg", "liter", "pcs"}:
+        raise HTTPException(status_code=400, detail="Satuan kuantum harus kg, liter, atau pcs")
     doc["channel"] = doc.get("channel", "KOM").strip().upper()
     if doc["channel"] not in {"PSO", "KOM"}:
         raise HTTPException(status_code=400, detail="Saluran produk harus PSO atau KOM")
