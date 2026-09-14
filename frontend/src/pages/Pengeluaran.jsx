@@ -1,11 +1,11 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Printer, MonitorSmartphone, Play, CheckCircle2, RotateCcw, Link2, Search } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { formatNum, formatDate } from '../mock';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
-import { apiError, downloadApiFile } from '../lib/api';
+import api, { apiError, downloadApiFile } from '../lib/api';
 import { stackCodes } from '../lib/warehouses';
 
 
@@ -42,6 +42,15 @@ const Pengeluaran = () => {
   const [query, setQuery] = useState('');
   const [busyId, setBusyId] = useState('');
   const [documentModal, setDocumentModal] = useState(null);
+  const [costDate, setCostDate] = useState(() => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' }));
+  const [costReport, setCostReport] = useState(null);
+  const [costBusy, setCostBusy] = useState(false);
+  const [paymentModal, setPaymentModal] = useState(null);
+
+  const fetchCostReport = async (date = costDate) => {
+    try { const { data } = await api.get('/loading-costs', { params: { date } }); setCostReport(data); } catch (e) { toast.error(apiError(e)); }
+  };
+  useEffect(() => { fetchCostReport(); }, [costDate]);
 
   const list = outboundLoads.filter((load) => {
     const needle = query.trim().toLowerCase();
@@ -180,6 +189,30 @@ const Pengeluaran = () => {
     setTimeout(() => w.print(), 450);
   };
 
+  const printDailyCost = (recipient) => {
+    if (!costReport) return;
+    const key = recipient === 'BURUH' ? 'labor' : 'daily';
+    const title = recipient === 'BURUH' ? 'REKAP UPAH BURUH PEMUATAN' : 'REKAP UPAH HARIAN GUDANG';
+    const rows = (costReport.loads || []).filter((load) => Number(load.cost?.[key] || 0) > 0).map((load, index) => `<tr><td>${index + 1}</td><td>${escapeHtml(load.ref || load.antrian)}</td><td>${escapeHtml(load.party || '-')}</td><td class="r">Rp ${escapeHtml(formatNum(load.cost[key] || 0))}</td></tr>`).join('');
+    const total = costReport.totals?.[key] || 0;
+    const w = window.open('', '_blank', 'width=420,height=760');
+    if (!w) return toast.error('Izinkan popup untuk mencetak rekap thermal.');
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>@page{size:80mm auto;margin:3mm}*{box-sizing:border-box}body{width:74mm;margin:0 auto;color:#000;font:10px Arial}.center{text-align:center}.title{font-size:14px;font-weight:900;margin:4px 0}.sub{font-size:10px;margin-bottom:8px}table{width:100%;border-collapse:collapse;margin-top:7px}th,td{border-bottom:1px dashed #000;padding:5px 2px;text-align:left;vertical-align:top}.r{text-align:right}.total{font-size:14px;font-weight:900;margin:10px 0}.line{border-top:1px solid #000;margin-top:36px;padding-top:3px;text-align:center;font-size:9px}</style></head><body><div class="center"><b>PERUM BULOG</b><div>Gudang Sunter Timur I & II</div><div class="title">${title}</div><div class="sub">Tanggal: ${escapeHtml(costReport.date)}</div></div><table><thead><tr><th>No</th><th>SO / Dokumen</th><th>Tujuan</th><th class="r">Nilai</th></tr></thead><tbody>${rows || '<tr><td colspan="4">Tidak ada biaya</td></tr>'}</tbody></table><div class="total">TOTAL: Rp ${escapeHtml(formatNum(total))}</div><div class="line">Petugas Gudang</div><div class="line">Penerima ${recipient === 'BURUH' ? 'Buruh' : 'UH Gudang'}</div></body></html>`);
+    w.document.close(); w.focus(); setTimeout(() => w.print(), 350);
+  };
+  const settleDailyCost = async (recipient) => {
+    if (!window.confirm(`Tandai total ${recipient === 'BURUH' ? 'upah buruh' : 'UH Gudang'} tanggal ${costDate} sebagai lunas?`)) return;
+    setCostBusy(true);
+    try { await api.post(`/loading-costs/${costDate}/settle`, { recipient }); toast.success('Pembayaran harian ditandai lunas'); await fetchCostReport(); } catch (e) { toast.error(apiError(e)); } finally { setCostBusy(false); }
+  };
+  const saveLoadingPayment = async () => {
+    if (!paymentModal) return;
+    const amount = Number(paymentModal.amount || 0);
+    if (amount <= 0) return toast.error('Nominal pembayaran harus diisi');
+    setCostBusy(true);
+    try { await api.post(`/outbound-loads/${paymentModal.load.id}/loading-fee-payment`, { amount, method: paymentModal.method, payer: paymentModal.payer, note: paymentModal.note }); toast.success('Pembayaran biaya muat dicatat'); setPaymentModal(null); await fetchCostReport(); } catch (e) { toast.error(apiError(e)); } finally { setCostBusy(false); }
+  };
+
   const startAndPrint = async (load) => {
     if (busyId) return;
     setBusyId(load.id);
@@ -200,7 +233,7 @@ const Pengeluaran = () => {
     setBusyId(load.id);
     try {
       const result = await completeOutboundLoad(load.id);
-      toast.success(`Pemuatan selesai · Surat Jalan ${result?.suratJalan?.no || ''} diterbitkan`);
+      toast.success(`Pemuatan selesai · Surat Jalan ${result?.suratJalan?.no || ''} diterbitkan`); await fetchCostReport();
     } catch (e) {
       toast.error(e?.response?.data?.detail || 'Gagal menyelesaikan pemuatan');
     } finally {
@@ -217,6 +250,14 @@ const Pengeluaran = () => {
           <p className="text-[#8b93a1] mt-2">Bon Muat diterbitkan untuk proses loading. Stok dan Surat Jalan baru diproses setelah pemuatan selesai.</p>
         </div>
         <button onClick={() => navigate('/antrian')} className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-[#242f3d] hover:bg-[#141a24]"><MonitorSmartphone size={15} /> Layar Antrian</button>
+      </div>
+
+      <div className="card-surface p-5 border border-[#294263]">
+        <div className="flex flex-wrap items-start justify-between gap-3 mb-4"><div><div className="label-mono text-[10px] text-[#93c5fd]">Penutupan sore hari</div><h2 className="font-display text-xl font-bold mt-1">Biaya Pemuatan Harian</h2><p className="text-xs text-[#8b93a1] mt-1">Hanya pemuatan yang sudah selesai yang masuk rekap. Biaya tidak tampil di Surat Jalan atau Bon Muat.</p></div><div><label className="text-xs text-[#8b93a1] block mb-1">Tanggal</label><input type="date" value={costDate} onChange={(e) => setCostDate(e.target.value)} className="bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm" /></div></div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {[['BURUH', 'Upah Buruh', 'labor', '#22c55e'], ['HARIAN', 'Upah Harian Gudang', 'daily', '#60a5fa'], ['GUDANG', 'Dana Gudang', 'warehouse', '#f59e0b']].map(([recipient, label, key, color]) => <div key={recipient} className="rounded-xl border border-[#202a38] bg-[#0b0f17] p-4"><div className="text-xs text-[#8b93a1]">{label}</div><div className="font-mono text-2xl font-bold mt-1" style={{ color }}>Rp {formatNum(costReport?.totals?.[key] || 0)}</div>{recipient !== 'GUDANG' && <div className="mt-3 flex flex-wrap gap-2"><button onClick={() => printDailyCost(recipient)} className="text-xs px-3 py-2 rounded-lg border border-[#294263] text-[#93c5fd]"><Printer size={13} className="inline mr-1" />Cetak 80mm</button><button disabled={costBusy || Boolean(costReport?.settlements?.[recipient])} onClick={() => settleDailyCost(recipient)} className="text-xs px-3 py-2 rounded-lg border border-[#22c55e] text-[#4ade80] disabled:opacity-50">{costReport?.settlements?.[recipient] ? 'Lunas' : 'Tandai Lunas'}</button></div>}</div>)}
+        </div>
+        <div className="mt-3 text-xs text-[#8b93a1]">Tagihan pengambil: <span className="font-mono text-[#fbbf24]">Rp {formatNum(costReport?.totals?.chargeable || 0)}</span> · diterima: <span className="font-mono text-[#4ade80]">Rp {formatNum(costReport?.totals?.collected || 0)}</span> · belum dibayar: <span className="font-mono text-[#ef4444]">Rp {formatNum(costReport?.totals?.outstanding || 0)}</span></div>
       </div>
 
       {consignmentSummary.length > 0 && <div className="card-surface p-5 border border-[#1f3657]">
@@ -249,11 +290,11 @@ const Pengeluaran = () => {
                     <td className="py-3 pr-4 text-xs min-w-[250px]">{(load.items || []).map((item, i) => <div key={i} className="text-[#aab4c4]">{item.name} · {formatNum(item.qty)} {item.unit} <span className="text-[#6b7688]">({formatNum(item.berat || 0)} kg)</span></div>)}</td>
                     <td className="py-3 pr-4 whitespace-nowrap">{load.unit_loading || '—'}</td>
                     <td className="py-3 pr-4"><span className="text-xs px-2.5 py-1 rounded-full font-medium whitespace-nowrap" style={{ background: st.bg, color: st.c }}>{load.status}</span></td>
-                    <td className="py-3 pr-4 text-xs min-w-[220px]"><div className="font-mono font-semibold text-[#93c5fd]">{load.document_type || 'SO'} · {load.ref || '—'}</div>{load.request_document && <div className="font-mono mt-1 text-[#fbbf24]">↳ Dasar: {load.request_document}</div>}{(load.document_links || []).map((link) => <div key={link.id} className="font-mono mt-1 text-[#4ade80]">↳ {link.type} · {link.no}</div>)}<div className="mt-1 text-[#6b7688]">{load.document_status || (load.status === 'Selesai' ? 'Selesai' : 'Menunggu pemuatan')} · SJ {load.surat_jalan_no || 'belum terbit'}</div></td>
+                    <td className="py-3 pr-4 text-xs min-w-[220px]"><div className="font-mono font-semibold text-[#93c5fd]">{load.document_type || 'SO'} · {load.ref || '—'}</div>{load.request_document && <div className="font-mono mt-1 text-[#fbbf24]">↳ Dasar: {load.request_document}</div>}{(load.document_links || []).map((link) => <div key={link.id} className="font-mono mt-1 text-[#4ade80]">↳ {link.type} · {link.no}</div>)}<div className="mt-1 text-[#6b7688]">{load.document_status || (load.status === 'Selesai' ? 'Selesai' : 'Menunggu pemuatan')} · SJ {load.surat_jalan_no || 'belum terbit'}</div>{Number(load.loading_cost?.chargeable || 0) > 0 && <div className={`mt-2 font-semibold ${load.loading_fee_payment_status === 'LUNAS' ? 'text-[#4ade80]' : load.loading_fee_payment_status === 'SEBAGIAN' ? 'text-[#fbbf24]' : 'text-[#ef4444]'}`}>Biaya muat {load.loading_fee_payment_status === 'LUNAS' ? 'sudah dibayar' : load.loading_fee_payment_status === 'SEBAGIAN' ? 'dibayar sebagian' : 'belum dibayar'} · Rp {formatNum(Math.max(Number(load.loading_cost?.chargeable || 0) - Number(load.loading_fee_payment_total || 0), 0))}</div>}{load.loading_cost?.total > 0 && load.loading_cost?.chargeable <= 0 && <div className="mt-2 text-[#8b93a1]">Biaya muat {load.items?.some((item) => item.loadingFee?.mode === 'TERMASUK') ? 'termasuk harga SO' : 'tidak ditagihkan'}</div>}</td>
                     <td className="py-3 pr-4"><div className="flex flex-wrap gap-2 min-w-[270px]">
                       {load.status === 'Menunggu' && <button disabled={busyId === load.id} onClick={() => startAndPrint(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#2563eb] text-[#60a5fa] hover:bg-[#2563eb]/10 disabled:opacity-50"><Play size={13} /> Mulai Muat & Download Bon</button>}
                       {load.status === 'Sedang Dimuat' && <><button onClick={() => downloadBon(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#242f3d] hover:bg-[#141a24]"><Printer size={13} /> Download Bon PDF</button><button disabled={busyId === load.id} onClick={() => finishLoading(load)} className="btn-primary inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg disabled:opacity-50"><CheckCircle2 size={13} /> Selesai Muat</button></>}
-                      {load.status === 'Selesai' && <><button onClick={() => downloadBon(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#242f3d] hover:bg-[#141a24]"><Printer size={13} /> Download Bon</button><button onClick={() => downloadSuratJalan(sj)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#22c55e] text-[#4ade80] hover:bg-[#22c55e]/10"><Printer size={13} /> Download Surat Jalan</button>{load.weighing_form && <button onClick={() => downloadWeighingForm(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#294263] text-[#93c5fd]"><Printer size={13} /> Form Timbangan</button>}{load.document_type === 'CT' && <button onClick={() => openLinkedDocument(load, 'CR')} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#f59e0b] text-[#fbbf24]"><RotateCcw size={13} /> Catat CR</button>}{['MEMO', 'ND'].includes(load.document_type) && <button onClick={() => openLinkedDocument(load, 'RETUR')} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#f59e0b] text-[#fbbf24]"><RotateCcw size={13} /> Catat Retur</button>}{['CT', 'MEMO', 'ND'].includes(load.document_type) && <button onClick={() => openLinkedDocument(load, 'SO')} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#2563eb] text-[#60a5fa]"><Link2 size={13} /> Tautkan SO</button>}</>}
+                      {load.status === 'Selesai' && <>{Number(load.loading_cost?.chargeable || 0) > Number(load.loading_fee_payment_total || 0) && <button onClick={() => setPaymentModal({ load, amount: Math.max(Number(load.loading_cost?.chargeable || 0) - Number(load.loading_fee_payment_total || 0), 0), method: 'TUNAI', payer: load.pengambil || load.party || '', note: '' })} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#f59e0b] text-[#fbbf24]"><CheckCircle2 size={13} /> Catat Bayar Muat</button>}<button onClick={() => downloadBon(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#242f3d] hover:bg-[#141a24]"><Printer size={13} /> Download Bon</button><button onClick={() => downloadSuratJalan(sj)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#22c55e] text-[#4ade80] hover:bg-[#22c55e]/10"><Printer size={13} /> Download Surat Jalan</button>{load.weighing_form && <button onClick={() => downloadWeighingForm(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#294263] text-[#93c5fd]"><Printer size={13} /> Form Timbangan</button>}{load.document_type === 'CT' && <button onClick={() => openLinkedDocument(load, 'CR')} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#f59e0b] text-[#fbbf24]"><RotateCcw size={13} /> Catat CR</button>}{['MEMO', 'ND'].includes(load.document_type) && <button onClick={() => openLinkedDocument(load, 'RETUR')} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#f59e0b] text-[#fbbf24]"><RotateCcw size={13} /> Catat Retur</button>}{['CT', 'MEMO', 'ND'].includes(load.document_type) && <button onClick={() => openLinkedDocument(load, 'SO')} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#2563eb] text-[#60a5fa]"><Link2 size={13} /> Tautkan SO</button>}</>}
                     </div></td>
                   </tr>
                 );
@@ -262,6 +303,7 @@ const Pengeluaran = () => {
           </table>
         </div>
       </div>
+      <Dialog open={Boolean(paymentModal)} onOpenChange={(open) => { if (!open && !costBusy) setPaymentModal(null); }}><DialogContent className="max-w-md border-[#242f3d] bg-[#0d121b] text-[#e7ebf2]"><DialogHeader><DialogTitle>Pembayaran Biaya Pemuatan</DialogTitle><DialogDescription className="text-[#8b93a1]">Dokumen {paymentModal?.load?.ref} · biaya ini hanya catatan internal.</DialogDescription></DialogHeader>{paymentModal && <div className="space-y-3"><div><label className="text-sm block mb-1">Nominal diterima</label><input type="number" min="1" value={paymentModal.amount} onChange={(e) => setPaymentModal({ ...paymentModal, amount: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 font-mono" /></div><div><label className="text-sm block mb-1">Metode</label><select value={paymentModal.method} onChange={(e) => setPaymentModal({ ...paymentModal, method: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5"><option value="TUNAI">Tunai</option><option value="TRANSFER">Transfer</option><option value="PIUTANG">Piutang / Disetujui</option></select></div><div><label className="text-sm block mb-1">Nama pembayar</label><input value={paymentModal.payer} onChange={(e) => setPaymentModal({ ...paymentModal, payer: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5" /></div><textarea rows="2" value={paymentModal.note} onChange={(e) => setPaymentModal({ ...paymentModal, note: e.target.value })} placeholder="Catatan (opsional)" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5" /></div>}<DialogFooter><button onClick={() => setPaymentModal(null)} className="px-4 py-2 border border-[#242f3d] rounded-lg">Batal</button><button disabled={costBusy} onClick={saveLoadingPayment} className="btn-primary px-4 py-2 rounded-lg">{costBusy ? 'Menyimpan...' : 'Simpan Pembayaran'}</button></DialogFooter></DialogContent></Dialog>
       <Dialog open={Boolean(documentModal)} onOpenChange={(open) => { if (!open && !busyId) setDocumentModal(null); }}><DialogContent className="max-w-2xl border-[#242f3d] bg-[#0d121b] text-[#e7ebf2]"><DialogHeader><DialogTitle>{documentModal?.mode === 'CR' ? 'Pengembalian Barang Konsinyasi (CR)' : documentModal?.mode === 'RETUR' ? 'Retur Barang Memo' : 'Tautkan Dokumen Penjualan (SO)'}</DialogTitle><DialogDescription className="text-[#8b93a1]">Dokumen induk: {documentModal?.load?.document_type} · {documentModal?.load?.ref}. Riwayat dokumen lama tidak akan ditimpa.</DialogDescription></DialogHeader>{documentModal && <div className="space-y-4"><div><label className="text-sm block mb-1">Nomor Dokumen {documentModal.mode}</label><input value={documentModal.documentNo} onChange={(e) => setDocumentModal({ ...documentModal, documentNo: e.target.value })} placeholder={documentModal.mode === 'CR' ? 'CR/...' : documentModal.mode === 'RETUR' ? 'RT/... atau RM/...' : 'SO/xxxx/mm/09001'} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5" /></div><div className="space-y-3">{documentModal.items.map((item, index) => <div key={item.productId} className="rounded-lg border border-[#202a38] bg-[#0b0f17] p-3"><div className="flex justify-between gap-3 mb-2"><span className="text-sm font-semibold">{item.name}</span><span className="text-xs text-[#8b93a1]">Sisa {formatNum(item.remaining)} {item.unit}</span></div>{isReturnMode(documentModal.mode) ? <div className="grid grid-cols-1 sm:grid-cols-3 gap-2"><div><label className="text-xs text-[#8b93a1]">Kembali Good</label><input type="number" min="0" max={item.remaining} value={item.goodQty} onChange={(e) => updateDocumentItem(index, { goodQty: e.target.value })} className="w-full mt-1 bg-[#0d121b] border border-[#242f3d] rounded-lg px-3 py-2" /></div><div><label className="text-xs text-[#8b93a1]">Kembali Damage</label><input type="number" min="0" max={item.remaining} value={item.damagedQty} onChange={(e) => updateDocumentItem(index, { damagedQty: e.target.value })} className="w-full mt-1 bg-[#0d121b] border border-[#242f3d] rounded-lg px-3 py-2" /></div><div><label className="text-xs text-[#8b93a1]">Tumpukan barang Good</label><select value={item.stackCode} onChange={(e) => updateDocumentItem(index, { stackCode: e.target.value })} className="w-full mt-1 bg-[#0d121b] border border-[#242f3d] rounded-lg px-2 py-2"><option value="">Pilih lokasi...</option>{STACKS.map((code) => <option key={code}>{code}</option>)}</select></div></div> : <div><label className="text-xs text-[#8b93a1]">Jumlah terjual</label><input type="number" min="0" max={item.remaining} value={item.qty} onChange={(e) => updateDocumentItem(index, { qty: e.target.value })} className="w-full mt-1 bg-[#0d121b] border border-[#242f3d] rounded-lg px-3 py-2" /></div>}</div>)}</div><textarea rows="2" value={documentModal.note} onChange={(e) => setDocumentModal({ ...documentModal, note: e.target.value })} placeholder="Catatan (opsional)" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5" /></div>}<DialogFooter><button disabled={Boolean(busyId)} onClick={() => setDocumentModal(null)} className="px-4 py-2 border border-[#242f3d] rounded-lg">Batal</button><button disabled={Boolean(busyId)} onClick={saveLinkedDocument} className="btn-primary px-4 py-2 rounded-lg disabled:opacity-50">{busyId ? 'Menyimpan...' : 'Simpan Dokumen'}</button></DialogFooter></DialogContent></Dialog>
     </div>
   );
