@@ -179,10 +179,10 @@ def canonical_role(role: Optional[str]) -> str:
 
 
 ROLE_PERMISSIONS = {
-    ROLE_SUPERADMIN: {"masterWrite", "inbound", "outbound", "rebagging", "qc", "users", "settings"},
-    ROLE_ADMIN: {"masterWrite", "inbound", "outbound", "rebagging"},
+    ROLE_SUPERADMIN: {"masterWrite", "inbound", "outbound", "mutasi", "rebagging", "qc", "opname", "users", "settings"},
+    ROLE_ADMIN: {"masterWrite", "inbound", "outbound", "mutasi", "rebagging", "opname"},
     ROLE_OPERATOR: {"rebagging"},
-    ROLE_QC: {"qc"},
+    ROLE_QC: {"qc", "opname"},
     ROLE_VIEWER: set(),
 }
 
