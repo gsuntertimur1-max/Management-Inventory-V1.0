@@ -19,6 +19,10 @@ class MasterProductBody(BaseModel):
     secondary: str = ""
     secondaryQty: float = Field(default=0, ge=0)
     channel: str = "KOM"
+    loadingFeeLabor: float = Field(default=0, ge=0)
+    loadingFeeDaily: float = Field(default=0, ge=0)
+    loadingFeeWarehouse: float = Field(default=0, ge=0)
+    loadingFeeChargeMode: str = "TIDAK_ADA"
 
 
 def clean_master(body: MasterProductBody) -> dict:
@@ -30,6 +34,13 @@ def clean_master(body: MasterProductBody) -> dict:
     doc["channel"] = doc.get("channel", "KOM").strip().upper()
     if doc["channel"] not in {"PSO", "KOM"}:
         raise HTTPException(status_code=400, detail="Saluran produk harus PSO atau KOM")
+    doc["loadingFeeChargeMode"] = str(doc.get("loadingFeeChargeMode") or "TIDAK_ADA").strip().upper()
+    if doc["loadingFeeChargeMode"] not in {"PENGAMBIL", "TERMASUK", "TIDAK_ADA"}:
+        raise HTTPException(status_code=400, detail="Status biaya muat tidak valid")
+    for key in ("loadingFeeLabor", "loadingFeeDaily", "loadingFeeWarehouse"):
+        doc[key] = float(doc.get(key, 0) or 0)
+    if doc["loadingFeeChargeMode"] == "TIDAK_ADA" and sum(doc[key] for key in ("loadingFeeLabor", "loadingFeeDaily", "loadingFeeWarehouse")) > 0:
+        raise HTTPException(status_code=400, detail="Pilih Ditagihkan atau Termasuk Harga bila tarif biaya muat diisi")
     if doc["secondary"] and doc["secondaryQty"] <= 0:
         raise HTTPException(status_code=400, detail="Isi kemasan sekunder harus lebih dari 0")
     if doc["secondaryQty"] > 0 and not doc["secondary"]:
