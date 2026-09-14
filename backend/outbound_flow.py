@@ -1,4 +1,5 @@
 from collections import defaultdict
+from datetime import datetime
 import re
 import random
 from typing import List, Literal
@@ -59,6 +60,32 @@ class OutboundCreateInput(BaseModel):
     grossWeight: float = Field(default=0, ge=0)
     grossMin: float = Field(default=0, ge=0)
     grossMax: float = Field(default=0, ge=0)
+
+
+class LoadingFeePaymentInput(BaseModel):
+    amount: float = Field(gt=0)
+    method: Literal["TUNAI", "TRANSFER", "PIUTANG"] = "TUNAI"
+    payer: str = ""
+    note: str = ""
+
+
+class DailyLoadingSettlementInput(BaseModel):
+    recipient: Literal["BURUH", "HARIAN"]
+    note: str = ""
+
+
+def _loading_fee(product: dict, qty: float) -> dict:
+    labor = float(product.get("loadingFeeLabor", 0) or 0) * qty
+    daily = float(product.get("loadingFeeDaily", 0) or 0) * qty
+    warehouse = float(product.get("loadingFeeWarehouse", 0) or 0) * qty
+    mode = str(product.get("loadingFeeChargeMode") or "TIDAK_ADA").strip().upper()
+    if mode not in {"PENGAMBIL", "TERMASUK", "TIDAK_ADA"}:
+        mode = "TIDAK_ADA"
+    total = labor + daily + warehouse
+    return {
+        "mode": mode, "labor": labor, "daily": daily, "warehouse": warehouse,
+        "total": total, "chargeable": total if mode == "PENGAMBIL" else 0.0,
+    }
 
 
 class ReturnPlacementInput(BaseModel):
@@ -235,7 +262,7 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         channel = normalize_channel(item.channel, normalize_channel(product.get("channel")))
         if stack_code and stack_code not in await valid_stack_codes():
             raise HTTPException(status_code=400, detail="Tumpukan asal tidak valid")
-        load_items.append({"productId": item.productId, "documentNo": item_ref, "sku": product.get("sku", ""), "name": product.get("name", ""), "channel": channel, "qty": qty, "unit": product.get("unit", ""), "weight": weight, "berat": weight * qty, "secondary": product.get("secondary", ""), "secondaryQty": float(product.get("secondaryQty", 0) or 0), "location": product.get("location", ""), "stackCode": stack_code})
+        load_items.append({"productId": item.productId, "documentNo": item_ref, "sku": product.get("sku", ""), "name": product.get("name", ""), "channel": channel, "qty": qty, "unit": product.get("unit", ""), "weight": weight, "berat": weight * qty, "secondary": product.get("secondary", ""), "secondaryQty": float(product.get("secondaryQty", 0) or 0), "location": product.get("location", ""), "stackCode": stack_code, "loadingFee": _loading_fee(product, qty)})
 
     ordered_products = [products[product_id] for product_id in item_order]
     unit_loading, queue_prefix = _loading_unit_from_products(ordered_products)
@@ -265,6 +292,7 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
 
     total_unit = sum(float(item["qty"]) for item in load_items)
     total_berat = sum(float(item["berat"]) for item in load_items)
+    loading_cost = {key: sum(float(item.get("loadingFee", {}).get(key, 0) or 0) for item in load_items) for key in ("labor", "daily", "warehouse", "total", "chargeable")}
     created_at = now_iso()
     doc = {
         "id": new_id(),
@@ -296,6 +324,10 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         "weighing_entries": _weighing_entries(float(body.grossWeight), float(body.grossMin), float(body.grossMax)) if body.weighingForm else [],
         "document_links": [],
         "document_status": "Menunggu Pemuatan",
+        "loading_cost": loading_cost,
+        "loading_fee_payments": [],
+        "loading_fee_payment_total": 0.0,
+        "loading_fee_payment_status": "TIDAK_DITAGIH" if loading_cost["chargeable"] <= 0 else "BELUM_DIBAYAR",
         "items": load_items,
         "total_unit": total_unit,
         "total_berat": total_berat,
@@ -307,6 +339,68 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         "surat_jalan_no": "",
     }
     await db.outbound_loads.insert_one(dict(doc))
+    return doc
+
+
+@router.get("/loading-costs")
+async def get_loading_costs(date: str = "", user: dict = Depends(get_current_user)):
+    target_date = date.strip() or operational_now().strftime("%Y-%m-%d")
+    try:
+        datetime.strptime(target_date, "%Y-%m-%d")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Tanggal harus YYYY-MM-DD") from exc
+    loads = await db.outbound_loads.find({"status": "Selesai", "operational_date": target_date}, {"_id": 0}).sort("completed_at", 1).to_list(5000)
+    rows, totals = [], {"labor": 0.0, "daily": 0.0, "warehouse": 0.0, "total": 0.0, "chargeable": 0.0, "collected": 0.0}
+    for load in loads:
+        cost = dict(load.get("loading_cost") or {})
+        if not cost:
+            cost = {key: sum(float(item.get("loadingFee", {}).get(key, 0) or 0) for item in load.get("items", [])) for key in ("labor", "daily", "warehouse", "total", "chargeable")}
+        for key in ("labor", "daily", "warehouse", "total", "chargeable"):
+            cost[key] = float(cost.get(key, 0) or 0)
+            totals[key] += cost[key]
+        collected = float(load.get("loading_fee_payment_total", 0) or 0)
+        totals["collected"] += collected
+        rows.append({"id": load["id"], "antrian": load.get("antrian", ""), "ref": load.get("ref", ""), "documents": load.get("documents", []), "party": load.get("party", ""), "pengambil": load.get("pengambil", ""), "items": load.get("items", []), "cost": cost, "collected": collected, "paymentStatus": load.get("loading_fee_payment_status", "TIDAK_DITAGIH"), "payments": load.get("loading_fee_payments", [])})
+    settlements = await db.loading_cost_settlements.find({"date": target_date}, {"_id": 0}).to_list(20)
+    settled = {row.get("recipient"): row for row in settlements}
+    return {"date": target_date, "loads": rows, "totals": {**totals, "outstanding": max(totals["chargeable"] - totals["collected"], 0)}, "settlements": settled}
+
+
+@router.post("/outbound-loads/{load_id}/loading-fee-payment")
+async def record_loading_fee_payment(load_id: str, body: LoadingFeePaymentInput, user: dict = Depends(require_write)):
+    load = await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
+    if not load or load.get("status") != "Selesai":
+        raise HTTPException(status_code=400, detail="Pembayaran biaya muat hanya dapat dicatat setelah pemuatan selesai")
+    chargeable = float((load.get("loading_cost") or {}).get("chargeable", 0) or 0)
+    if chargeable <= 0:
+        raise HTTPException(status_code=400, detail="SO ini tidak memiliki biaya muat yang ditagihkan kepada pengambil")
+    collected = float(load.get("loading_fee_payment_total", 0) or 0)
+    amount = float(body.amount)
+    if amount > chargeable - collected + 1e-9:
+        raise HTTPException(status_code=400, detail="Nominal pembayaran melebihi sisa tagihan biaya muat")
+    payment = {"id": new_id(), "time": now_iso(), "amount": amount, "method": body.method, "payer": body.payer.strip() or load.get("pengambil", "") or load.get("party", ""), "note": body.note.strip(), "operator": user.get("name", "")}
+    total = collected + amount
+    status = "LUNAS" if total + 1e-9 >= chargeable else "SEBAGIAN"
+    await db.outbound_loads.update_one({"id": load_id}, {"$push": {"loading_fee_payments": payment}, "$set": {"loading_fee_payment_total": total, "loading_fee_payment_status": status}})
+    return await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
+
+
+@router.post("/loading-costs/{date}/settle")
+async def settle_loading_cost(date: str, body: DailyLoadingSettlementInput, user: dict = Depends(require_write)):
+    try:
+        datetime.strptime(date, "%Y-%m-%d")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Tanggal harus YYYY-MM-DD") from exc
+    key = "labor" if body.recipient == "BURUH" else "daily"
+    loads = await db.outbound_loads.find({"status": "Selesai", "operational_date": date}, {"_id": 0, "loading_cost": 1, "items": 1}).to_list(5000)
+    amount = 0.0
+    for load in loads:
+        cost = load.get("loading_cost") or {}
+        amount += float(cost.get(key, 0) or 0)
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Tidak ada biaya yang perlu dibayarkan untuk tanggal ini")
+    doc = {"date": date, "recipient": body.recipient, "amount": amount, "settledAt": now_iso(), "settledBy": user.get("name", ""), "note": body.note.strip()}
+    await db.loading_cost_settlements.update_one({"date": date, "recipient": body.recipient}, {"$set": doc}, upsert=True)
     return doc
 
 
