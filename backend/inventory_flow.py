@@ -465,6 +465,10 @@ async def import_master_csv(file: UploadFile = File(...), user: dict = Depends(r
         }
         if master["measureUnit"] not in {"kg", "liter", "pcs"}:
             raise HTTPException(status_code=400, detail=f"Satuan kuantum SKU {sku} harus kg, liter, atau pcs")
+        fee_columns = {"biaya_muat_buruh":"loadingFeeLabor","biaya_muat_uh":"loadingFeeDaily","biaya_muat_gudang":"loadingFeeWarehouse","lembur_muat_buruh":"loadingOvertimeLabor","lembur_muat_uh":"loadingOvertimeDaily","lembur_muat_gudang":"loadingOvertimeWarehouse","libur_muat_buruh":"loadingHolidayLabor","libur_muat_uh":"loadingHolidayDaily","libur_muat_gudang":"loadingHolidayWarehouse","libur_sore_muat_buruh":"loadingHolidayOvertimeLabor","libur_sore_muat_uh":"loadingHolidayOvertimeDaily","libur_sore_muat_gudang":"loadingHolidayOvertimeWarehouse","biaya_bongkar_buruh":"unloadingFeeLabor","biaya_bongkar_uh":"unloadingFeeDaily","biaya_bongkar_gudang":"unloadingFeeWarehouse","lembur_bongkar_buruh":"unloadingOvertimeLabor","lembur_bongkar_uh":"unloadingOvertimeDaily","lembur_bongkar_gudang":"unloadingOvertimeWarehouse","libur_bongkar_buruh":"unloadingHolidayLabor","libur_bongkar_uh":"unloadingHolidayDaily","libur_bongkar_gudang":"unloadingHolidayWarehouse","libur_sore_bongkar_buruh":"unloadingHolidayOvertimeLabor","libur_sore_bongkar_uh":"unloadingHolidayOvertimeDaily","libur_sore_bongkar_gudang":"unloadingHolidayOvertimeWarehouse"}
+        for column, key in fee_columns.items(): master[key] = _number(row.get(column), 0)
+        master["loadingFeeChargeMode"] = (row.get("tagihan_muat") or "TIDAK_ADA").strip().upper()
+        master["unloadingFeeChargeMode"] = (row.get("tagihan_bongkar") or "TIDAK_ADA").strip().upper()
         if master["secondary"] and master["secondaryQty"] <= 0:
             raise HTTPException(
                 status_code=400,
@@ -511,10 +515,10 @@ async def import_master_csv(file: UploadFile = File(...), user: dict = Depends(r
 
 @router.get("/export/master-template.xlsx")
 async def export_master_template(user: dict = Depends(get_current_user)):
-    headers = ["sku", "nama", "kategori", "saluran", "satuan", "satuan_kuantum", "berat_unit", "kemasan_sekunder", "isi_kemasan_sekunder", "harga_beli", "supplier", "lokasi", "stok_minimum"]
+    headers = ["sku","nama","kategori","saluran","satuan","satuan_kuantum","berat_unit","kemasan_sekunder","isi_kemasan_sekunder","harga_beli","supplier","lokasi","stok_minimum","tagihan_muat","biaya_muat_buruh","biaya_muat_uh","biaya_muat_gudang","lembur_muat_buruh","lembur_muat_uh","lembur_muat_gudang","libur_muat_buruh","libur_muat_uh","libur_muat_gudang","libur_sore_muat_buruh","libur_sore_muat_uh","libur_sore_muat_gudang","tagihan_bongkar","biaya_bongkar_buruh","biaya_bongkar_uh","biaya_bongkar_gudang","lembur_bongkar_buruh","lembur_bongkar_uh","lembur_bongkar_gudang","libur_bongkar_buruh","libur_bongkar_uh","libur_bongkar_gudang","libur_sore_bongkar_buruh","libur_sore_bongkar_uh","libur_sore_bongkar_gudang"]
     rows = [
-        ["B0010001X", "CONTOH BERAS MEDIUM 5 KG", "Beras", "PSO", "Pack", "kg", 5, "Karung", 8, 0, "Nama Supplier", "GBB 17", 0],
-        ["B0100152X", "CONTOH MINYAK 2 L", "Minyak", "KOM", "Botol", "liter", 2, "Dus", 6, 0, "Nama Supplier", "GBB 18", 0],
+        ["B0010001X","CONTOH BERAS MEDIUM 5 KG","Beras","PSO","Pack","kg",5,"Karung",8,0,"Nama Supplier","GBB 17",0,"PENGAMBIL",410,10,60,50,5,0,75,10,0,25,5,0,"TIDAK_ADA",0,0,0,0,0,0,0,0,0,0,0,0],
+        ["B0100152X","CONTOH MINYAK 2 L","Minyak","KOM","Botol","liter",2,"Dus",6,0,"Nama Supplier","GBB 18",0,"PENGAMBIL",480,10,60,50,5,0,75,10,0,25,5,0,"TIDAK_ADA",0,0,0,0,0,0,0,0,0,0,0,0],
     ]
     output = build_xlsx(headers, rows, "Master Produk")
     return StreamingResponse(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": 'attachment; filename="template_import_master_produk.xlsx"'})
