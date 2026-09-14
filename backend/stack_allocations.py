@@ -45,7 +45,7 @@ async def allocate_stock_to_stack(product: dict, stack_code: str, qty: float, op
     allocation = {
         "id": new_id(), "productId": product["id"], "sku": product.get("sku", ""),
         "productName": product.get("name", ""), "unit": product.get("unit", ""),
-        "weight": float(product.get("weight", 0) or 0), "secondary": product.get("secondary", ""),
+        "weight": float(product.get("weight", 0) or 0), "measureUnit": product.get("measureUnit", "kg") or "kg", "secondary": product.get("secondary", ""),
         "secondaryQty": per_secondary, "stackCode": stack_code, "warehouse": stack_code.split('/')[0],
         "zone": re.sub(r"\d", "", stack_code.split('/')[1]), "length": 0, "width": 0, "height": 0,
         "secondaryCount": int(qty // per_secondary), "primaryRemainder": qty % per_secondary,
