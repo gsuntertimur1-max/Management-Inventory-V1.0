@@ -68,13 +68,22 @@ function AppRoutes() {
   );
 }
 
-function App() {
+function AppShell() {
+  const { theme } = useData();
   return (
-    <DataProvider>
-      <Toaster theme="dark" position="bottom-right" richColors />
+    <>
+      <Toaster theme={theme} position="bottom-right" richColors />
       <BrowserRouter>
         <AppRoutes />
       </BrowserRouter>
+    </>
+  );
+}
+
+function App() {
+  return (
+    <DataProvider>
+      <AppShell />
     </DataProvider>
   );
 }
