@@ -18,6 +18,7 @@ class MasterProductBody(BaseModel):
     weight: float = Field(default=0, ge=0)
     secondary: str = ""
     secondaryQty: float = Field(default=0, ge=0)
+    channel: str = "KOM"
 
 
 def clean_master(body: MasterProductBody) -> dict:
@@ -26,6 +27,9 @@ def clean_master(body: MasterProductBody) -> dict:
     doc["sku"] = doc["sku"].strip()
     doc["unit"] = doc["unit"].strip() or "Pcs"
     doc["secondary"] = doc["secondary"].strip()
+    doc["channel"] = doc.get("channel", "KOM").strip().upper()
+    if doc["channel"] not in {"PSO", "KOM"}:
+        raise HTTPException(status_code=400, detail="Saluran produk harus PSO atau KOM")
     if doc["secondary"] and doc["secondaryQty"] <= 0:
         raise HTTPException(status_code=400, detail="Isi kemasan sekunder harus lebih dari 0")
     if doc["secondaryQty"] > 0 and not doc["secondary"]:
@@ -63,6 +67,8 @@ async def update_master_product(product_id: str, body: MasterProductBody, user: 
     if not current:
         raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
     has_allocations = await db.stack_allocations.find_one({"productId": product_id})
+    if master["channel"] != (current.get("channel") or "KOM").upper() and (float(current.get("stock", 0) or 0) > 0 or float(current.get("damaged", 0) or 0) > 0):
+        raise HTTPException(status_code=400, detail="Saluran default tidak dapat diubah selama masih ada saldo stok. Gunakan koreksi transaksi bila diperlukan.")
     packaging_changed = (
         float(current.get("secondaryQty", 0) or 0) != float(master.get("secondaryQty", 0) or 0)
         or str(current.get("secondary", "") or "").strip() != master.get("secondary", "")
