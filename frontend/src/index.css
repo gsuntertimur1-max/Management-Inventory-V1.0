@@ -238,3 +238,76 @@ html[data-theme='light'] .border-\[\#5a3b15\] { border-color: #e5c99c !important
         overscroll-behavior-inline: contain;
     }
 }
+
+
+/* Final light-mode parity for legacy utility classes still used by operational screens. */
+html[data-theme='light'] .bg-slate-950,
+html[data-theme='light'] .bg-slate-900,
+html[data-theme='light'] .bg-slate-800 { background-color: #ffffff !important; }
+html[data-theme='light'] .bg-slate-700,
+html[data-theme='light'] .bg-slate-600 { background-color: #e8eef6 !important; }
+html[data-theme='light'] .bg-cyan-900\/50,
+html[data-theme='light'] .bg-cyan-900\/30 { background-color: #e0f2fe !important; }
+html[data-theme='light'] .bg-blue-950,
+html[data-theme='light'] .bg-blue-900\/50 { background-color: #dbeafe !important; }
+html[data-theme='light'] .bg-emerald-950,
+html[data-theme='light'] .bg-green-950 { background-color: #ecfdf5 !important; }
+html[data-theme='light'] .bg-red-950,
+html[data-theme='light'] .bg-rose-950 { background-color: #fff1f2 !important; }
+html[data-theme='light'] .bg-amber-950,
+html[data-theme='light'] .bg-yellow-950 { background-color: #fffbeb !important; }
+
+html[data-theme='light'] .text-slate-100,
+html[data-theme='light'] .text-slate-200,
+html[data-theme='light'] .text-slate-300 { color: #172033 !important; }
+html[data-theme='light'] .text-slate-400,
+html[data-theme='light'] .text-slate-500,
+html[data-theme='light'] .text-slate-600 { color: #526176 !important; }
+html[data-theme='light'] .text-cyan-300,
+html[data-theme='light'] .text-cyan-400,
+html[data-theme='light'] .text-sky-300,
+html[data-theme='light'] .text-sky-400 { color: #0369a1 !important; }
+html[data-theme='light'] .text-blue-300,
+html[data-theme='light'] .text-blue-400 { color: #1d4ed8 !important; }
+html[data-theme='light'] .text-emerald-300,
+html[data-theme='light'] .text-emerald-400,
+html[data-theme='light'] .text-green-300,
+html[data-theme='light'] .text-green-400 { color: #047857 !important; }
+html[data-theme='light'] .text-amber-300,
+html[data-theme='light'] .text-amber-400,
+html[data-theme='light'] .text-yellow-300,
+html[data-theme='light'] .text-yellow-400,
+html[data-theme='light'] .text-\[\#facc15\] { color: #9a6700 !important; }
+html[data-theme='light'] .text-red-300,
+html[data-theme='light'] .text-red-400,
+html[data-theme='light'] .text-rose-300,
+html[data-theme='light'] .text-rose-400 { color: #b42318 !important; }
+
+html[data-theme='light'] .border-slate-700,
+html[data-theme='light'] .border-slate-600,
+html[data-theme='light'] .border-slate-500 { border-color: #cbd5e1 !important; }
+html[data-theme='light'] .border-cyan-800,
+html[data-theme='light'] .border-cyan-700,
+html[data-theme='light'] .border-blue-800 { border-color: #93c5fd !important; }
+html[data-theme='light'] .border-emerald-800,
+html[data-theme='light'] .border-green-800 { border-color: #86efac !important; }
+html[data-theme='light'] .border-red-800,
+html[data-theme='light'] .border-rose-800 { border-color: #fda4af !important; }
+html[data-theme='light'] .border-amber-800,
+html[data-theme='light'] .border-yellow-800 { border-color: #fcd34d !important; }
+
+html[data-theme='light'] .hover\:bg-slate-800\/80:hover,
+html[data-theme='light'] .hover\:bg-slate-800:hover,
+html[data-theme='light'] .hover\:bg-slate-700:hover { background-color: #e8eef6 !important; }
+html[data-theme='light'] .hover\:text-white:hover { color: #172033 !important; }
+
+/* Occupied stack cards and queue controls must never fall back to dark text on pale surfaces. */
+html[data-theme='light'] .bg-\[\#0d1c19\] *,
+html[data-theme='light'] .bg-\[\#102044\] *,
+html[data-theme='light'] .queue-action *,
+html[data-theme='light'] .queue-fullscreen * { border-color: inherit; }
+html[data-theme='light'] .bg-\[\#0d1c19\] .text-slate-300,
+html[data-theme='light'] .bg-\[\#102044\] .text-slate-300 { color: #172033 !important; }
+html[data-theme='light'] select,
+html[data-theme='light'] input,
+html[data-theme='light'] textarea { color-scheme: light; }
