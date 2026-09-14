@@ -23,7 +23,7 @@ const PurchaseOrder = () => {
   const { purchaseOrders, suppliers, products, addPO, canManageMasterData } = useData();
   const [modal, setModal] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ supplier: '', items: [newRow()] });
+  const [form, setForm] = useState({ supplier: '', no: '', items: [newRow()] });
 
   const setItem = (index, patch) => {
     setForm((prev) => ({
@@ -79,7 +79,7 @@ const PurchaseOrder = () => {
       });
       toast.success('Purchase Order dibuat. Stok belum berubah sampai barang diterima.');
       setModal(false);
-      setForm({ supplier: '', items: [newRow()] });
+      setForm({ supplier: '', no: '', items: [newRow()] });
     } catch (e) {
       toast.error(apiError(e));
     } finally {
@@ -149,6 +149,11 @@ const PurchaseOrder = () => {
             </div>
 
             <div className="space-y-5">
+              <div>
+                <label className="text-xs font-medium mb-1 block text-[#8b93a1]">Nomor PO</label>
+                <input value={form.no || ''} onChange={(e) => setForm((prev) => ({ ...prev, no: e.target.value }))} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" placeholder="Tulis nomor PO manual (opsional)" />
+                <p className="mt-1 text-xs text-[#6b7688]">Kosongkan bila ingin nomor dibuat otomatis.</p>
+              </div>
               <div>
                 <label className="text-xs font-medium mb-1 block text-[#8b93a1]">Supplier</label>
                 <select data-testid="po-supplier-select" value={form.supplier} onChange={(e) => setForm((prev) => ({ ...prev, supplier: e.target.value }))} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]">
