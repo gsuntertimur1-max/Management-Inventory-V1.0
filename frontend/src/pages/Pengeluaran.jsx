@@ -208,7 +208,7 @@ const Pengeluaran = () => {
     }));
     const rows = Object.values(grouped).sort((a, b) => a.name.localeCompare(b.name)).map((item, index) => {
       const secondary = item.secondaryQty ? item.qty / item.secondaryQty : 0;
-      return `<tr><td>${index + 1}</td><td><b>${escapeHtml(item.name)}</b><br><small>${escapeHtml(formatNum(item.qty))} pcs/pack · ${escapeHtml(formatNum(item.berat))} kg · ${escapeHtml(formatNum(secondary))} ${escapeHtml(item.secondary)}</small>${item.overtime ? '<br><small>Termasuk lembur/hari libur</small>' : ''}</td><td class="r">Rp ${escapeHtml(formatNum(item.amount))}</td></tr>`;
+      return `<tr><td>${index + 1}</td><td><b>${escapeHtml(item.name)}</b><br><small>${escapeHtml(formatNum(item.qty))} ${escapeHtml(item.unit || 'pcs/pack')} · ${escapeHtml(formatNum(item.berat))} ${escapeHtml(item.measureUnit || 'kg')} · ${escapeHtml(formatNum(secondary))} ${escapeHtml(item.secondary)}</small>${item.overtime ? '<br><small>Termasuk lembur/hari libur</small>' : ''}</td><td class="r">Rp ${escapeHtml(formatNum(item.amount))}</td></tr>`;
     }).join('');
     const total = Object.values(grouped).reduce((sum, item) => sum + item.amount, 0);
     const overtimeTotal = Object.values(grouped).reduce((sum, item) => sum + item.overtime, 0);
