@@ -128,6 +128,19 @@ async def export_products_pdf(user: dict = Depends(get_current_user)):
     table = LongTable(data, colWidths=[8*mm,26*mm,65*mm,38*mm,19*mm,25*mm,20*mm,22*mm,27*mm,37*mm], repeatRows=1)
     table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),SOFT_HEADER),("TEXTCOLOR",(0,0),(-1,0),colors.white),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("GRID",(0,0),(-1,-1),.35,colors.HexColor("#777777")),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4)]))
     story.append(table)
+    consignment_rows = []
+    for destination in DESTINATIONS:
+        consignment_rows.extend(await consignment_stock(destination))
+    if consignment_rows:
+        story += [PageBreak(), Paragraph("STOK KONSINYASI E-COMMERCE DAN BAZAR", title), Paragraph("Stok aktif berdasarkan pengeluaran Memo / Nota Dinas yang belum memiliki SO.", ParagraphStyle("products-cons-sub", parent=title, fontSize=8, leading=11, spaceAfter=9))]
+        cons_headers = ["NO", "SKU", "NAMA KOMODITI", "SALURAN", "LOKASI", "KUANTUM PACK/PCS", "KUANTUM BERAT", "DOKUMEN ND/MEMO"]
+        cons_data = [[Paragraph(header, center) for header in cons_headers]]
+        for index, item in enumerate(consignment_rows, 1):
+            row = [index, item.get("sku", ""), item.get("name", ""), item.get("channel", "KOM"), item.get("destination", ""), f"{_num(item.get('qty', 0))} {item.get('unit', '')}", f"{_num(item.get('totalWeight', 0))} kg" if item.get("weight") else "-", ", ".join(item.get("documents", [])) or "-"]
+            cons_data.append([Paragraph(str(value), center if col in {0,1,3,4,5,6} else small) for col, value in enumerate(row)])
+        cons_table = LongTable(cons_data, colWidths=[8*mm,28*mm,68*mm,20*mm,33*mm,35*mm,32*mm,48*mm], repeatRows=1)
+        cons_table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),SOFT_HEADER),("TEXTCOLOR",(0,0),(-1,0),colors.white),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("GRID",(0,0),(-1,-1),.35,colors.HexColor("#777777")),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("TOPPADDING",(0,0),(-1,-1),4),("BOTTOMPADDING",(0,0),(-1,-1),4)]))
+        story.append(cons_table)
     doc.build(story, onFirstPage=_stack_page, onLaterPages=_stack_page)
     return _pdf_response(buffer, "daftar_inventori_produk.pdf")
 
