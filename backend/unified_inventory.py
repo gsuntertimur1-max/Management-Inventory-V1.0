@@ -53,6 +53,25 @@ class MutationBody(BaseModel):
     reason: str
 
 
+class RepackingBody(BaseModel):
+    tmHasil: str
+    sourceProductId: str
+    sourceQty: float = Field(gt=0)
+    resultProductId: str
+    resultQty: float = Field(gt=0)
+    batch: str = ""
+    expired: str = ""
+    operator: str = ""
+    note: str = ""
+
+
+class QCBody(BaseModel):
+    repackingId: str
+    status: Literal["LULUS", "TIDAK_LULUS", "PENDING"]
+    inspector: str = ""
+    reason: str = ""
+
+
 @router.get("/monitoring-stock")
 async def monitoring_stock(user: dict = Depends(get_current_user)):
     products = await db.products.find({}, {"_id": 0}).sort("name", 1).to_list(5000)
@@ -171,3 +190,84 @@ async def create_stock_mutation(body: MutationBody, user: dict = Depends(get_cur
 @router.get("/audit-log")
 async def list_audit_log(user: dict = Depends(get_current_user)):
     return await db.audit_log.find({}, {"_id": 0}).sort("created_at", -1).to_list(2000)
+
+
+@router.get("/repacking-jobs")
+async def list_repacking_jobs(user: dict = Depends(get_current_user)):
+    return await db.repacking_jobs.find({}, {"_id": 0}).sort("created_at", -1).to_list(2000)
+
+
+@router.post("/repacking-jobs")
+async def create_repacking_job(body: RepackingBody, user: dict = Depends(get_current_user)):
+    if not has_role_permission(user.get("role"), "rebagging"):
+        raise HTTPException(status_code=403, detail="Peran ini tidak memiliki hak repacking")
+    source = await db.products.find_one({"id": body.sourceProductId}, {"_id": 0})
+    result = await db.products.find_one({"id": body.resultProductId}, {"_id": 0})
+    if not source or not result:
+        raise HTTPException(status_code=404, detail="Produk asal atau hasil tidak ditemukan")
+    if float(source.get("stock", 0) or 0) < body.sourceQty:
+        raise HTTPException(status_code=400, detail="Stok bahan baku tidak cukup")
+
+    now = now_iso()
+    job = {
+        "id": new_id(),
+        "tmHasil": body.tmHasil.strip(),
+        "sourceProductId": source["id"],
+        "sourceProductName": source.get("name", ""),
+        "sourceSku": source.get("sku", ""),
+        "sourceQty": body.sourceQty,
+        "resultProductId": result["id"],
+        "resultProductName": result.get("name", ""),
+        "resultSku": result.get("sku", ""),
+        "resultQty": body.resultQty,
+        "shrinkage": body.sourceQty - body.resultQty,
+        "batch": body.batch.strip(),
+        "expired": body.expired,
+        "operator": body.operator.strip() or user.get("name", ""),
+        "note": body.note.strip(),
+        "qcStatus": "PENDING",
+        "created_at": now,
+        "updated_at": now,
+        "created_by": user.get("name", ""),
+    }
+    await db.products.update_one({"id": source["id"], "stock": {"$gte": body.sourceQty}}, {"$inc": {"stock": -body.sourceQty}, "$set": {"updated_at": now}})
+    await db.products.update_one({"id": result["id"]}, {"$inc": {"process": body.resultQty}, "$set": {"updated_at": now}})
+    await db.repacking_jobs.insert_one(job)
+    await db.transactions.insert_many([
+        {"id": new_id(), "time": now, "type": "REPACKING_BAHAN", "productId": source["id"], "product": source.get("name", ""), "sku": source.get("sku", ""), "qty": body.sourceQty, "change": -body.sourceQty, "operator": user.get("name", ""), "ref": job["tmHasil"], "keterangan": "Bahan baku repacking"},
+        {"id": new_id(), "time": now, "type": "REPACKING_HASIL", "productId": result["id"], "product": result.get("name", ""), "sku": result.get("sku", ""), "qty": body.resultQty, "change": body.resultQty, "operator": user.get("name", ""), "ref": job["tmHasil"], "keterangan": "Hasil repacking menunggu QC"},
+    ])
+    await _audit(user, "Repacking", f"Input {job['tmHasil'] or job['id']}", {"sourceStock": source.get("stock", 0)}, job, body.note)
+    return job
+
+
+@router.post("/qc-inspections")
+async def create_qc_inspection(body: QCBody, user: dict = Depends(get_current_user)):
+    if not has_role_permission(user.get("role"), "qc"):
+        raise HTTPException(status_code=403, detail="Peran ini tidak memiliki hak QC")
+    job = await db.repacking_jobs.find_one({"id": body.repackingId}, {"_id": 0})
+    if not job:
+        raise HTTPException(status_code=404, detail="Repacking tidak ditemukan")
+    if job.get("qcStatus") == "LULUS":
+        raise HTTPException(status_code=400, detail="Repacking ini sudah lulus QC")
+
+    now = now_iso()
+    inspection = {
+        "id": new_id(),
+        "repackingId": job["id"],
+        "tmHasil": job.get("tmHasil", ""),
+        "status": body.status,
+        "inspector": body.inspector.strip() or user.get("name", ""),
+        "reason": body.reason.strip(),
+        "created_at": now,
+        "created_by": user.get("name", ""),
+    }
+    update = {"$set": {"qcStatus": body.status, "qcReason": inspection["reason"], "qcInspector": inspection["inspector"], "updated_at": now}}
+    await db.repacking_jobs.update_one({"id": job["id"]}, update)
+    if body.status == "LULUS":
+        await db.products.update_one({"id": job["resultProductId"]}, {"$inc": {"process": -float(job.get("resultQty", 0) or 0), "stock": float(job.get("resultQty", 0) or 0)}, "$set": {"updated_at": now}})
+    elif body.status == "TIDAK_LULUS":
+        await db.products.update_one({"id": job["resultProductId"]}, {"$inc": {"process": -float(job.get("resultQty", 0) or 0), "damaged": float(job.get("resultQty", 0) or 0)}, "$set": {"updated_at": now}})
+    await db.qc_inspections.insert_one(inspection)
+    await _audit(user, "QC", f"QC {job.get('tmHasil', job['id'])}", job, {**job, "qcStatus": body.status}, body.reason)
+    return inspection
