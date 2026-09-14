@@ -11,7 +11,7 @@ import { stackCodes } from '../lib/warehouses';
 
 const empty = {
   name: '', sku: '', category: 'F&B / Bahan Makanan', cost: 0,
-  location: '', supplier: '', min: 0, unit: 'Pack', weight: 0, secondary: '', secondaryQty: 0, channel: 'KOM',
+  location: '', supplier: '', min: 0, unit: 'Pack', weight: 0, secondary: '', secondaryQty: 0, channel: 'KOM', loadingFeeLabor: 0, loadingFeeDaily: 0, loadingFeeWarehouse: 0, loadingFeeChargeMode: 'TIDAK_ADA',
 };
 
 const masterPayload = (data) => ({
@@ -27,6 +27,10 @@ const masterPayload = (data) => ({
   secondary: data.secondary || '',
   secondaryQty: Number(data.secondaryQty || 0),
   channel: data.channel === 'PSO' ? 'PSO' : 'KOM',
+  loadingFeeLabor: Number(data.loadingFeeLabor || 0),
+  loadingFeeDaily: Number(data.loadingFeeDaily || 0),
+  loadingFeeWarehouse: Number(data.loadingFeeWarehouse || 0),
+  loadingFeeChargeMode: data.loadingFeeChargeMode || 'TIDAK_ADA',
 });
 
 const DaftarProduk = () => {
@@ -179,6 +183,15 @@ const DaftarProduk = () => {
                 <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Kemasan Sekunder</label><input value={modal.data.secondary || ''} placeholder="Contoh: Karung atau Dus" onChange={(e) => setModal({ ...modal, data: { ...modal.data, secondary: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]" /></div>
                 <div><label className="text-xs font-medium mb-1 block text-[#8b93a1]">Isi per Kemasan Sekunder</label><input type="number" min="0" step="1" value={modal.data.secondaryQty ?? 0} placeholder="Contoh: 8" onChange={(e) => setModal({ ...modal, data: { ...modal.data, secondaryQty: Number(e.target.value) } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#2563eb]" /><div className="text-[10px] text-[#566173] mt-1">Jumlah {modal.data.unit || 'kemasan primer'} dalam 1 {modal.data.secondary || 'kemasan sekunder'}.</div></div>
                 <div className="rounded-lg border border-[#1f3657] bg-[#0d1728] px-3 py-2.5 text-xs text-[#93c5fd] self-end">{Number(modal.data.weight || 0) > 0 && Number(modal.data.secondaryQty || 0) > 0 ? `1 ${modal.data.secondary || 'kemasan sekunder'} = ${formatNum(modal.data.secondaryQty)} ${modal.data.unit || 'unit'} = ${formatNum(Number(modal.data.weight) * Number(modal.data.secondaryQty))} kg` : 'Isi berat/unit dan isi kemasan sekunder untuk melihat konversi.'}</div>
+              </div>
+              <div className="mt-5 rounded-xl border border-[#294263] bg-[#0d1728] p-4">
+                <div className="text-sm font-semibold">Biaya Pemuatan per {modal.data.unit || 'unit'}</div>
+                <p className="text-xs text-[#8fb8ef] mt-1">Komponen ini bersifat internal dan tidak tercetak pada Surat Jalan maupun Bon Muat.</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+                  <div><label className="text-xs text-[#93c5fd] block mb-1">Status tagihan pengambil</label><select value={modal.data.loadingFeeChargeMode || 'TIDAK_ADA'} onChange={(e) => setModal({ ...modal, data: { ...modal.data, loadingFeeChargeMode: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2 text-sm"><option value="PENGAMBIL">Ditagihkan ke pengambil</option><option value="TERMASUK">Termasuk harga / SO</option><option value="TIDAK_ADA">Tidak ada biaya muat</option></select></div>
+                  {[['loadingFeeLabor', 'Upah Buruh (Rp)'], ['loadingFeeDaily', 'UH Gudang (Rp)'], ['loadingFeeWarehouse', 'Dana Gudang (Rp)']].map(([key, label]) => <div key={key}><label className="text-xs text-[#93c5fd] block mb-1">{label}</label><input type="number" min="0" step="1" value={modal.data[key] ?? 0} onChange={(e) => setModal({ ...modal, data: { ...modal.data, [key]: Number(e.target.value) } })} className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2 text-sm font-mono" /></div>)}
+                  <div className="rounded-lg border border-[#2b3b52] px-3 py-2 text-xs text-[#c7d0dc] self-end">Total: <b className="font-mono">{formatRp(Number(modal.data.loadingFeeLabor || 0) + Number(modal.data.loadingFeeDaily || 0) + Number(modal.data.loadingFeeWarehouse || 0))}</b> per {modal.data.unit || 'unit'}</div>
+                </div>
               </div>
               <div className="flex justify-end gap-2 mt-6">
                 <button onClick={() => setModal(null)} className="px-4 py-2.5 rounded-lg border border-[#242f3d] text-sm hover:bg-[#141a24]">Batal</button>
