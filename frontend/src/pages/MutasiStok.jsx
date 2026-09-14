@@ -3,14 +3,17 @@ import { ArrowRightLeft } from 'lucide-react';
 import { toast } from 'sonner';
 import { useData } from '../context/DataContext';
 import { apiError } from '../lib/api';
-import { stackCodes } from '../lib/warehouses';
+
+const STACKS = [
+  ...Array.from({ length: 8 }, (_, i) => String(i + 17)).flatMap((unit) => ['A', 'B', 'C'].flatMap((zone) => Array.from({ length: 4 }, (_, i) => `${unit}/${zone}${String(i + 1).padStart(2, '0')}`))),
+  ...['A', 'B'].flatMap((zone) => Array.from({ length: 8 }, (_, i) => `MP1/${zone}${String(i + 1).padStart(2, '0')}`)),
+];
 
 const MutasiStok = () => {
-  const { products, settings, addStockMutation } = useData();
+  const { products, addStockMutation } = useData();
   const [form, setForm] = useState({ productId: '', qty: '', fromCondition: 'BAIK', toCondition: 'BAIK', fromStackCode: '', toStackCode: '', reason: '' });
   const [busy, setBusy] = useState(false);
   const selected = products.find((item) => item.id === form.productId);
-  const stacks = stackCodes(settings?.warehouses);
   const change = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
 
   const submit = async () => {
@@ -36,7 +39,7 @@ const MutasiStok = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="md:col-span-2"><label className="text-sm block mb-1">Produk</label><select value={form.productId} onChange={(e) => change('productId', e.target.value)} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5"><option value="">Pilih produk...</option>{products.map((p) => <option key={p.id} value={p.id}>{p.sku} · {p.name}</option>)}</select></div>
             <div><label className="text-sm block mb-1">Jumlah</label><input type="number" min="0" value={form.qty} onChange={(e) => change('qty', e.target.value)} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5" /></div>
-            <div><label className="text-sm block mb-1">Lokasi tujuan</label><select value={form.toStackCode} onChange={(e) => change('toStackCode', e.target.value)} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5"><option value="">Tidak ubah lokasi</option>{stacks.map((s) => <option key={s}>{s}</option>)}</select></div>
+            <div><label className="text-sm block mb-1">Lokasi tujuan</label><select value={form.toStackCode} onChange={(e) => change('toStackCode', e.target.value)} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5"><option value="">Tidak ubah lokasi</option>{STACKS.map((s) => <option key={s}>{s}</option>)}</select></div>
             <div><label className="text-sm block mb-1">Kondisi asal</label><select value={form.fromCondition} onChange={(e) => change('fromCondition', e.target.value)} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5"><option>BAIK</option><option>RUSAK</option><option>ON_PROSES</option></select></div>
             <div><label className="text-sm block mb-1">Kondisi tujuan</label><select value={form.toCondition} onChange={(e) => change('toCondition', e.target.value)} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5"><option>BAIK</option><option>RUSAK</option><option>ON_PROSES</option></select></div>
             <div className="md:col-span-2"><label className="text-sm block mb-1">Alasan</label><textarea value={form.reason} onChange={(e) => change('reason', e.target.value)} rows="3" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5" placeholder="Contoh: hasil sortasi, relokasi tumpukan, koreksi setelah opname..." /></div>
