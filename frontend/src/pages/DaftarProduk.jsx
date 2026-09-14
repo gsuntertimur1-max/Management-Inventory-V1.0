@@ -32,6 +32,8 @@ const masterPayload = (data) => ({
   loadingFeeDaily: Number(data.loadingFeeDaily || 0),
   loadingFeeWarehouse: Number(data.loadingFeeWarehouse || 0),
   loadingFeeChargeMode: data.loadingFeeChargeMode || 'TIDAK_ADA',
+  unloadingFeeChargeMode: data.unloadingFeeChargeMode || 'TIDAK_ADA',
+  ...Object.fromEntries(['unloadingFeeLabor','unloadingFeeDaily','unloadingFeeWarehouse','loadingOvertimeLabor','loadingOvertimeDaily','loadingOvertimeWarehouse','loadingHolidayLabor','loadingHolidayDaily','loadingHolidayWarehouse','loadingHolidayOvertimeLabor','loadingHolidayOvertimeDaily','loadingHolidayOvertimeWarehouse','unloadingOvertimeLabor','unloadingOvertimeDaily','unloadingOvertimeWarehouse','unloadingHolidayLabor','unloadingHolidayDaily','unloadingHolidayWarehouse','unloadingHolidayOvertimeLabor','unloadingHolidayOvertimeDaily','unloadingHolidayOvertimeWarehouse'].map((key) => [key, Number(data[key] || 0)])),
 });
 
 const DaftarProduk = () => {
