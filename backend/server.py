@@ -1003,14 +1003,14 @@ async def create_po(body: POBody, user: dict = Depends(require_write)):
 async def export_products(user: dict = Depends(get_current_user)):
     products = await db.products.find({}, {"_id": 0}).sort("name", 1).to_list(5000)
     headers = [
-        "Nama Produk", "SKU", "Kategori", "Stok Baik", "Stok Rusak", "Satuan",
+        "Nama Produk", "SKU", "Saluran", "Kategori", "Stok Baik", "Stok Rusak", "Satuan",
         "Harga Modal", "Nilai Total", "Supplier", "Lokasi", "Stok Minimum",
         "Berat/Unit (kg)", "Kemasan Sekunder", "Isi/Kemasan Sekunder",
         "Berat/Kemasan Sekunder (kg)", "Kedaluwarsa"
     ]
     rows = [
         [
-            p.get("name", ""), p.get("sku", ""), p.get("category", ""),
+            p.get("name", ""), p.get("sku", ""), normalize_channel(p.get("channel")), p.get("category", ""),
             p.get("stock", 0), p.get("damaged", 0), p.get("unit", ""),
             p.get("cost", 0), (p.get("stock", 0) or 0) * (p.get("cost", 0) or 0),
             p.get("supplier", ""), p.get("location", ""), p.get("min", 0),
