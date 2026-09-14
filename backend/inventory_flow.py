@@ -33,6 +33,7 @@ class POItemInput(BaseModel):
 
 class PurchaseOrderInput(BaseModel):
     supplier: str
+    no: str = ""
     items: List[POItemInput] = Field(min_length=1)
     date: str = ""
 
@@ -201,14 +202,23 @@ async def create_purchase_order(body: PurchaseOrderInput, user: dict = Depends(r
             "channel": normalize_channel(product.get("channel")),
         })
 
-    year = operational_now().strftime("%Y")
-    prefix = f"PO-{year}-"
-    floor = await max_suffix(db.purchase_orders, "no", prefix)
-    number = await next_sequence(f"purchase-order:{year}", floor)
+    manual_no = body.no.strip()
+    if len(manual_no) > 100:
+        raise HTTPException(status_code=400, detail="Nomor PO maksimal 100 karakter")
+    if manual_no and await db.purchase_orders.find_one({"no": manual_no}, {"_id": 1}):
+        raise HTTPException(status_code=409, detail="Nomor PO sudah digunakan")
+    if manual_no:
+        po_no = manual_no
+    else:
+        year = operational_now().strftime("%Y")
+        prefix = f"PO-{year}-"
+        floor = await max_suffix(db.purchase_orders, "no", prefix)
+        number = await next_sequence(f"purchase-order:{year}", floor)
+        po_no = f"{prefix}{number:03d}"
 
     doc = {
         "id": new_id(),
-        "no": f"{prefix}{number:03d}",
+        "no": po_no,
         "supplier": supplier,
         "date": body.date or now_iso(),
         "status": "Belum Diterima",
