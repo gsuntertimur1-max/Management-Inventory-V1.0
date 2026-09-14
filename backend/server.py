@@ -751,6 +751,47 @@ async def delete_user(user_id: str, admin: dict = Depends(require_admin)):
     return {"ok": True}
 
 
+# Saluran persediaan dipisahkan agar stok PSO dan KOM tidak tercampur.
+STOCK_CHANNELS = ("PSO", "KOM")
+
+
+def normalize_channel(value: str | None, fallback: str = "KOM") -> str:
+    candidate = str(value or "").strip().upper()
+    return candidate if candidate in STOCK_CHANNELS else fallback
+
+
+async def ensure_channel_stock(product: dict) -> dict:
+    """Migrasikan saldo master lama sekali saja ke saluran default produk."""
+    current = product.get("channelStock")
+    if isinstance(current, dict) and current:
+        return product
+
+    channel = normalize_channel(product.get("channel"))
+    migrated = {
+        "PSO": {"stock": 0.0, "damaged": 0.0},
+        "KOM": {"stock": 0.0, "damaged": 0.0},
+    }
+    migrated[channel] = {
+        "stock": float(product.get("stock", 0) or 0),
+        "damaged": float(product.get("damaged", 0) or 0),
+    }
+    await db.products.update_one(
+        {"id": product["id"], "channelStock": {"$exists": False}},
+        {"$set": {"channel": channel, "channelStock": migrated}},
+    )
+    product["channel"] = channel
+    product["channelStock"] = migrated
+    return product
+
+
+def channel_balance(product: dict, channel: str, field: str = "stock") -> float:
+    channel = normalize_channel(channel, normalize_channel(product.get("channel")))
+    balances = product.get("channelStock")
+    if isinstance(balances, dict) and balances:
+        return float((balances.get(channel) or {}).get(field, 0) or 0)
+    return float(product.get(field, 0) or 0) if channel == normalize_channel(product.get("channel")) else 0.0
+
+
 # ---------- products ----------
 @api_router.get("/products")
 async def list_products(user: dict = Depends(get_current_user)):
