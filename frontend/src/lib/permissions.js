@@ -2,10 +2,12 @@
 // The labels below are the names used in the warehouse workflow.
 export const ROLE_LABELS = {
   Administrator: 'Superadmin',
-  Supervisor: 'Admin',
-  Operator: 'Operator',
+  Supervisor: 'Admin Gudang',
+  Operator: 'Operator Gudang',
   QC: 'QC',
-  Pemantau: 'Pemantau',
+  'Kepala Gudang': 'Kepala Gudang',
+  Mandor: 'Mandor / Keuangan Operasional',
+  Pemantau: 'Viewer / Auditor',
   Superadmin: 'Superadmin',
   Admin: 'Admin',
 };
@@ -17,6 +19,8 @@ export const ROLE_COLORS = {
   Admin: '#a855f7',
   Operator: '#3b82f6',
   QC: '#22c55e',
+  'Kepala Gudang': '#f59e0b',
+  Mandor: '#14b8a6',
   Pemantau: '#8b93a1',
 };
 
@@ -26,10 +30,12 @@ export const canonicalRole = (role) => ({
 }[role] || role || 'Pemantau');
 
 const ROLE_PERMISSIONS = {
-  Administrator: new Set(['masterWrite', 'inbound', 'outbound', 'rebagging', 'qc', 'users', 'settings']),
-  Supervisor: new Set(['masterWrite', 'inbound', 'outbound', 'rebagging']),
-  Operator: new Set(['rebagging']),
+  Administrator: new Set(['masterWrite', 'inbound', 'outbound', 'rebagging', 'qc', 'users', 'settings', 'costView']),
+  Supervisor: new Set(['masterWrite', 'inbound', 'outbound', 'costView']),
+  Operator: new Set(['inbound', 'outbound']),
   QC: new Set(['qc']),
+  'Kepala Gudang': new Set(['warehouseApprove']),
+  Mandor: new Set(['costView']),
   Pemantau: new Set(),
 };
 
@@ -50,4 +56,3 @@ export const hasPermission = (role, permission) => {
 };
 
 export const roleLabel = (role) => ROLE_LABELS[role] || role || '—';
-

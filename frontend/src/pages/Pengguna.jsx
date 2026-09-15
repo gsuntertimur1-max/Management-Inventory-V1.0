@@ -6,7 +6,7 @@ import { apiError } from '../lib/api';
 import { toast } from 'sonner';
 import { ROLE_COLORS, ROLE_LABELS, canonicalRole, roleLabel } from '../lib/permissions';
 
-const ROLES = ['Administrator', 'Supervisor', 'Operator', 'QC', 'Pemantau'];
+const ROLES = ['Administrator', 'Kepala Gudang', 'Supervisor', 'Operator', 'QC', 'Mandor', 'Pemantau'];
 
 const inputCls = 'w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]';
 
@@ -108,7 +108,7 @@ const Pengguna = () => {
       </div>
 
       <div className="card-surface p-4 text-xs text-[#aab4c4]">
-        <span className="font-semibold text-white">Aturan akses:</span> Superadmin semua proses · Admin inbound, rebagging, mutasi & outbound (tanpa QC) · Operator rebagging saja · QC QC saja.
+        <span className="font-semibold text-white">Aturan akses:</span> Superadmin seluruh proses · Kepala Gudang meninjau seluruh data · Admin Gudang mengelola master dan transaksi · Operator Gudang mencatat stok masuk/keluar · QC khusus QC · Mandor/Keuangan melihat rekap biaya · Viewer/Auditor hanya lihat dan unduh. Modul rebagging belum tersedia.
       </div>
 
       <div className="card-surface p-6">

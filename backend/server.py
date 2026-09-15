@@ -157,6 +157,8 @@ ROLE_SUPERADMIN = "Administrator"
 ROLE_ADMIN = "Supervisor"
 ROLE_OPERATOR = "Operator"
 ROLE_QC = "QC"
+ROLE_WAREHOUSE_HEAD = "Kepala Gudang"
+ROLE_FOREMAN = "Mandor"
 ROLE_VIEWER = "Pemantau"
 
 ROLE_ALIASES = {
@@ -166,10 +168,12 @@ ROLE_ALIASES = {
 
 ROLE_LABELS = {
     ROLE_SUPERADMIN: "Superadmin",
-    ROLE_ADMIN: "Admin",
-    ROLE_OPERATOR: "Operator",
+    ROLE_ADMIN: "Admin Gudang",
+    ROLE_OPERATOR: "Operator Gudang",
     ROLE_QC: "QC",
-    ROLE_VIEWER: "Pemantau",
+    ROLE_WAREHOUSE_HEAD: "Kepala Gudang",
+    ROLE_FOREMAN: "Mandor / Keuangan Operasional",
+    ROLE_VIEWER: "Viewer / Auditor",
 }
 
 
@@ -179,10 +183,17 @@ def canonical_role(role: Optional[str]) -> str:
 
 
 ROLE_PERMISSIONS = {
-    ROLE_SUPERADMIN: {"masterWrite", "inbound", "outbound", "rebagging", "qc", "users", "settings"},
-    ROLE_ADMIN: {"masterWrite", "inbound", "outbound", "rebagging"},
-    ROLE_OPERATOR: {"rebagging"},
+    ROLE_SUPERADMIN: {"masterWrite", "inbound", "outbound", "rebagging", "qc", "users", "settings", "costView"},
+    ROLE_ADMIN: {"masterWrite", "inbound", "outbound", "costView"},
+    # Operator Gudang hanya mencatat arus stok harian; master dan pengaturan
+    # tetap khusus Admin Gudang/Superadmin.
+    ROLE_OPERATOR: {"inbound", "outbound"},
     ROLE_QC: {"qc"},
+    # Modul persetujuan Kepala Gudang dan layar pembayaran mandor akan memakai
+    # izin khusus ini saat endpoint-nya ditambahkan. Keduanya tetap read-only
+    # untuk stok agar tidak dapat mengubah transaksi operasional.
+    ROLE_WAREHOUSE_HEAD: {"warehouseApprove"},
+    ROLE_FOREMAN: {"costView"},
     ROLE_VIEWER: set(),
 }
 
@@ -190,9 +201,9 @@ ROLE_PERMISSIONS = {
 def has_role_permission(role: Optional[str], permission: str) -> bool:
     canonical = canonical_role(role)
     if permission == "currentWrite":
-        return canonical in {ROLE_SUPERADMIN, ROLE_ADMIN}
+        return canonical in {ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_OPERATOR}
     if permission == "operations":
-        return canonical in {ROLE_SUPERADMIN, ROLE_ADMIN}
+        return canonical in {ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_OPERATOR}
     return permission in ROLE_PERMISSIONS.get(canonical, set())
 
 
@@ -202,10 +213,9 @@ def role_label(role: Optional[str]) -> str:
 
 
 # The current Railway branch has no separate Rebagging/QC endpoints yet. The
-# generic write dependency therefore covers only the currently exposed master,
-# inbound, and outbound operations. Future modules should use the dedicated
-# permission helpers above instead of widening this set.
-WRITE_ROLES = {ROLE_SUPERADMIN, ROLE_ADMIN}
+# generic write dependency covers the currently exposed inbound/outbound
+# operations. Master/settings routes use their dedicated Admin dependency.
+WRITE_ROLES = {ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_OPERATOR}
 
 
 async def require_write(user: dict = Depends(get_current_user)) -> dict:
@@ -213,6 +223,15 @@ async def require_write(user: dict = Depends(get_current_user)) -> dict:
         raise HTTPException(
             status_code=403,
             detail=f"Peran {role_label(user.get('role'))} tidak memiliki hak untuk mengubah data pada modul ini",
+        )
+    return user
+
+
+async def require_master_write(user: dict = Depends(get_current_user)) -> dict:
+    if not has_role_permission(user.get("role"), "masterWrite"):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Peran {role_label(user.get('role'))} tidak memiliki hak untuk mengubah data master",
         )
     return user
 
@@ -337,14 +356,14 @@ class UserCreate(BaseModel):
     name: str
     username: str
     email: str = ''
-    role: Literal['Administrator', 'Supervisor', 'Operator', 'QC', 'Pemantau', 'Superadmin', 'Admin'] = 'Operator'
+    role: Literal['Administrator', 'Supervisor', 'Operator', 'QC', 'Kepala Gudang', 'Mandor', 'Pemantau', 'Superadmin', 'Admin'] = 'Operator'
     password: str
 
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None
     email: Optional[str] = None
-    role: Optional[Literal['Administrator', 'Supervisor', 'Operator', 'QC', 'Pemantau', 'Superadmin', 'Admin']] = None
+    role: Optional[Literal['Administrator', 'Supervisor', 'Operator', 'QC', 'Kepala Gudang', 'Mandor', 'Pemantau', 'Superadmin', 'Admin']] = None
     active: Optional[bool] = None
 
 
@@ -799,7 +818,7 @@ async def list_products(user: dict = Depends(get_current_user)):
 
 
 @api_router.post("/products")
-async def create_product(body: ProductBody, user: dict = Depends(require_write)):
+async def create_product(body: ProductBody, user: dict = Depends(require_master_write)):
     doc = body.model_dump()
     doc["sku"] = doc["sku"].strip()
     if not doc["sku"]:
@@ -812,7 +831,7 @@ async def create_product(body: ProductBody, user: dict = Depends(require_write))
 
 
 @api_router.put("/products/{product_id}")
-async def update_product(product_id: str, body: ProductUpdate, user: dict = Depends(require_write)):
+async def update_product(product_id: str, body: ProductUpdate, user: dict = Depends(require_master_write)):
     patch = body.model_dump(exclude_unset=True, exclude_none=True)
     if "sku" in patch:
         patch["sku"] = patch["sku"].strip()
@@ -829,7 +848,7 @@ async def update_product(product_id: str, body: ProductUpdate, user: dict = Depe
 
 
 @api_router.delete("/products/{product_id}")
-async def delete_product(product_id: str, user: dict = Depends(require_write)):
+async def delete_product(product_id: str, user: dict = Depends(require_master_write)):
     result = await db.products.delete_one({"id": product_id})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
@@ -843,7 +862,7 @@ async def list_suppliers(user: dict = Depends(get_current_user)):
 
 
 @api_router.post("/suppliers")
-async def create_supplier(body: SupplierBody, user: dict = Depends(require_write)):
+async def create_supplier(body: SupplierBody, user: dict = Depends(require_master_write)):
     doc = body.model_dump()
     doc["id"] = new_id()
     await db.suppliers.insert_one(dict(doc))
@@ -851,7 +870,7 @@ async def create_supplier(body: SupplierBody, user: dict = Depends(require_write
 
 
 @api_router.put("/suppliers/{supplier_id}")
-async def update_supplier(supplier_id: str, body: SupplierBody, user: dict = Depends(require_write)):
+async def update_supplier(supplier_id: str, body: SupplierBody, user: dict = Depends(require_master_write)):
     result = await db.suppliers.update_one({"id": supplier_id}, {"$set": body.model_dump()})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Supplier tidak ditemukan")
@@ -859,7 +878,7 @@ async def update_supplier(supplier_id: str, body: SupplierBody, user: dict = Dep
 
 
 @api_router.delete("/suppliers/{supplier_id}")
-async def delete_supplier(supplier_id: str, user: dict = Depends(require_write)):
+async def delete_supplier(supplier_id: str, user: dict = Depends(require_master_write)):
     result = await db.suppliers.delete_one({"id": supplier_id})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Supplier tidak ditemukan")
@@ -983,7 +1002,7 @@ async def list_pos(user: dict = Depends(get_current_user)):
 
 
 @api_router.post("/purchase-orders")
-async def create_po(body: POBody, user: dict = Depends(require_write)):
+async def create_po(body: POBody, user: dict = Depends(require_master_write)):
     year = operational_now().strftime("%Y")
     prefix = f"PO-{year}-"
     floor = await max_suffix(db.purchase_orders, "no", prefix)
@@ -1071,7 +1090,7 @@ async def export_transactions_current_month(user: dict = Depends(get_current_use
 
 # ---------- import & admin ----------
 @api_router.post("/import/csv")
-async def import_csv(file: UploadFile = File(...), user: dict = Depends(require_write)):
+async def import_csv(file: UploadFile = File(...), user: dict = Depends(require_master_write)):
     content = (await file.read()).decode("utf-8-sig", errors="replace")
     rows = parse_seed_rows(content)
     if not rows:
