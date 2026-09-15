@@ -61,6 +61,9 @@ class OutboundCreateInput(BaseModel):
     grossWeight: float = Field(default=0, ge=0)
     grossMin: float = Field(default=0, ge=0)
     grossMax: float = Field(default=0, ge=0)
+    # Kosong memakai pengaturan master produk. PENGAMBIL berarti ditagihkan,
+    # TERMAKSUK berarti biaya sudah melekat pada SO/harga dokumen.
+    loadingFeeChargeMode: Literal["", "PENGAMBIL", "TERMASUK"] = ""
 
 
 class LoadingFeePaymentInput(BaseModel):
@@ -90,11 +93,11 @@ class DailyLoadingSettlementInput(BaseModel):
 def _crew_group(unit_loading: str) -> str:
     text = str(unit_loading or "").upper()
     if "RTR" in text: return "GRUP 3 - RTR"
-    if "MP1" in text or any(f"UNIT {x}" in text for x in ("21", "22", "23", "24")): return "GRUP 2 - MP1/21-24"
+    if "MP1" in text or any(re.search(rf"(?:UNIT\\s*)?{x}(?:/|\\b)", text) for x in ("21", "22", "23", "24")): return "GRUP 2 - MP1/21-24"
     return "GRUP 1 - GBB 17-20"
 
 
-def _loading_fee(product: dict, qty: float, when=None, apply_overtime=None, apply_holiday=None) -> dict:
+def _loading_fee(product: dict, qty: float, when=None, apply_overtime=None, apply_holiday=None, charge_mode_override: str = "") -> dict:
     current = when or operational_now()
     if isinstance(current, str):
         current = datetime.fromisoformat(current.replace("Z", "+00:00")).astimezone(operational_now().tzinfo)
@@ -110,7 +113,7 @@ def _loading_fee(product: dict, qty: float, when=None, apply_overtime=None, appl
         if is_holiday: value += float(product.get(f"loadingHoliday{suffix}", 0) or 0)
         if is_holiday and is_overtime: value += float(product.get(f"loadingHolidayOvertime{suffix}", 0) or 0)
         components[target] = value * qty
-    mode = str(product.get("loadingFeeChargeMode") or "TIDAK_ADA").strip().upper()
+    mode = str(charge_mode_override or product.get("loadingFeeChargeMode") or "TIDAK_ADA").strip().upper()
     total = sum(components.values())
     return {"mode": mode, **components, "total": total, "chargeable": total if mode == "PENGAMBIL" else 0.0, "overtime": is_overtime, "holiday": is_holiday}
 
@@ -310,7 +313,8 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         channel = normalize_channel(item.channel, normalize_channel(product.get("channel")))
         if stack_code and stack_code not in await valid_stack_codes():
             raise HTTPException(status_code=400, detail="Tumpukan asal tidak valid")
-        load_items.append({"productId": item.productId, "documentNo": item_ref, "sku": product.get("sku", ""), "name": product.get("name", ""), "channel": channel, "qty": qty, "unit": product.get("unit", ""), "weight": weight, "measureUnit": product.get("measureUnit", "kg") or "kg", "berat": weight * qty, "secondary": product.get("secondary", ""), "secondaryQty": float(product.get("secondaryQty", 0) or 0), "location": product.get("location", ""), "stackCode": stack_code, "loadingFee": _loading_fee(product, qty)})
+        actual_location = stack_code or product.get("location", "")
+        load_items.append({"productId": item.productId, "documentNo": item_ref, "sku": product.get("sku", ""), "name": product.get("name", ""), "channel": channel, "qty": qty, "unit": product.get("unit", ""), "weight": weight, "measureUnit": product.get("measureUnit", "kg") or "kg", "berat": weight * qty, "secondary": product.get("secondary", ""), "secondaryQty": float(product.get("secondaryQty", 0) or 0), "location": product.get("location", ""), "stackCode": stack_code, "crewGroup": _crew_group(actual_location), "loadingFee": _loading_fee(product, qty, charge_mode_override=body.loadingFeeChargeMode)})
 
     ordered_products = [products[product_id] for product_id in item_order]
     unit_loading, queue_prefix = _loading_unit_from_products(ordered_products)
@@ -357,6 +361,7 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         "polisi": body.polisi.strip(),
         "pengambil": body.pengambil.strip(),
         "unit_loading": unit_loading,
+        "crew_groups": sorted({item.get("crewGroup", "GRUP 1 - GBB 17-20") for item in load_items}),
         "kondisi": body.kondisi,
         "keterangan": body.keterangan.strip(),
         "document_type": body.documentType,
@@ -399,6 +404,7 @@ async def get_loading_costs(date: str = "", user: dict = Depends(get_current_use
         raise HTTPException(status_code=400, detail="Tanggal harus YYYY-MM-DD") from exc
     loads = await db.outbound_loads.find({"status": "Selesai", "operational_date": target_date}, {"_id": 0}).sort("completed_at", 1).to_list(5000)
     rows, totals = [], {"labor": 0.0, "daily": 0.0, "warehouse": 0.0, "total": 0.0, "chargeable": 0.0, "collected": 0.0}
+    groups = {name: {"labor": 0.0, "daily": 0.0, "warehouse": 0.0, "total": 0.0, "chargeable": 0.0, "collected": 0.0} for name in ("GRUP 1 - GBB 17-20", "GRUP 2 - MP1/21-24", "GRUP 3 - RTR")}
     for load in loads:
         cost = dict(load.get("loading_cost") or {})
         if not cost:
@@ -408,10 +414,20 @@ async def get_loading_costs(date: str = "", user: dict = Depends(get_current_use
             totals[key] += cost[key]
         collected = float(load.get("loading_fee_payment_total", 0) or 0)
         totals["collected"] += collected
-        rows.append({"id": load["id"], "antrian": load.get("antrian", ""), "ref": load.get("ref", ""), "documents": load.get("documents", []), "party": load.get("party", ""), "pengambil": load.get("pengambil", ""), "items": load.get("items", []), "cost": cost, "collected": collected, "paymentStatus": load.get("loading_fee_payment_status", "TIDAK_DITAGIH"), "payments": load.get("loading_fee_payments", [])})
+        item_groups = defaultdict(lambda: {"labor": 0.0, "daily": 0.0, "warehouse": 0.0, "total": 0.0, "chargeable": 0.0})
+        for item in load.get("items", []):
+            group = item.get("crewGroup") or _crew_group(item.get("stackCode") or item.get("location") or load.get("unit_loading"))
+            fee = item.get("loadingFee", {}) or {}
+            for key in ("labor", "daily", "warehouse", "total", "chargeable"):
+                item_groups[group][key] += float(fee.get(key, 0) or 0)
+        for group, group_cost in item_groups.items():
+            bucket = groups.setdefault(group, {"labor": 0.0, "daily": 0.0, "warehouse": 0.0, "total": 0.0, "chargeable": 0.0, "collected": 0.0})
+            for key in ("labor", "daily", "warehouse", "total", "chargeable"):
+                bucket[key] += group_cost[key]
+        rows.append({"id": load["id"], "antrian": load.get("antrian", ""), "ref": load.get("ref", ""), "documents": load.get("documents", []), "party": load.get("party", ""), "pengambil": load.get("pengambil", ""), "items": load.get("items", []), "cost": cost, "crewGroups": dict(item_groups), "collected": collected, "paymentStatus": load.get("loading_fee_payment_status", "TIDAK_DITAGIH"), "payments": load.get("loading_fee_payments", [])})
     settlements = await db.loading_cost_settlements.find({"date": target_date}, {"_id": 0}).to_list(20)
     settled = {row.get("recipient"): row for row in settlements}
-    return {"date": target_date, "loads": rows, "totals": {**totals, "outstanding": max(totals["chargeable"] - totals["collected"], 0)}, "settlements": settled}
+    return {"date": target_date, "loads": rows, "totals": {**totals, "outstanding": max(totals["chargeable"] - totals["collected"], 0)}, "groups": {name: {**values, "outstanding": max(values["chargeable"] - values["collected"], 0)} for name, values in groups.items()}, "settlements": settled}
 
 
 @router.post("/outbound-loads/{load_id}/loading-fee-payment")
@@ -531,7 +547,7 @@ async def edit_outbound_load(load_id: str, body: OutboundEditInput, user: dict =
             if not allocation or float(allocation.get("primaryQty", 0) or 0) + 1e-9 < qty:
                 raise HTTPException(status_code=400, detail=f"Stok {product.get('name', '')} pada {stack_code} tidak mencukupi")
         channel = normalize_channel(submitted.channel, normalize_channel(product.get("channel")))
-        revised_items.append({**previous, "documentNo": document_no, "qty": qty, "channel": channel, "berat": float(product.get("weight", 0) or 0) * qty, "loadingFee": _loading_fee(product, qty), "stackCode": stack_code})
+        revised_items.append({**previous, "documentNo": document_no, "qty": qty, "channel": channel, "berat": float(product.get("weight", 0) or 0) * qty, "loadingFee": _loading_fee(product, qty, charge_mode_override=(previous.get("loadingFee") or {}).get("mode", "")), "stackCode": stack_code, "crewGroup": _crew_group(stack_code or product.get("location", ""))})
 
     now = now_iso()
     old_snapshot = {"documents": load.get("documents", []), "polisi": load.get("polisi", ""), "pengambil": load.get("pengambil", ""), "items": original_items}
@@ -630,7 +646,8 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
     for original in load.get("items", []):
         item = dict(original)
         product_for_fee = await db.products.find_one({"id": item.get("productId")}, {"_id": 0}) or item
-        item["loadingFee"] = _loading_fee(product_for_fee, float(item.get("qty", 0) or 0), completed_local)
+        item["loadingFee"] = _loading_fee(product_for_fee, float(item.get("qty", 0) or 0), completed_local, charge_mode_override=(item.get("loadingFee") or {}).get("mode", ""))
+        item["crewGroup"] = item.get("crewGroup") or _crew_group(item.get("stackCode") or item.get("location") or load.get("unit_loading"))
         final_items.append(item)
     final_loading_cost = {key: sum(float(item.get("loadingFee", {}).get(key, 0) or 0) for item in final_items) for key in ("labor", "daily", "warehouse", "total", "chargeable")}
     stock_changes = []

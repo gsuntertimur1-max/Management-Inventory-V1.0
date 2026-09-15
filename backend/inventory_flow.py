@@ -2,6 +2,7 @@ import csv
 import io
 from openpyxl import load_workbook
 import random
+import re
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import List, Literal
@@ -63,6 +64,8 @@ class ReceiptInput(BaseModel):
     grossWeight: float = Field(default=0, ge=0)
     grossMin: float = Field(default=0, ge=0)
     grossMax: float = Field(default=0, ge=0)
+    # PENGIRIM ditagihkan pada pengirim; TERMAKSUK berarti sudah masuk harga/dokumen.
+    unloadingFeeChargeMode: Literal["", "PENGIRIM", "TERMASUK"] = ""
 
 
 def _number(value, default=0.0) -> float:
@@ -85,12 +88,12 @@ def _crew_group_from_location(location: str) -> str:
     text = str(location or "").upper()
     if "RTR" in text:
         return "GRUP 3 - RTR"
-    if "MP1" in text or any(f"UNIT {unit}" in text for unit in ("21", "22", "23", "24")):
+    if "MP1" in text or any(re.search(rf"(?:UNIT\\s*)?{unit}(?:/|\\b)", text) for unit in ("21", "22", "23", "24")):
         return "GRUP 2 - MP1/21-24"
     return "GRUP 1 - GBB 17-20"
 
 
-def _unloading_fee(product: dict, qty: float, at) -> dict:
+def _unloading_fee(product: dict, qty: float, at, charge_mode_override: str = "") -> dict:
     holiday = at.weekday() >= 5
     overtime = at.hour >= 16
     parts = {}
@@ -104,7 +107,7 @@ def _unloading_fee(product: dict, qty: float, at) -> dict:
             value += float(product.get(f"unloadingHolidayOvertime{suffix}", 0) or 0)
         parts[target] = value * qty
     total = sum(parts.values())
-    mode = str(product.get("unloadingFeeChargeMode") or "TIDAK_ADA").upper()
+    mode = str(charge_mode_override or product.get("unloadingFeeChargeMode") or "TIDAK_ADA").upper()
     return {**parts, "total": total, "mode": mode, "chargeable": total if mode == "PENGIRIM" else 0.0, "overtime": overtime, "holiday": holiday}
 
 
@@ -409,7 +412,7 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
                 "gross_max": float(body.grossMax) if body.weighingForm else 0,
                 "weighing_entries": _weighing_entries(float(body.grossWeight), float(body.grossMin), float(body.grossMax)) if body.weighingForm else [],
                 "unloading_group": _crew_group_from_location(item.stackCode or product.get("location", "")),
-                "unloading_cost": _unloading_fee(product, float(item.qty), op_now),
+                "unloading_cost": _unloading_fee(product, float(item.qty), op_now, body.unloadingFeeChargeMode),
             })
 
         if txns:

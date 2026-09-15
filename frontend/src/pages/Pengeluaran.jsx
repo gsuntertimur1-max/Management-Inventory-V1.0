@@ -15,6 +15,7 @@ const STATUS = {
   'Selesai': { c: '#22c55e', bg: 'rgba(34,197,94,.15)' },
   'Dibatalkan': { c: '#ef4444', bg: 'rgba(239,68,68,.14)' },
 };
+const COST_GROUPS = ['GRUP 1 - GBB 17-20', 'GRUP 2 - MP1/21-24', 'GRUP 3 - RTR'];
 
 const escapeHtml = (value) => String(value ?? '')
   .replaceAll('&', '&amp;')
@@ -206,12 +207,13 @@ const Pengeluaran = () => {
     setTimeout(() => w.print(), 450);
   };
 
-  const printDailyCost = (recipient) => {
+  const printDailyCost = (recipient, crewGroup = '') => {
     if (!costReport) return;
     const key = recipient === 'BURUH' ? 'labor' : 'daily';
     const title = recipient === 'BURUH' ? 'REKAP UPAH BURUH PEMUATAN' : 'REKAP UH GUDANG PEMUATAN';
     const grouped = {};
     (costReport.loads || []).forEach((load) => (load.items || []).forEach((item) => {
+      if (crewGroup && (item.crewGroup || 'GRUP 1 - GBB 17-20') !== crewGroup) return;
       const fee = item.loadingFee || {};
       const amount = Number(fee[key] || 0);
       if (!amount) return;
@@ -231,7 +233,7 @@ const Pengeluaran = () => {
     const overtimeTotal = Object.values(grouped).reduce((sum, item) => sum + item.overtime, 0);
     const w = window.open('', '_blank', 'width=420,height=760');
     if (!w) return toast.error('Izinkan popup untuk mencetak rekap thermal.');
-    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>@page{size:80mm auto;margin:3mm}*{box-sizing:border-box}body{width:74mm;margin:0 auto;color:#000;font:10px Arial}.center{text-align:center}.title{font-size:13px;font-weight:900;margin:4px 0}.sub{font-size:10px;margin-bottom:8px}table{width:100%;border-collapse:collapse;margin-top:7px}th,td{border-bottom:1px dashed #000;padding:5px 2px;text-align:left;vertical-align:top}.r{text-align:right}.total{font-size:14px;font-weight:900;margin:10px 0}.line{border-top:1px solid #000;margin-top:36px;padding-top:3px;text-align:center;font-size:9px}small{font-size:8px}</style></head><body><div class="center"><b>PERUM BULOG</b><div>Gudang Sunter Timur I & II</div><div class="title">${title}</div><div class="sub">Tanggal: ${escapeHtml(costReport.date)}</div></div><table><thead><tr><th>No</th><th>Komoditi / Kuantum</th><th class="r">Biaya</th></tr></thead><tbody>${rows || '<tr><td colspan="3">Tidak ada biaya</td></tr>'}</tbody></table>${overtimeTotal ? `<div>Lembur/hari libur tercatat: Rp ${escapeHtml(formatNum(overtimeTotal))}</div>` : ''}<div class="total">TOTAL: Rp ${escapeHtml(formatNum(total))}</div><div class="line">Petugas Gudang</div><div class="line">Penerima ${recipient === 'BURUH' ? 'Buruh' : 'UH Gudang'}</div></body></html>`);
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>@page{size:80mm auto;margin:3mm}*{box-sizing:border-box}body{width:74mm;margin:0 auto;color:#000;font:10px Arial}.center{text-align:center}.title{font-size:13px;font-weight:900;margin:4px 0}.sub{font-size:10px;margin-bottom:8px}table{width:100%;border-collapse:collapse;margin-top:7px}th,td{border-bottom:1px dashed #000;padding:5px 2px;text-align:left;vertical-align:top}.r{text-align:right}.total{font-size:14px;font-weight:900;margin:10px 0}.line{border-top:1px solid #000;margin-top:36px;padding-top:3px;text-align:center;font-size:9px}small{font-size:8px}</style></head><body><div class="center"><b>PERUM BULOG</b><div>Gudang Sunter Timur I & II</div><div class="title">${title}</div><div class="sub">${escapeHtml(crewGroup || 'SELURUH GRUP')}<br/>Tanggal: ${escapeHtml(costReport.date)}</div></div><table><thead><tr><th>No</th><th>Komoditi / Kuantum</th><th class="r">Biaya</th></tr></thead><tbody>${rows || '<tr><td colspan="3">Tidak ada biaya</td></tr>'}</tbody></table>${overtimeTotal ? `<div>Lembur/hari libur tercatat: Rp ${escapeHtml(formatNum(overtimeTotal))}</div>` : ''}<div class="total">TOTAL: Rp ${escapeHtml(formatNum(total))}</div><div class="line">Petugas Gudang</div><div class="line">Penerima ${recipient === 'BURUH' ? 'Buruh' : 'UH Gudang'}</div></body></html>`);
     w.document.close(); w.focus(); setTimeout(() => w.print(), 350);
   };
 
@@ -331,8 +333,8 @@ const Pengeluaran = () => {
 
       <div className="card-surface p-5 border border-[#294263]">
         <div className="flex flex-wrap items-start justify-between gap-3 mb-4"><div><div className="label-mono text-[10px] text-[#93c5fd]">Penutupan sore hari</div><h2 className="font-display text-xl font-bold mt-1">Biaya Pemuatan Harian</h2><p className="text-xs text-[#8b93a1] mt-1">Hanya pemuatan yang sudah selesai yang masuk rekap. Biaya tidak tampil di Surat Jalan atau Bon Muat.</p></div><div><label className="text-xs text-[#8b93a1] block mb-1">Tanggal</label><input type="date" value={costDate} onChange={(e) => setCostDate(e.target.value)} className="bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm" /></div></div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {[['BURUH', 'Upah Buruh', 'labor', '#22c55e'], ['HARIAN', 'Upah Harian Gudang', 'daily', '#60a5fa'], ['GUDANG', 'Dana Gudang', 'warehouse', '#f59e0b']].map(([recipient, label, key, color]) => <div key={recipient} className="rounded-xl border border-[#202a38] bg-[#0b0f17] p-4"><div className="text-xs text-[#8b93a1]">{label}</div><div className="font-mono text-2xl font-bold mt-1" style={{ color }}>Rp {formatNum(costReport?.totals?.[key] || 0)}</div>{recipient !== 'GUDANG' && <div className="mt-3 flex flex-wrap gap-2"><button onClick={() => printDailyCost(recipient)} className="text-xs px-3 py-2 rounded-lg border border-[#294263] text-[#93c5fd]"><Printer size={13} className="inline mr-1" />Cetak 80mm</button><button disabled={costBusy || Boolean(costReport?.settlements?.[recipient])} onClick={() => settleDailyCost(recipient)} className="text-xs px-3 py-2 rounded-lg border border-[#22c55e] text-[#4ade80] disabled:opacity-50">{costReport?.settlements?.[recipient] ? 'Lunas' : 'Tandai Lunas'}</button></div>}</div>)}
+        <div className="space-y-3">
+          {COST_GROUPS.map((group) => { const values = costReport?.groups?.[group] || {}; return <div key={group} className="rounded-xl border border-[#202a38] bg-[#0b0f17] p-4"><div className="font-semibold text-sm text-[#e7ebf2]">{group}</div><div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">{[['BURUH', 'Upah Buruh', 'labor', '#22c55e'], ['HARIAN', 'UH Gudang', 'daily', '#60a5fa'], ['GUDANG', 'Dana Gudang', 'warehouse', '#f59e0b']].map(([recipient, label, key, color]) => <div key={recipient} className="rounded-lg border border-[#202a38] p-3"><div className="text-xs text-[#8b93a1]">{label}</div><div className="font-mono text-lg font-bold mt-1" style={{ color }}>Rp {formatNum(values[key] || 0)}</div>{recipient !== 'GUDANG' && <button onClick={() => printDailyCost(recipient, group)} className="mt-2 text-xs px-2.5 py-1.5 rounded-lg border border-[#294263] text-[#93c5fd]"><Printer size={12} className="inline mr-1" />Cetak 80mm</button>}</div>)}</div></div>; })}
         </div>
         <div className="mt-3 text-xs text-[#8b93a1]">Tagihan pengambil: <span className="font-mono text-[#fbbf24]">Rp {formatNum(costReport?.totals?.chargeable || 0)}</span> · diterima: <span className="font-mono text-[#4ade80]">Rp {formatNum(costReport?.totals?.collected || 0)}</span> · belum dibayar: <span className="font-mono text-[#ef4444]">Rp {formatNum(costReport?.totals?.outstanding || 0)}</span></div>
       </div>

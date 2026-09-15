@@ -36,6 +36,7 @@ const CatatStok = () => {
   const [grossWeight, setGrossWeight] = useState('');
   const [grossMin, setGrossMin] = useState('');
   const [grossMax, setGrossMax] = useState('');
+  const [feeChargeMode, setFeeChargeMode] = useState('PENGAMBIL');
 
   const activePOs = useMemo(
     () => purchaseOrders.filter((po) => !['Selesai', 'Diterima', 'Dibatalkan', 'Diterima Sebagian · Sisa Dibatalkan'].includes(po.status)),
@@ -63,6 +64,7 @@ const CatatStok = () => {
     setGrossWeight('');
     setGrossMin('');
     setGrossMax('');
+    setFeeChargeMode(nextType === 'MASUK' ? 'PENGIRIM' : 'PENGAMBIL');
   };
 
   const chooseType = (nextType) => {
@@ -203,6 +205,7 @@ const CatatStok = () => {
           grossWeight: Number(grossWeight || 0),
           grossMin: Number(grossMin || 0),
           grossMax: Number(grossMax || 0),
+          unloadingFeeChargeMode: feeChargeMode,
         });
         const poStatus = result?.purchaseOrder?.status;
         toast.success(poStatus ? `Penerimaan tersimpan · Status PO: ${poStatus}` : 'Stok masuk tersimpan');
@@ -227,6 +230,7 @@ const CatatStok = () => {
           grossWeight: Number(grossWeight || 0),
           grossMin: Number(grossMin || 0),
           grossMax: Number(grossMax || 0),
+          loadingFeeChargeMode: feeChargeMode,
         });
         toast.success(`Antrian ${load.antrian} dibuat. Stok belum berkurang sampai pemuatan selesai.`);
         if (weighingForm) await downloadApiFile(`/export/weighing-form/outbound/${load.id}.pdf`, `form_timbangan_keluar_${load.antrian}.pdf`);
@@ -283,6 +287,14 @@ const CatatStok = () => {
           {['MEMO', 'ND'].includes(documentType) && <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-lg border border-[#1f3657] bg-[#0d1728] p-3"><div><label className="text-xs text-[#93c5fd] block mb-1">Keperluan {documentType}</label><select value={dispatchPurpose} onChange={(e) => { const purpose = e.target.value; const destination = purpose === 'BAZAR' ? 'Gudang Bazar' : purpose === 'ECOMMERCE' ? 'Gudang E-commerce' : ''; setDispatchPurpose(purpose); setConsignmentDestination(destination); setConsignmentZone(''); if (destination) setParty(destination); }} className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm"><option value="BAZAR">Gudang Bazar</option><option value="ECOMMERCE">Gudang E-commerce</option><option value="PEMINJAMAN">Peminjaman</option><option value="LAINNYA">Keperluan lain</option></select></div><div><label className="text-xs text-[#93c5fd] block mb-1">Zona Unit 18</label><select value={consignmentZone} onChange={(e) => setConsignmentZone(e.target.value)} disabled={!consignmentDestination} className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm disabled:opacity-50"><option value="">{consignmentDestination ? 'Pilih zona...' : 'Tidak diperlukan'}</option>{CONSIGNMENT_ZONES.map((zone) => <option key={zone}>{zone}</option>)}</select></div><p className="sm:col-span-2 text-[11px] text-[#8fb8ef]">{documentType} berdiri sendiri. Bila tujuannya Bazar/E-commerce, saldo dipisahkan sebagai stok Unit 18 dan kemudian dapat ditautkan ke SO atau Retur.</p></div>}
             </div>
           )}
+
+          <div className="mb-5 rounded-xl border border-[#294263] bg-[#0d1728] p-4">
+            <div className="text-sm font-semibold">Penagihan biaya {type === 'MASUK' ? 'bongkar' : 'muat'}</div>
+            <p className="text-xs text-[#8fb8ef] mt-1">Pilih apakah biaya operasional ditagihkan terpisah, atau sudah termasuk pada harga/dokumen.</p>
+            <select value={feeChargeMode} onChange={(e) => setFeeChargeMode(e.target.value)} className="w-full mt-3 bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm">
+              {type === 'MASUK' ? <><option value="PENGIRIM">Ditagihkan kepada pengirim</option><option value="TERMASUK">Tidak ditagihkan — sudah termasuk biaya dokumen</option></> : <><option value="PENGAMBIL">Ditagihkan kepada pengambil</option><option value="TERMASUK">Tidak ditagihkan — sudah termasuk biaya SO</option></>}
+            </select>
+          </div>
 
           <div className="mb-5 rounded-xl border border-[#294263] bg-[#0d1728] p-4">
             <label className="flex items-center gap-3 cursor-pointer"><input type="checkbox" checked={weighingForm} onChange={(e) => setWeighingForm(e.target.checked)} className="h-4 w-4 accent-[#2563eb]" /><span><span className="text-sm font-semibold">Buat form timbangan</span><span className="block text-xs text-[#8fb8ef] mt-0.5">Opsional. Sistem mengisi 20 baris bruto dari satu nilai awal.</span></span></label>
