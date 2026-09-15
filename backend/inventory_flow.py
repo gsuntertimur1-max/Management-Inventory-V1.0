@@ -39,6 +39,10 @@ class PurchaseOrderInput(BaseModel):
     date: str = ""
 
 
+class PurchaseOrderCancelInput(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+
+
 class ReceiptItemInput(BaseModel):
     productId: str
     qty: float = Field(gt=0)
@@ -139,6 +143,9 @@ def _weighing_entries(average: float, minimum: float, maximum: float) -> list[di
 def _po_status(items: list[dict]) -> str:
     ordered = sum(float(item.get("qty", 0) or 0) for item in items)
     received = sum(float(item.get("receivedQty", item.get("received_qty", 0)) or 0) for item in items)
+    cancelled = sum(float(item.get("cancelledQty", 0) or 0) for item in items)
+    if cancelled > 1e-9:
+        return "Dibatalkan" if received <= 1e-9 else "Diterima Sebagian · Sisa Dibatalkan"
     if ordered <= 0 or received <= 0:
         return "Belum Diterima"
     if received + 1e-9 < ordered:
@@ -259,6 +266,35 @@ async def create_purchase_order(body: PurchaseOrderInput, user: dict = Depends(r
     return doc
 
 
+@router.post("/purchase-orders-v2/{po_id}/cancel")
+async def cancel_purchase_order(po_id: str, body: PurchaseOrderCancelInput, user: dict = Depends(require_write)):
+    """Batalkan sisa PO yang belum diterima, tanpa mengubah penerimaan yang sudah tercatat."""
+    raw_po = await db.purchase_orders.find_one({"id": po_id}, {"_id": 0})
+    if not raw_po:
+        raise HTTPException(status_code=404, detail="Purchase Order tidak ditemukan")
+    po = await _hydrate_legacy_po(raw_po)
+    if po.get("status") == "Selesai":
+        raise HTTPException(status_code=400, detail="PO sudah selesai diterima dan tidak dapat dibatalkan")
+    if "Dibatalkan" in str(po.get("status", "")):
+        raise HTTPException(status_code=400, detail="Sisa PO sudah dibatalkan")
+
+    items = []
+    cancelled_total = 0.0
+    for item in po.get("items", []):
+        row = dict(item)
+        remaining = max(float(row.get("qty", 0) or 0) - float(row.get("receivedQty", 0) or 0), 0)
+        row["cancelledQty"] = remaining
+        cancelled_total += remaining
+        items.append(row)
+    if cancelled_total <= 1e-9:
+        raise HTTPException(status_code=400, detail="Tidak ada sisa PO yang dapat dibatalkan")
+
+    event = {"id": new_id(), "reason": body.reason.strip(), "cancelledAt": now_iso(), "cancelledBy": user.get("name", ""), "qty": cancelled_total}
+    updated = {**po, "items": items, "status": _po_status(items), "cancellation_history": list(po.get("cancellation_history") or []) + [event], "updated_at": now_iso()}
+    await db.purchase_orders.update_one({"id": po_id}, {"$set": {key: value for key, value in updated.items() if key != "id"}})
+    return updated
+
+
 @router.post("/receipts")
 async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write)):
     if body.weighingForm and (body.grossWeight <= 0 or body.grossMin <= 0 or body.grossMax <= 0):
@@ -271,8 +307,8 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
         if not raw_po:
             raise HTTPException(status_code=404, detail="Purchase Order tidak ditemukan")
         po = await _hydrate_legacy_po(raw_po)
-        if po["status"] == "Selesai":
-            raise HTTPException(status_code=400, detail="PO sudah selesai diterima")
+        if po["status"] == "Selesai" or "Dibatalkan" in str(po.get("status", "")):
+            raise HTTPException(status_code=400, detail="PO sudah selesai atau sisa penerimaannya telah dibatalkan")
 
     products = []
     requested_by_product = defaultdict(float)
