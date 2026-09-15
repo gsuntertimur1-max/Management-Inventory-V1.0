@@ -213,6 +213,21 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         raise HTTPException(status_code=400, detail="Stok Gudang Bazar/E-commerce harus dicatat menggunakan Memo atau ND")
     if body.consignmentDestination and body.consignmentDestination not in {"Gudang Bazar", "Gudang E-commerce"}:
         raise HTTPException(status_code=400, detail="Tujuan konsinyasi tidak valid")
+    # Setiap baris komoditas harus memiliki asal dokumen yang jelas.
+    # Untuk satu dokumen, sistem boleh mengisinya otomatis; untuk multi-dokumen wajib dipilih per baris.
+    item_document_refs = [str(item.documentNo or "").strip() for item in body.items]
+    if len(refs) > 1:
+        if any(not item_ref for item_ref in item_document_refs):
+            raise HTTPException(status_code=400, detail="Pilih nomor dokumen pada setiap komoditas untuk pemuatan multi-dokumen")
+        unknown_refs = sorted({item_ref for item_ref in item_document_refs if item_ref not in refs})
+        if unknown_refs:
+            raise HTTPException(status_code=400, detail=f"Dokumen komoditas belum didaftarkan: {', '.join(unknown_refs)}")
+        unassigned_refs = [ref for ref in refs if ref not in item_document_refs]
+        if unassigned_refs:
+            raise HTTPException(status_code=400, detail=f"Dokumen belum memiliki komoditas: {', '.join(unassigned_refs)}")
+    elif any(item_ref and item_ref not in refs for item_ref in item_document_refs):
+        raise HTTPException(status_code=400, detail="Dokumen komoditas belum didaftarkan")
+
     for ref in refs:
         if await db.outbound_loads.find_one({"$or": [{"ref": ref}, {"documents": ref}, {"document_links.no": ref}]}):
             raise HTTPException(status_code=409, detail=f"Nomor dokumen {ref} sudah digunakan")
