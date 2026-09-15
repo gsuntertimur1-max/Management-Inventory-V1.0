@@ -19,7 +19,7 @@ const NAV_GROUPS = [
   {
     label: 'Operasional', icon: Workflow, items: [
       { to: '/catat', label: 'Catat Stok', icon: ArrowLeftRight, permission: 'operations' },
-      { to: '/pengeluaran', label: 'Pengeluaran', icon: Send, permission: 'outbound' },
+      { to: '/pengeluaran', label: 'Pengeluaran', icon: Send, permission: 'outboundPage' },
       { to: '/antrian', label: 'Layar Antrian', icon: MonitorSmartphone },
     ],
   },

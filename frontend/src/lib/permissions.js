@@ -45,6 +45,9 @@ export const hasPermission = (role, permission) => {
   if (permission === 'operations') {
     return hasPermission(canonical, 'inbound') || hasPermission(canonical, 'outbound');
   }
+  if (permission === 'outboundPage') {
+    return hasPermission(canonical, 'outbound') || hasPermission(canonical, 'costView');
+  }
   // Current Railway branch exposes only master, inbound, outbound, and loading
   // write endpoints. Keep this separate from the future rebagging permission.
   if (permission === 'currentWrite') {
