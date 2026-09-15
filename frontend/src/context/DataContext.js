@@ -154,6 +154,8 @@ export const DataProvider = ({ children }) => {
   const settleOutboundDocument = async (id, payload) => { const { data } = await api.post(`/outbound-loads/${id}/settle`, payload); await fetchAll(); return data; };
 
   const updateSJStatus = async (id, status) => { await api.put(`/surat-jalan/${id}/status`, { status }); await fetchAll(); };
+  const cancelOutboundLoad = async (id, payload) => { const { data } = await api.post(`/outbound-loads/${id}/cancel`, payload); await fetchAll(); return data; };
+  const cancelPurchaseOrder = async (id, payload) => { const { data } = await api.post(`/purchase-orders-v2/${id}/cancel`, payload); await fetchAll(); return data; };
 
   const addSupplier = async (sup) => {
     const { data } = await api.post('/suppliers', sup);
@@ -221,7 +223,7 @@ export const DataProvider = ({ children }) => {
       theme, setTheme,
       login, logout, ...state, fetchAll,
       addProduct, updateProduct, deleteProduct, addTransaction, addReceipt,
-      createOutboundLoad, refreshOutboundLoads, startOutboundLoad, completeOutboundLoad, createConsignmentReturn, settleOutboundDocument, updateSJStatus,
+      createOutboundLoad, refreshOutboundLoads, startOutboundLoad, completeOutboundLoad, createConsignmentReturn, settleOutboundDocument, updateSJStatus, cancelOutboundLoad, cancelPurchaseOrder,
       addSupplier, addPO, addUser, updateUser, deleteUser, changeUserPassword, updateSettings, resetData, importCsv,
       addStackAllocation, updateStackAllocation, deleteStackAllocation,
       addStackTreatment,
