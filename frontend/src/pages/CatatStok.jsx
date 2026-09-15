@@ -13,7 +13,7 @@ const CONSIGNMENT_ZONES = ['18/A01', '18/A02', '18/A03', '18/A04', '18/B01 (½)'
 const emptyRow = () => ({ productId: '', inputMode: 'QTY', inputValue: 1, qty: 1, exp: '', stackCode: '', documentNo: '', channel: '' });
 
 const CatatStok = () => {
-  const { products, suppliers, purchaseOrders, settings, addReceipt, createOutboundLoad, canInbound, canOutbound } = useData();
+  const { products, suppliers, purchaseOrders, settings, stackAllocations, addReceipt, createOutboundLoad, canInbound, canOutbound } = useData();
   const STACKS = stackCodes(settings?.warehouses);
   const navigate = useNavigate();
   const [type, setType] = useState(canOutbound ? 'KELUAR' : 'MASUK');
@@ -115,6 +115,9 @@ const CatatStok = () => {
   const totalNilai = chosen.reduce((a, row) => a + (row.product.cost || 0) * Number(row.qty || 0), 0);
   const outboundDocumentRefs = documentRefs.map((item) => item.trim()).filter(Boolean);
   const isMultiDocumentOutbound = type === 'KELUAR' && outboundDocumentRefs.length > 1;
+  const availableStacksFor = (productId) => (stackAllocations || [])
+    .filter((allocation) => allocation.productId === productId && Number(allocation.primaryQty || 0) > 0)
+    .sort((a, b) => String(a.stackCode || '').localeCompare(String(b.stackCode || '')));
 
   const remainingFor = (productId) => {
     if (!selectedPO) return null;
@@ -291,6 +294,7 @@ const CatatStok = () => {
             {rows.map((row, index) => {
               const product = products.find((item) => item.id === row.productId);
               const remaining = remainingFor(row.productId);
+              const availableStacks = type === 'KELUAR' ? availableStacksFor(row.productId) : [];
               return (
                 <div key={index} className={`grid gap-2 items-end p-3 rounded-lg border border-[#1a222e] bg-[#0b0f17] ${type === 'MASUK' ? 'grid-cols-1 md:grid-cols-[minmax(190px,1fr)_105px_145px_175px_52px]' : 'grid-cols-1 md:grid-cols-[minmax(170px,1fr)_100px_135px_150px_140px_52px]'}`}>
                   <div>
@@ -316,7 +320,7 @@ const CatatStok = () => {
                   {type === 'MASUK' && (
                     <div><label className="text-[10px] text-[#6b7688] mb-1 flex items-center gap-1"><CalendarDays size={11} /> Kedaluwarsa / Lokasi</label><input type="date" value={row.exp || ''} onChange={(e) => setRow(index, { exp: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm" /><select value={row.stackCode || product?.location || ''} onChange={(e) => setRow(index, { stackCode: e.target.value })} className="w-full mt-1 bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2 text-xs"><option value="">Pilih lokasi...</option>{STACKS.map((code) => <option key={code}>{code}</option>)}</select></div>
                   )}
-                  {type === 'KELUAR' && <><div><label className="text-[10px] text-[#6b7688] mb-1 block">Dokumen sumber</label><select value={isMultiDocumentOutbound ? row.documentNo : (row.documentNo || outboundDocumentRefs[0] || '')} disabled={!isMultiDocumentOutbound && outboundDocumentRefs.length === 1} onChange={(e) => setRow(index, { documentNo: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2.5 text-xs disabled:opacity-70"><option value="">{isMultiDocumentOutbound ? 'Pilih dokumen...' : 'Isi nomor dokumen dulu'}</option>{outboundDocumentRefs.map((doc) => <option key={doc}>{doc}</option>)}</select></div><div><label className="text-[10px] text-[#6b7688] mb-1 block">Tumpukan asal</label><select value={row.stackCode || ''} onChange={(e) => setRow(index, { stackCode: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2.5 text-xs"><option value="">Otomatis / belum dipilih</option>{STACKS.map((code) => <option key={code}>{code}</option>)}</select></div></>}
+                  {type === 'KELUAR' && <><div><label className="text-[10px] text-[#6b7688] mb-1 block">Dokumen sumber</label><select value={isMultiDocumentOutbound ? row.documentNo : (row.documentNo || outboundDocumentRefs[0] || '')} disabled={!isMultiDocumentOutbound && outboundDocumentRefs.length === 1} onChange={(e) => setRow(index, { documentNo: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2.5 text-xs disabled:opacity-70"><option value="">{isMultiDocumentOutbound ? 'Pilih dokumen...' : 'Isi nomor dokumen dulu'}</option>{outboundDocumentRefs.map((doc) => <option key={doc}>{doc}</option>)}</select></div><div><label className="text-[10px] text-[#6b7688] mb-1 block">Tumpukan asal · stok tersedia</label><select value={row.stackCode || ''} onChange={(e) => setRow(index, { stackCode: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2.5 text-xs"><option value="">Otomatis (pilih dari stok tersedia)</option>{availableStacks.map((allocation) => { const secondaryQty = Number(allocation.secondaryQty || 0); const qty = Number(allocation.primaryQty || 0); const secondary = secondaryQty > 0 ? Math.floor(qty / secondaryQty) : 0; const remainder = secondaryQty > 0 ? qty - (secondary * secondaryQty) : 0; const packaging = secondaryQty > 0 ? ` · ${formatNum(secondary)} ${allocation.secondary || 'sekunder'}${remainder > 0 ? ` + ${formatNum(remainder)} ${allocation.unit || 'pcs'}` : ''}` : ''; return <option key={allocation.id} value={allocation.stackCode}>{allocation.stackCode} — sisa ${formatNum(qty)} ${allocation.unit || 'pcs'}${packaging}</option>; })}</select>{row.productId && availableStacks.length === 0 && <p className="text-[9px] text-[#fbbf24] mt-1">Belum ada alokasi tumpukan untuk produk ini; sistem akan menentukan otomatis.</p>}</div></>}
                   <button type="button" onClick={() => delRow(index)} disabled={rows.length === 1} className="w-10 h-[42px] rounded-lg border border-[#242f3d] flex items-center justify-center text-[#ef4444] disabled:opacity-30"><Trash2 size={15} /></button>
                 </div>
               );
