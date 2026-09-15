@@ -15,12 +15,14 @@ const STATUS = {
   'Menunggu': '#eab308',
   'Dikirim': '#3b82f6',
   'Diterima': '#22c55e',
+  'Dibatalkan': '#ef4444',
+  'Diterima Sebagian · Sisa Dibatalkan': '#f97316',
 };
 
 const newRow = () => ({ productId: '', inputMode: 'QTY', inputValue: 1, qty: 1 });
 
 const PurchaseOrder = () => {
-  const { purchaseOrders, suppliers, products, addPO, canManageMasterData } = useData();
+  const { purchaseOrders, suppliers, products, addPO, cancelPurchaseOrder, canManageMasterData } = useData();
   const [modal, setModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ supplier: '', no: '', items: [newRow()] });
@@ -49,6 +51,18 @@ const PurchaseOrder = () => {
   })), [form.items, products]);
 
   const total = selectedItems.reduce((sum, item) => sum + (item.product?.cost || 0) * Number(item.qty || 0), 0);
+
+  const cancelRemaining = async (po) => {
+    const reason = window.prompt(`Alasan pembatalan sisa PO ${po.no}:`);
+    if (reason === null) return;
+    if (reason.trim().length < 3) return toast.error('Alasan pembatalan minimal 3 karakter');
+    try {
+      await cancelPurchaseOrder(po.id, { reason: reason.trim() });
+      toast.success(`Sisa PO ${po.no} dibatalkan dan riwayat tersimpan`);
+    } catch (e) {
+      toast.error(apiError(e));
+    }
+  };
 
   const save = async () => {
     if (!form.supplier) {
@@ -101,9 +115,9 @@ const PurchaseOrder = () => {
       <div className="card-surface p-6">
         <div className="overflow-x-auto">
           <table className="w-full text-sm tbl">
-            <thead><tr className="text-left border-b border-[#1a222e]">{['No. PO', 'Tanggal', 'Supplier', 'Barang Dipesan', 'Progres Penerimaan', 'Total Nilai', 'Status'].map((h) => <th key={h} className="py-2.5 pr-4 font-semibold whitespace-nowrap">{h}</th>)}</tr></thead>
+            <thead><tr className="text-left border-b border-[#1a222e]">{['No. PO', 'Tanggal', 'Supplier', 'Barang Dipesan', 'Progres Penerimaan', 'Total Nilai', 'Status', ...(canManageMasterData ? ['Aksi'] : [])].map((h) => <th key={h} className="py-2.5 pr-4 font-semibold whitespace-nowrap">{h}</th>)}</tr></thead>
             <tbody>
-              {purchaseOrders.length === 0 ? <tr><td colSpan={7} className="py-8 text-center text-[#6b7688]">Belum ada PO. Buat PO baru untuk mencatat rencana pengadaan.</td></tr> : purchaseOrders.map((po) => {
+              {purchaseOrders.length === 0 ? <tr><td colSpan={canManageMasterData ? 8 : 7} className="py-8 text-center text-[#6b7688]">Belum ada PO. Buat PO baru untuk mencatat rencana pengadaan.</td></tr> : purchaseOrders.map((po) => {
                 const ordered = (po.items || []).reduce((a, it) => a + Number(it.qty || 0), 0);
                 const received = (po.items || []).reduce((a, it) => a + Number(it.receivedQty || 0), 0);
                 const pct = ordered > 0 ? Math.min((received / ordered) * 100, 100) : 0;
@@ -118,7 +132,7 @@ const PurchaseOrder = () => {
                         <div key={i} className="mb-1.5 last:mb-0">
                           <div>{it.name} × <span className="font-mono">{formatNum(it.qty)} {it.unit || ''}</span></div>
                           {(packagingText(it.qty, it, formatNum) || Number(it.weight || 0) > 0) && <div className="text-[#7892b5]">{packagingText(it.qty, it, formatNum)}{packagingText(it.qty, it, formatNum) && Number(it.weight || 0) > 0 ? ' · ' : ''}{Number(it.weight || 0) > 0 ? `${formatNum(totalWeight(it.qty, it))} kg` : ''}</div>}
-                          <div className="text-[#6b7688]">Diterima {formatNum(it.receivedQty || 0)} · Sisa {formatNum(Math.max(Number(it.qty || 0) - Number(it.receivedQty || 0), 0))} {it.unit || ''}</div>
+                          <div className="text-[#6b7688]">Diterima {formatNum(it.receivedQty || 0)} · Sisa {formatNum(Math.max(Number(it.qty || 0) - Number(it.receivedQty || 0) - Number(it.cancelledQty || 0), 0))} {it.unit || ''}{Number(it.cancelledQty || 0) > 0 ? ` · Dibatalkan ${formatNum(it.cancelledQty)}` : ''}</div>
                         </div>
                       ))}
                     </td>
@@ -129,6 +143,7 @@ const PurchaseOrder = () => {
                     </td>
                     <td className="py-3 pr-4 font-mono whitespace-nowrap">{formatRp(po.total)}</td>
                     <td className="py-3 pr-4"><span className="text-xs px-2.5 py-1 rounded-full font-medium whitespace-nowrap" style={{ background: `${color}22`, color }}>{po.status}</span></td>
+                    {canManageMasterData && <td className="py-3 pr-4">{!['Selesai', 'Dibatalkan', 'Diterima Sebagian · Sisa Dibatalkan'].includes(po.status) && <button onClick={() => cancelRemaining(po)} className="text-xs px-3 py-2 rounded-lg border border-[#ef4444] text-[#f87171] hover:bg-[#ef4444]/10">Batalkan Sisa</button>}</td>}
                   </tr>
                 );
               })}
