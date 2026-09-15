@@ -38,7 +38,7 @@ const CatatStok = () => {
   const [grossMax, setGrossMax] = useState('');
 
   const activePOs = useMemo(
-    () => purchaseOrders.filter((po) => po.status !== 'Selesai' && po.status !== 'Diterima'),
+    () => purchaseOrders.filter((po) => !['Selesai', 'Diterima', 'Dibatalkan', 'Diterima Sebagian · Sisa Dibatalkan'].includes(po.status)),
     [purchaseOrders],
   );
   const selectedPO = purchaseOrders.find((po) => po.id === poId);
