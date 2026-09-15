@@ -134,6 +134,13 @@ class ConsignmentReturnInput(BaseModel):
     returnType: Literal["CR", "RETUR"] = "CR"
 
 
+class SalesReturnInput(BaseModel):
+    documentNo: str
+    sourceDocumentNo: str
+    items: List[ReturnItemInput] = Field(min_length=1)
+    note: str = ""
+
+
 class SettlementItemInput(BaseModel):
     productId: str
     qty: float = Field(gt=0)
@@ -855,6 +862,85 @@ async def create_consignment_return(load_id: str, body: ConsignmentReturnInput, 
     except Exception:
         for product_id, field, qty in reversed(stock_changes):
             await db.products.update_one({"id": product_id}, {"$inc": {field: -qty}})
+        raise
+
+
+def _sales_returned_qty(load: dict, product_id: str, source_document_no: str) -> float:
+    total = 0.0
+    for link in load.get("document_links", []):
+        if link.get("type") != "SO_RETUR" or link.get("sourceDocumentNo") != source_document_no:
+            continue
+        for item in link.get("items", []):
+            if item.get("productId") == product_id:
+                total += float(item.get("goodQty", 0) or 0) + float(item.get("damagedQty", 0) or 0)
+    return total
+
+
+@router.post("/outbound-loads/{load_id}/sales-return")
+async def create_sales_return(load_id: str, body: SalesReturnInput, user: dict = Depends(require_write)):
+    """Retur terhadap SO yang sudah selesai; SO asal tidak diubah atau dihapus."""
+    load = await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
+    if not load or load.get("document_type") != "SO" or load.get("status") != "Selesai":
+        raise HTTPException(status_code=400, detail="Retur SO hanya dapat dibuat dari SO yang sudah selesai dimuat")
+
+    source_no = body.sourceDocumentNo.strip()
+    documents = list(load.get("documents") or [load.get("ref", "")])
+    if source_no not in documents:
+        raise HTTPException(status_code=400, detail="Nomor SO asal tidak terdapat pada pengeluaran ini")
+    return_no = body.documentNo.strip()
+    if not return_no.upper().startswith(("RT", "RET", "RM")):
+        raise HTTPException(status_code=400, detail="Nomor retur harus diawali RT, RET, atau RM")
+    if await db.outbound_loads.find_one({"$or": [{"ref": return_no}, {"document_links.no": return_no}]}):
+        raise HTTPException(status_code=409, detail="Nomor retur sudah digunakan")
+    if len({item.productId for item in body.items}) != len(body.items):
+        raise HTTPException(status_code=400, detail="Produk retur tidak boleh dicatat lebih dari satu baris")
+
+    original = {}
+    for item in load.get("items", []):
+        if (item.get("documentNo") or load.get("ref", "")) != source_no:
+            continue
+        product_id = item.get("productId")
+        original[product_id] = {**item, "qty": float(original.get(product_id, {}).get("qty", 0) or 0) + float(item.get("qty", 0) or 0)}
+
+    link_items, reversals = [], []
+    try:
+        for item in body.items:
+            source = original.get(item.productId)
+            if not source:
+                raise HTTPException(status_code=400, detail="Produk retur tidak terdapat pada SO yang dipilih")
+            good_qty = float(item.goodQty or 0)
+            damaged_qty = float(item.damagedQty or 0)
+            qty = good_qty + damaged_qty
+            if qty <= 0:
+                continue
+            if qty > float(source.get("qty", 0) or 0) - _sales_returned_qty(load, item.productId, source_no) + 1e-9:
+                raise HTTPException(status_code=400, detail=f"Jumlah retur {source.get('name', '')} melebihi kuantum SO yang belum diretur")
+            product = await db.products.find_one({"id": item.productId}, {"_id": 0})
+            if not product:
+                raise HTTPException(status_code=404, detail="Produk retur tidak ditemukan")
+            channel = normalize_channel(source.get("channel"), normalize_channel(product.get("channel")))
+            await ensure_channel_stock(product)
+            if good_qty:
+                stack_code = item.stackCode.strip().upper()
+                if stack_code not in await valid_stack_codes():
+                    raise HTTPException(status_code=400, detail=f"Pilih satu tumpukan tujuan untuk barang baik {source.get('name', '')}")
+                await db.products.update_one({"id": item.productId}, {"$inc": {"stock": good_qty, f"channelStock.{channel}.stock": good_qty}})
+                reversals.append((item.productId, "stock", good_qty, channel))
+                await allocate_stock_to_stack(product, stack_code, good_qty, user.get("name", ""))
+            if damaged_qty:
+                await db.products.update_one({"id": item.productId}, {"$inc": {"damaged": damaged_qty, f"channelStock.{channel}.damaged": damaged_qty}})
+                reversals.append((item.productId, "damaged", damaged_qty, channel))
+            link_items.append({"productId": item.productId, "name": source.get("name", ""), "unit": source.get("unit", ""), "channel": channel, "goodQty": good_qty, "damagedQty": damaged_qty, "stackCode": item.stackCode.strip().upper() if good_qty else ""})
+        if not link_items:
+            raise HTTPException(status_code=400, detail="Isi jumlah barang yang diretur")
+
+        link = {"id": new_id(), "type": "SO_RETUR", "no": return_no, "sourceDocumentNo": source_no, "time": now_iso(), "items": link_items, "note": body.note.strip(), "operator": user.get("name", "")}
+        await db.outbound_loads.update_one({"id": load_id}, {"$push": {"document_links": link}, "$set": {"document_status": "Retur SO Tercatat"}})
+        await db.transactions.insert_many([{"id": new_id(), "load_id": load_id, "time": link["time"], "ref": return_no, "type": "MASUK", "kondisi": "RETUR_SO", "document_type": "SO_RETUR", "parent_document": source_no, "product": item["name"], "change": item["goodQty"] + item["damagedQty"], "good_change": item["goodQty"], "damaged_change": item["damagedQty"], "unit": item["unit"], "channel": item["channel"], "penerima": load.get("party", ""), "operator": user.get("name", ""), "keterangan": body.note.strip()} for item in link_items])
+        return link
+    except Exception:
+        for product_id, field, qty, channel in reversed(reversals):
+            await db.products.update_one({"id": product_id}, {"$inc": {field: -qty, f"channelStock.{channel}.{field}": -qty}})
         raise
 
 
