@@ -16,6 +16,7 @@ from backend.server import (
     now_iso,
     operational_now,
     require_write,
+    require_admin,
     ensure_channel_stock,
     normalize_channel,
     channel_balance,
@@ -72,6 +73,13 @@ class LoadingFeePaymentInput(BaseModel):
 class DocumentCancelInput(BaseModel):
     documentNo: str = ""
     reason: str = Field(min_length=3, max_length=500)
+
+
+class OutboundEditInput(BaseModel):
+    items: List[OutboundItemInput] = Field(min_length=1)
+    documents: List[str] = Field(min_length=1, max_length=20)
+    polisi: str = ""
+    pengambil: str = ""
 
 
 class DailyLoadingSettlementInput(BaseModel):
@@ -435,6 +443,101 @@ async def settle_loading_cost(date: str, body: DailyLoadingSettlementInput, user
     doc = {"date": date, "recipient": body.recipient, "amount": amount, "settledAt": now_iso(), "settledBy": user.get("name", ""), "note": body.note.strip()}
     await db.loading_cost_settlements.update_one({"date": date, "recipient": body.recipient}, {"$set": doc}, upsert=True)
     return doc
+
+
+@router.put("/outbound-loads/{load_id}/edit")
+async def edit_outbound_load(load_id: str, body: OutboundEditInput, user: dict = Depends(require_admin)):
+    """Koreksi dokumen, kendaraan, sopir, dan kuantum sebelum pemuatan dimulai."""
+    load = await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
+    if not load:
+        raise HTTPException(status_code=404, detail="Data pemuatan tidak ditemukan")
+    if load.get("status") != "Menunggu":
+        raise HTTPException(status_code=400, detail="Pengeluaran hanya dapat diedit saat masih menunggu pemuatan")
+
+    documents = []
+    for value in body.documents:
+        value = str(value or "").strip()
+        if value and value not in documents:
+            documents.append(value)
+    if len(documents) != len(body.documents):
+        raise HTTPException(status_code=400, detail="Nomor dokumen wajib diisi dan tidak boleh duplikat")
+    expected = {"SO": "SO/", "TM": "TM", "CT": "CT", "ND": "ND", "MEMO": "MEMO"}[load.get("document_type", "SO")]
+    if any(not number.upper().startswith(expected) for number in documents):
+        raise HTTPException(status_code=400, detail=f"Nomor dokumen tidak sesuai jenis {load.get('document_type', 'SO')}")
+
+    original_items = list(load.get("items") or [])
+    if len(body.items) != len(original_items) or [item.productId for item in body.items] != [item.get("productId") for item in original_items]:
+        raise HTTPException(status_code=400, detail="Edit hanya dapat mengubah kuantum dan nomor dokumen pada baris komoditas yang sama")
+
+    item_refs = [str(item.documentNo or "").strip() for item in body.items]
+    if len(documents) > 1:
+        if any(not item_ref for item_ref in item_refs):
+            raise HTTPException(status_code=400, detail="Pilih nomor dokumen pada setiap komoditas")
+        if any(item_ref not in documents for item_ref in item_refs):
+            raise HTTPException(status_code=400, detail="Dokumen komoditas belum didaftarkan")
+        missing = [number for number in documents if number not in item_refs]
+        if missing:
+            raise HTTPException(status_code=400, detail=f"Dokumen belum memiliki komoditas: {', '.join(missing)}")
+    elif any(item_ref and item_ref not in documents for item_ref in item_refs):
+        raise HTTPException(status_code=400, detail="Dokumen komoditas belum didaftarkan")
+
+    for number in documents:
+        duplicate = await db.outbound_loads.find_one({"id": {"$ne": load_id}, "$or": [{"ref": number}, {"documents": number}, {"document_links.no": number}]}, {"_id": 1})
+        if duplicate:
+            raise HTTPException(status_code=409, detail=f"Nomor dokumen {number} sudah digunakan")
+
+    requested = defaultdict(float)
+    channel_requested = defaultdict(float)
+    for item in body.items:
+        requested[item.productId] += float(item.qty)
+    products = {}
+    field = "damaged" if load.get("kondisi") == "RUSAK" else "stock"
+    for product_id, qty in requested.items():
+        product = await db.products.find_one({"id": product_id}, {"_id": 0})
+        if not product:
+            raise HTTPException(status_code=404, detail="Produk pengeluaran tidak ditemukan")
+        _validate_pack_qty(product, qty)
+        available = max(float(product.get(field, 0) or 0) - await _reserved_qty(product_id, load.get("kondisi", "BAIK"), exclude_id=load_id), 0)
+        if qty > available + 1e-9:
+            raise HTTPException(status_code=400, detail=f"Stok tersedia untuk {product.get('name', 'produk')} tidak mencukupi")
+        products[product_id] = product
+
+    for item in body.items:
+        channel = normalize_channel(item.channel, normalize_channel(products[item.productId].get("channel")))
+        channel_requested[(item.productId, channel)] += float(item.qty)
+    for (product_id, channel), qty in channel_requested.items():
+        product = products[product_id]
+        await ensure_channel_stock(product)
+        available = max(channel_balance(product, channel, field) - await _reserved_qty(product_id, load.get("kondisi", "BAIK"), exclude_id=load_id, channel=channel), 0)
+        if qty > available + 1e-9:
+            raise HTTPException(status_code=400, detail=f"Stok {channel} untuk {product.get('name', 'produk')} tidak mencukupi")
+
+    revised_items = []
+    for index, submitted in enumerate(body.items):
+        previous = dict(original_items[index])
+        product = products[submitted.productId]
+        qty = float(submitted.qty)
+        document_no = str(submitted.documentNo or "").strip() or documents[0]
+        stack_code = str(submitted.stackCode or previous.get("stackCode") or "").strip().upper()
+        if stack_code:
+            allocation = await db.stack_allocations.find_one({"productId": submitted.productId, "stackCode": stack_code}, {"_id": 0, "primaryQty": 1})
+            if not allocation or float(allocation.get("primaryQty", 0) or 0) + 1e-9 < qty:
+                raise HTTPException(status_code=400, detail=f"Stok {product.get('name', '')} pada {stack_code} tidak mencukupi")
+        channel = normalize_channel(submitted.channel, normalize_channel(product.get("channel")))
+        revised_items.append({**previous, "documentNo": document_no, "qty": qty, "channel": channel, "berat": float(product.get("weight", 0) or 0) * qty, "loadingFee": _loading_fee(product, qty), "stackCode": stack_code})
+
+    now = now_iso()
+    old_snapshot = {"documents": load.get("documents", []), "polisi": load.get("polisi", ""), "pengambil": load.get("pengambil", ""), "items": original_items}
+    loading_cost = {key: sum(float(item.get("loadingFee", {}).get(key, 0) or 0) for item in revised_items) for key in ("labor", "daily", "warehouse", "total", "chargeable")}
+    changes = {
+        "documents": documents, "ref": documents[0], "polisi": body.polisi.strip(), "pengambil": body.pengambil.strip(),
+        "items": revised_items, "total_unit": sum(float(item.get("qty", 0) or 0) for item in revised_items),
+        "total_berat": sum(float(item.get("berat", 0) or 0) for item in revised_items), "loading_cost": loading_cost,
+        "edit_history": list(load.get("edit_history") or []) + [{"time": now, "by": user.get("name", ""), "before": old_snapshot}],
+        "updated_at": now,
+    }
+    await db.outbound_loads.update_one({"id": load_id}, {"$set": changes})
+    return await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
 
 
 @router.post("/outbound-loads/{load_id}/cancel")
