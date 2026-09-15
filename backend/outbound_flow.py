@@ -69,6 +69,11 @@ class LoadingFeePaymentInput(BaseModel):
     note: str = ""
 
 
+class DocumentCancelInput(BaseModel):
+    documentNo: str = ""
+    reason: str = Field(min_length=3, max_length=500)
+
+
 class DailyLoadingSettlementInput(BaseModel):
     recipient: Literal["BURUH", "HARIAN"]
     note: str = ""
@@ -432,11 +437,54 @@ async def settle_loading_cost(date: str, body: DailyLoadingSettlementInput, user
     return doc
 
 
+@router.post("/outbound-loads/{load_id}/cancel")
+async def cancel_outbound_load(load_id: str, body: DocumentCancelInput, user: dict = Depends(require_write)):
+    """Batalkan dokumen yang belum dimuat tanpa menghapus jejak antrian."""
+    load = await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
+    if not load:
+        raise HTTPException(status_code=404, detail="Data pemuatan tidak ditemukan")
+    if load.get("status") != "Menunggu":
+        raise HTTPException(status_code=400, detail="Hanya dokumen yang masih menunggu pemuatan dapat dibatalkan. Dokumen selesai harus dikoreksi melalui Retur atau dokumen balik.")
+
+    documents = list(load.get("documents") or [load.get("ref", "")])
+    requested = body.documentNo.strip()
+    targets = documents if not requested or requested.upper() == "SEMUA" else [requested]
+    unknown = [number for number in targets if number not in documents]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Dokumen tidak ditemukan pada antrian ini: {', '.join(unknown)}")
+
+    previous_ref = load.get("ref", "")
+    cancelled_items = [item for item in load.get("items", []) if (item.get("documentNo") or previous_ref) in targets]
+    retained_items = [item for item in load.get("items", []) if (item.get("documentNo") or previous_ref) not in targets]
+    if not cancelled_items:
+        raise HTTPException(status_code=400, detail="Tidak ada komoditas yang dapat dibatalkan untuk dokumen tersebut")
+
+    remaining_documents = [number for number in documents if number not in targets]
+    event = {
+        "id": new_id(), "documents": targets, "items": cancelled_items,
+        "reason": body.reason.strip(), "cancelledAt": now_iso(), "cancelledBy": user.get("name", ""),
+    }
+    history = list(load.get("cancellation_history") or []) + [event]
+    changes = {
+        "items": retained_items, "documents": remaining_documents,
+        "ref": remaining_documents[0] if remaining_documents else previous_ref,
+        "cancellation_history": history,
+        "cancelled_documents": list(load.get("cancelled_documents") or []) + targets,
+        "document_status": "Dibatalkan Sebagian" if retained_items else "Dibatalkan",
+        "status": "Menunggu" if retained_items else "Dibatalkan",
+        "updated_at": now_iso(),
+    }
+    await db.outbound_loads.update_one({"id": load_id}, {"$set": changes})
+    return await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
+
+
 @router.post("/outbound-loads/{load_id}/start")
 async def start_outbound_load(load_id: str, user: dict = Depends(require_write)):
     load = await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
     if not load:
         raise HTTPException(status_code=404, detail="Data pemuatan tidak ditemukan")
+    if load.get("status") == "Dibatalkan":
+        raise HTTPException(status_code=400, detail="Pemuatan sudah dibatalkan")
     if load.get("status") == "Selesai":
         raise HTTPException(status_code=400, detail="Pemuatan sudah selesai")
     if load.get("status") == "Sedang Dimuat":
