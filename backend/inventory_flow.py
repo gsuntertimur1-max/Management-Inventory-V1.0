@@ -47,7 +47,11 @@ class PurchaseOrderCancelInput(BaseModel):
 
 class ReceiptItemInput(BaseModel):
     productId: str
-    qty: float = Field(gt=0)
+    # qty/kondisi is retained for older clients. New receipt forms send the
+    # two quantities in a single receiving transaction.
+    qty: float = Field(default=0, ge=0)
+    goodQty: float = Field(default=0, ge=0)
+    damagedQty: float = Field(default=0, ge=0)
     exp: str = ""
     stackCode: str = ""
     channel: str = ""
@@ -349,9 +353,23 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
         product = await db.products.find_one({"id": item.productId}, {"_id": 0})
         if not product:
             raise HTTPException(status_code=404, detail="Produk penerimaan tidak ditemukan")
-        _validate_pack_qty(product, float(item.qty))
-        products.append({**product, "_channel": normalize_channel(item.channel, normalize_channel(product.get("channel")))})
-        requested_by_product[item.productId] += float(item.qty)
+        good_qty = float(item.goodQty or 0)
+        damaged_qty = float(item.damagedQty or 0)
+        # Backward compatibility for the former one-condition receipt form.
+        if good_qty <= 0 and damaged_qty <= 0:
+            if body.kondisi == "RUSAK":
+                damaged_qty = float(item.qty or 0)
+            else:
+                good_qty = float(item.qty or 0)
+        total_qty = good_qty + damaged_qty
+        if total_qty <= 0:
+            raise HTTPException(status_code=400, detail="Jumlah baik atau rusak harus diisi")
+        if good_qty > 0:
+            _validate_pack_qty(product, good_qty)
+        if damaged_qty > 0:
+            _validate_pack_qty(product, damaged_qty)
+        products.append({**product, "_channel": normalize_channel(item.channel, normalize_channel(product.get("channel"))), "_good_qty": good_qty, "_damaged_qty": damaged_qty})
+        requested_by_product[item.productId] += total_qty
         _validate_exp(item.exp)
 
     party = (po.get("supplier") if po else body.party).strip() if (po or body.party) else ""
@@ -382,37 +400,40 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
 
     try:
         for item, product in zip(body.items, products):
-            field = "damaged" if body.kondisi == "RUSAK" else "stock"
             channel = product.get("_channel", normalize_channel(product.get("channel")))
             await ensure_channel_stock(product)
             exp = _validate_exp(item.exp)
             previous_exp = product.get("exp", "") or ""
-            update_doc = {"$inc": {field: float(item.qty), f"channelStock.{channel}.{field}": float(item.qty)}}
+            good_qty = float(product.get("_good_qty", 0) or 0)
+            damaged_qty = float(product.get("_damaged_qty", 0) or 0)
+            total_qty = good_qty + damaged_qty
+            increments = {}
+            if good_qty > 0:
+                increments.update({"stock": good_qty, f"channelStock.{channel}.stock": good_qty})
+            if damaged_qty > 0:
+                increments.update({"damaged": damaged_qty, f"channelStock.{channel}.damaged": damaged_qty})
+            update_doc = {"$inc": increments}
 
             # Di master produk hanya disimpan expired terdekat sebagai ringkasan.
             # Expired aktual tiap penerimaan tetap tersimpan pada transaksi.
-            if body.kondisi == "BAIK" and exp and (not previous_exp or exp < previous_exp):
+            if good_qty > 0 and exp and (not previous_exp or exp < previous_exp):
                 update_doc["$set"] = {"exp": exp}
 
             result = await db.products.update_one({"id": product["id"]}, update_doc)
             if result.matched_count == 0:
                 raise HTTPException(status_code=409, detail=f"Produk {product.get('name', '')} berubah. Muat ulang lalu coba lagi.")
 
-            stock_changes.append({
-                "productId": product["id"],
-                "field": field,
-                "qty": float(item.qty),
-                "previousExp": previous_exp,
-                "expChanged": bool(update_doc.get("$set")),
-                "channel": channel,
-            })
+            for field, qty in (("stock", good_qty), ("damaged", damaged_qty)):
+                if qty > 0:
+                    stock_changes.append({"productId": product["id"], "field": field, "qty": qty, "previousExp": previous_exp, "expChanged": bool(update_doc.get("$set")), "channel": channel})
 
             stack_code = item.stackCode.strip().upper()
-            if body.kondisi == "BAIK" and stack_code:
+            if good_qty > 0 and stack_code:
                 from backend.stack_allocations import allocate_stock_to_stack
-                await allocate_stock_to_stack(product, stack_code, float(item.qty), user.get("name", ""))
+                await allocate_stock_to_stack(product, stack_code, good_qty, user.get("name", ""))
 
-            txns.append({
+            def receipt_txn(kondisi: str, qty: float, loading_cost: dict, include_weighing: bool):
+                return {
                 "id": new_id(),
                 "operation_id": operation_id,
                 "time": time,
@@ -421,13 +442,15 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
                 "po_no": po.get("no", "") if po else "",
                 "antrian": "",
                 "type": "MASUK",
-                "kondisi": body.kondisi,
+                "kondisi": kondisi,
                 "product": product.get("name", ""),
                 "sku": product.get("sku", ""),
-                "change": float(item.qty),
+                "change": qty,
+                "good_change": qty if kondisi == "BAIK" else 0,
+                "damaged_change": qty if kondisi == "RUSAK" else 0,
                 "unit": product.get("unit", ""),
                 "weight": float(product.get("weight", 0) or 0),
-                "total_weight": float(product.get("weight", 0) or 0) * float(item.qty),
+                "total_weight": float(product.get("weight", 0) or 0) * qty,
                 "secondary": product.get("secondary", ""),
                 "secondaryQty": float(product.get("secondaryQty", 0) or 0),
                 "channel": channel,
@@ -436,14 +459,19 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
                 "polisi": body.polisi,
                 "operator": user.get("name", ""),
                 "keterangan": body.keterangan,
-                "weighing_form": body.weighingForm,
-                "gross_weight": float(body.grossWeight) if body.weighingForm else 0,
-                "gross_min": float(body.grossMin) if body.weighingForm else 0,
-                "gross_max": float(body.grossMax) if body.weighingForm else 0,
-                "weighing_entries": _weighing_entries(float(body.grossWeight), float(body.grossMin), float(body.grossMax)) if body.weighingForm else [],
+                "weighing_form": body.weighingForm and include_weighing,
+                "gross_weight": float(body.grossWeight) if body.weighingForm and include_weighing else 0,
+                "gross_min": float(body.grossMin) if body.weighingForm and include_weighing else 0,
+                "gross_max": float(body.grossMax) if body.weighingForm and include_weighing else 0,
+                "weighing_entries": _weighing_entries(float(body.grossWeight), float(body.grossMin), float(body.grossMax)) if body.weighingForm and include_weighing else [],
                 "unloading_group": _crew_group_from_location(item.stackCode or product.get("location", "")),
-                "unloading_cost": _unloading_fee(product, float(item.qty), op_now, body.unloadingFeeChargeMode),
-            })
+                "unloading_cost": loading_cost,
+            }
+
+            if good_qty > 0:
+                txns.append(receipt_txn("BAIK", good_qty, _unloading_fee(product, total_qty, op_now, body.unloadingFeeChargeMode), True))
+            if damaged_qty > 0:
+                txns.append(receipt_txn("RUSAK", damaged_qty, {}, good_qty <= 0))
 
         if txns:
             await db.transactions.insert_many([dict(txn) for txn in txns])

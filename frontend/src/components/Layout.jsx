@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutGrid, Boxes, Layers, ArrowLeftRight, Send, History, ClipboardList, Truck, MonitorSmartphone, Users, Settings, PlusCircle, LogOut, Menu, ChevronDown, PackageSearch, Workflow, ShoppingCart, ShieldCheck, ClipboardCheck } from 'lucide-react';
+import { LayoutGrid, Boxes, Layers, ArrowLeftRight, Send, History, ClipboardList, Truck, MonitorSmartphone, Users, Settings, PlusCircle, LogOut, Menu, ChevronDown, PackageSearch, Workflow, ShoppingCart, ShieldCheck, ClipboardCheck, TriangleAlert, RefreshCcw } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { hasPermission, roleLabel } from '../lib/permissions';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from './ui/sheet';
@@ -19,6 +19,8 @@ const NAV_GROUPS = [
   {
     label: 'Operasional', icon: Workflow, items: [
       { to: '/catat', label: 'Catat Stok', icon: ArrowLeftRight, permission: 'operations' },
+      { to: '/catat?panel=damage', label: 'Temuan Kerusakan', icon: TriangleAlert, permission: 'operations' },
+      { to: '/catat?panel=supplier-return', label: 'Retur / Ganti Pemasok', icon: RefreshCcw, permission: 'operations' },
       { to: '/pengeluaran', label: 'Pengeluaran', icon: Send, permission: 'outboundPage' },
       { to: '/antrian', label: 'Layar Antrian', icon: MonitorSmartphone },
     ],

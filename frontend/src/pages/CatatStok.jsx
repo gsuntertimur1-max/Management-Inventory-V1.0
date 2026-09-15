@@ -1,21 +1,23 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ArrowDownLeft, ArrowUpRight, Plus, Trash2, Save, ClipboardList, CalendarDays, Truck } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { formatRp, formatNum } from '../mock';
 import { toast } from 'sonner';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { packagingText, quantityFromInput, quantityIsValid, totalWeight } from '../lib/packaging';
 import { downloadApiFile } from '../lib/api';
 import { stackCodes } from '../lib/warehouses';
 
 const CONSIGNMENT_DESTINATIONS = ['Gudang E-commerce', 'Gudang Bazar'];
 const CONSIGNMENT_ZONES = ['18/A01', '18/A02', '18/A03', '18/A04', '18/B01 (½)', '18/B02 (½)', '18/B03 (½)', '18/B04 (½)'];
-const emptyRow = () => ({ productId: '', inputMode: 'QTY', inputValue: 1, qty: 1, exp: '', stackCode: '', documentNo: '', channel: '' });
+const emptyRow = () => ({ productId: '', inputMode: 'QTY', inputValue: 1, qty: 1, goodQty: 1, damagedQty: 0, exp: '', stackCode: '', documentNo: '', channel: '' });
 
 const CatatStok = () => {
   const { products, suppliers, purchaseOrders, settings, stackAllocations, transactions, supplierReturns, addReceipt, createOutboundLoad, recordStockDamage, createSupplierReturn, receiveSupplierReplacement, canInbound, canOutbound } = useData();
   const STACKS = stackCodes(settings?.warehouses);
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const activePanel = searchParams.get('panel');
   const [type, setType] = useState(canOutbound ? 'KELUAR' : 'MASUK');
   const [rows, setRows] = useState([emptyRow()]);
   const [poId, setPoId] = useState('');
@@ -39,6 +41,11 @@ const CatatStok = () => {
   const [damageForm, setDamageForm] = useState(null);
   const [supplierClaimForm, setSupplierClaimForm] = useState(null);
   const [feeChargeMode, setFeeChargeMode] = useState('PENGAMBIL');
+
+  useEffect(() => {
+    if (activePanel === 'damage' && !damageForm) setDamageForm({ productId: '', stackCode: '', qty: '', channel: 'KOM', cause: '', note: '', referenceNo: '' });
+    if (activePanel === 'supplier-return' && !supplierClaimForm) setSupplierClaimForm({ productId: '', qty: '', channel: 'KOM', supplier: '', sourceDamageOperationId: '', sourceStackCode: '', poNo: '', returnNo: '', note: '' });
+  }, [activePanel, damageForm, supplierClaimForm]);
 
   const activePOs = useMemo(
     () => purchaseOrders.filter((po) => !['Selesai', 'Diterima', 'Dibatalkan', 'Diterima Sebagian · Sisa Dibatalkan'].includes(po.status)),
@@ -101,6 +108,8 @@ const CatatStok = () => {
         inputMode: 'QTY',
         inputValue: Math.max(Number(item.qty || 0) - Number(item.receivedQty || 0), 0),
         qty: Math.max(Number(item.qty || 0) - Number(item.receivedQty || 0), 0),
+        goodQty: Math.max(Number(item.qty || 0) - Number(item.receivedQty || 0), 0),
+        damagedQty: 0,
         exp: '',
         channel: item.channel || products.find((product) => product.id === item.productId)?.channel || 'KOM',
       }))
@@ -110,8 +119,9 @@ const CatatStok = () => {
     setRows(remainingItems.length ? remainingItems : [emptyRow()]);
   };
 
+  const receiptQty = (row) => Number(row.goodQty || 0) + Number(row.damagedQty || 0);
   const chosen = rows
-    .map((row) => ({ ...row, product: products.find((product) => product.id === row.productId) }))
+    .map((row) => ({ ...row, qty: type === 'MASUK' ? receiptQty(row) : row.qty, product: products.find((product) => product.id === row.productId) }))
     .filter((row) => row.product);
 
   const totalUnit = chosen.reduce((a, row) => a + Number(row.qty || 0), 0);
@@ -137,6 +147,7 @@ const CatatStok = () => {
       await recordStockDamage({ ...damageForm, qty: Number(damageForm.qty), cause: damageForm.cause.trim(), note: damageForm.note || '', referenceNo: damageForm.referenceNo || '' });
       toast.success('Temuan kerusakan tercatat. Barang dipindahkan ke stok rusak.');
       setDamageForm(null);
+      navigate('/catat');
     } catch (e) { toast.error(e?.response?.data?.detail || 'Gagal mencatat kerusakan'); } finally { setSaving(false); }
   };
   const damageSources = (transactions || []).filter((tx) => tx.kondisi === 'RUSAK' && (tx.document_type === 'TEMUAN_RUSAK' || tx.type === 'MASUK') && Number(tx.damaged_change ?? tx.change ?? 0) > 0);
@@ -147,7 +158,7 @@ const CatatStok = () => {
   const saveSupplierReturn = async () => {
     if (!supplierClaimForm?.productId || Number(supplierClaimForm.qty) <= 0) return toast.error('Pilih produk dan jumlah yang diretur');
     setSaving(true);
-    try { await createSupplierReturn({ ...supplierClaimForm, qty: Number(supplierClaimForm.qty), sourceStackCode: claimSource?.stackCode || supplierClaimForm.sourceStackCode || '' }); toast.success('Retur rusak ke pemasok dicatat. Menunggu barang pengganti.'); setSupplierClaimForm(null); } catch (e) { toast.error(e?.response?.data?.detail || 'Gagal menyimpan retur pemasok'); } finally { setSaving(false); }
+    try { await createSupplierReturn({ ...supplierClaimForm, qty: Number(supplierClaimForm.qty), sourceStackCode: claimSource?.stackCode || supplierClaimForm.sourceStackCode || '' }); toast.success('Retur rusak ke pemasok dicatat. Menunggu barang pengganti.'); setSupplierClaimForm(null); navigate('/catat'); } catch (e) { toast.error(e?.response?.data?.detail || 'Gagal menyimpan retur pemasok'); } finally { setSaving(false); }
   };
   const saveReplacement = async (claim) => {
     const qty = window.prompt(`Jumlah barang baik pengganti untuk ${claim.return_no} (sisa ${formatNum(Number(claim.qty) - Number(claim.replacement_qty || 0))} ${claim.unit})`);
@@ -225,11 +236,10 @@ const CatatStok = () => {
       if (type === 'MASUK') {
         const result = await addReceipt({
           poId,
-          items: chosen.map((row) => ({ productId: row.productId, qty: Number(row.qty), exp: row.exp || '', stackCode: row.stackCode || row.product.location || '', channel: row.channel || row.product.channel || 'KOM' })),
+          items: chosen.map((row) => ({ productId: row.productId, qty: Number(row.qty), goodQty: Number(row.goodQty || 0), damagedQty: Number(row.damagedQty || 0), exp: row.exp || '', stackCode: row.stackCode || row.product.location || '', channel: row.channel || row.product.channel || 'KOM' })),
           party,
           ref,
           polisi,
-          kondisi,
           keterangan: ket,
           weighingForm,
           grossWeight: Number(grossWeight || 0),
@@ -286,15 +296,15 @@ const CatatStok = () => {
     <div className="space-y-6">
       <div>
         <div className="label-mono mb-2">Operasional Gudang</div>
-        <div className="flex flex-wrap items-center justify-between gap-3"><h1 className="font-display text-4xl font-bold">Pencatatan Stok Keluar / Masuk</h1><div className="flex gap-2"><button type="button" onClick={() => setDamageForm({ productId: '', stackCode: '', qty: '', channel: 'KOM', cause: '', note: '', referenceNo: '' })} className="px-4 py-2.5 rounded-lg border border-[#ef4444] text-[#f87171] text-sm font-semibold">+ Temuan Kerusakan</button><button type="button" onClick={() => setSupplierClaimForm({ productId: '', qty: '', channel: 'KOM', supplier: '', sourceDamageOperationId: '', sourceStackCode: '', poNo: '', returnNo: '', note: '' })} className="px-4 py-2.5 rounded-lg border border-[#f59e0b] text-[#fbbf24] text-sm font-semibold">Retur / Ganti Pemasok</button></div></div>
+        <div className="flex flex-wrap items-center justify-between gap-3"><h1 className="font-display text-4xl font-bold">{activePanel === 'damage' ? 'Temuan Kerusakan' : activePanel === 'supplier-return' ? 'Retur / Ganti Pemasok' : 'Pencatatan Stok Keluar / Masuk'}</h1><div className="flex gap-2">{!activePanel && <><button type="button" onClick={() => navigate('/catat?panel=damage')} className="px-4 py-2.5 rounded-lg border border-[#ef4444] text-[#f87171] text-sm font-semibold">+ Temuan Kerusakan</button><button type="button" onClick={() => navigate('/catat?panel=supplier-return')} className="px-4 py-2.5 rounded-lg border border-[#f59e0b] text-[#fbbf24] text-sm font-semibold">Retur / Ganti Pemasok</button></>}</div></div>
         <p className="text-[#8b93a1] mt-2 max-w-3xl">Penerimaan langsung menambah stok. Pengeluaran membuat antrian pemuatan terlebih dahulu; stok baru berkurang setelah proses muat selesai.</p>
       </div>
 
-      {damageForm && <div className="card-surface p-5 border border-[#7f1d1d]"><div className="flex items-start justify-between gap-3"><div><h2 className="font-display text-xl font-bold text-[#fecaca]">Temuan Kerusakan Stok</h2><p className="text-xs text-[#fca5a5] mt-1">Stok baik pada tumpukan akan dipindahkan ke saldo stok rusak dan tetap dapat dikeluarkan lewat SO kondisi rusak.</p></div><button onClick={() => setDamageForm(null)} className="text-[#fca5a5]">×</button></div><div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4"><div><label className="text-xs text-[#fca5a5] block mb-1">Produk</label><select value={damageForm.productId} onChange={(e) => setDamageForm({ ...damageForm, productId: e.target.value, stackCode: '', channel: products.find((p) => p.id === e.target.value)?.channel || 'KOM' })} className="w-full bg-[#0b0f17] border border-[#5b2430] rounded-lg px-3 py-2.5"><option value="">Pilih produk...</option>{products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select></div><div><label className="text-xs text-[#fca5a5] block mb-1">Tumpukan asal</label><select value={damageForm.stackCode} onChange={(e) => setDamageForm({ ...damageForm, stackCode: e.target.value })} className="w-full bg-[#0b0f17] border border-[#5b2430] rounded-lg px-3 py-2.5"><option value="">Pilih tumpukan...</option>{damageStacks.map((allocation) => <option key={allocation.id} value={allocation.stackCode}>{allocation.stackCode} — tersedia {formatNum(allocation.primaryQty)} {allocation.unit}</option>)}</select></div><div><label className="text-xs text-[#fca5a5] block mb-1">Jumlah rusak</label><input type="number" min="0.01" step="any" value={damageForm.qty} onChange={(e) => setDamageForm({ ...damageForm, qty: e.target.value })} className="w-full bg-[#0b0f17] border border-[#5b2430] rounded-lg px-3 py-2.5" /></div><div><label className="text-xs text-[#fca5a5] block mb-1">Penyebab</label><input value={damageForm.cause} onChange={(e) => setDamageForm({ ...damageForm, cause: e.target.value })} placeholder="Bocor, basah, hama, kemasan robek..." className="w-full bg-[#0b0f17] border border-[#5b2430] rounded-lg px-3 py-2.5" /></div><div><label className="text-xs text-[#fca5a5] block mb-1">Saluran</label><select value={damageForm.channel} onChange={(e) => setDamageForm({ ...damageForm, channel: e.target.value })} className="w-full bg-[#0b0f17] border border-[#5b2430] rounded-lg px-3 py-2.5"><option value="PSO">PSO</option><option value="KOM">KOM</option></select></div><div><label className="text-xs text-[#fca5a5] block mb-1">No. BA / Referensi</label><input value={damageForm.referenceNo} onChange={(e) => setDamageForm({ ...damageForm, referenceNo: e.target.value })} placeholder="Opsional" className="w-full bg-[#0b0f17] border border-[#5b2430] rounded-lg px-3 py-2.5" /></div></div><textarea rows={2} value={damageForm.note} onChange={(e) => setDamageForm({ ...damageForm, note: e.target.value })} placeholder="Keterangan tambahan (opsional)" className="w-full mt-3 bg-[#0b0f17] border border-[#5b2430] rounded-lg px-3 py-2.5" /><button disabled={saving} onClick={saveDamageDiscovery} className="mt-3 px-4 py-2.5 rounded-lg bg-[#dc2626] text-white font-semibold text-sm disabled:opacity-50">{saving ? 'Menyimpan...' : 'Simpan Temuan Kerusakan'}</button></div>}
+      {damageForm && <div className="card-surface p-5 border border-[#7f1d1d]"><div className="flex items-start justify-between gap-3"><div><h2 className="font-display text-xl font-bold text-[#fecaca]">Temuan Kerusakan Stok</h2><p className="text-xs text-[#fca5a5] mt-1">Stok baik pada tumpukan akan dipindahkan ke saldo stok rusak dan tetap dapat dikeluarkan lewat SO kondisi rusak.</p></div><button onClick={() => { setDamageForm(null); navigate('/catat'); }} className="text-[#fca5a5]">×</button></div><div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4"><div><label className="text-xs text-[#fca5a5] block mb-1">Produk</label><select value={damageForm.productId} onChange={(e) => setDamageForm({ ...damageForm, productId: e.target.value, stackCode: '', channel: products.find((p) => p.id === e.target.value)?.channel || 'KOM' })} className="w-full bg-[#0b0f17] border border-[#5b2430] rounded-lg px-3 py-2.5"><option value="">Pilih produk...</option>{products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select></div><div><label className="text-xs text-[#fca5a5] block mb-1">Tumpukan asal</label><select value={damageForm.stackCode} onChange={(e) => setDamageForm({ ...damageForm, stackCode: e.target.value })} className="w-full bg-[#0b0f17] border border-[#5b2430] rounded-lg px-3 py-2.5"><option value="">Pilih tumpukan...</option>{damageStacks.map((allocation) => <option key={allocation.id} value={allocation.stackCode}>{allocation.stackCode} — tersedia {formatNum(allocation.primaryQty)} {allocation.unit}</option>)}</select></div><div><label className="text-xs text-[#fca5a5] block mb-1">Jumlah rusak</label><input type="number" min="0.01" step="any" value={damageForm.qty} onChange={(e) => setDamageForm({ ...damageForm, qty: e.target.value })} className="w-full bg-[#0b0f17] border border-[#5b2430] rounded-lg px-3 py-2.5" /></div><div><label className="text-xs text-[#fca5a5] block mb-1">Penyebab</label><input value={damageForm.cause} onChange={(e) => setDamageForm({ ...damageForm, cause: e.target.value })} placeholder="Bocor, basah, hama, kemasan robek..." className="w-full bg-[#0b0f17] border border-[#5b2430] rounded-lg px-3 py-2.5" /></div><div><label className="text-xs text-[#fca5a5] block mb-1">Saluran</label><select value={damageForm.channel} onChange={(e) => setDamageForm({ ...damageForm, channel: e.target.value })} className="w-full bg-[#0b0f17] border border-[#5b2430] rounded-lg px-3 py-2.5"><option value="PSO">PSO</option><option value="KOM">KOM</option></select></div><div><label className="text-xs text-[#fca5a5] block mb-1">No. BA / Referensi</label><input value={damageForm.referenceNo} onChange={(e) => setDamageForm({ ...damageForm, referenceNo: e.target.value })} placeholder="Opsional" className="w-full bg-[#0b0f17] border border-[#5b2430] rounded-lg px-3 py-2.5" /></div></div><textarea rows={2} value={damageForm.note} onChange={(e) => setDamageForm({ ...damageForm, note: e.target.value })} placeholder="Keterangan tambahan (opsional)" className="w-full mt-3 bg-[#0b0f17] border border-[#5b2430] rounded-lg px-3 py-2.5" /><button disabled={saving} onClick={saveDamageDiscovery} className="mt-3 px-4 py-2.5 rounded-lg bg-[#dc2626] text-white font-semibold text-sm disabled:opacity-50">{saving ? 'Menyimpan...' : 'Simpan Temuan Kerusakan'}</button></div>}
 
       {supplierClaimForm && <div className="card-surface p-5 border border-[#92400e]"><div className="flex items-start justify-between gap-3"><div><h2 className="font-display text-xl font-bold text-[#fde68a]">Retur & Penggantian Pemasok</h2><p className="text-xs text-[#fcd34d] mt-1">Pilih sumber penerimaan rusak atau temuan kerusakan. Retur mengurangi stok rusak; penggantian masuk sebagai stok baik tanpa menambah jumlah PO.</p></div><button onClick={() => setSupplierClaimForm(null)} className="text-[#fde68a]">×</button></div><div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4"><div><label className="text-xs text-[#fcd34d] block mb-1">Produk rusak</label><select value={supplierClaimForm.productId} onChange={(e) => setSupplierClaimForm({ ...supplierClaimForm, productId: e.target.value, sourceDamageOperationId: '', channel: products.find((p) => p.id === e.target.value)?.channel || 'KOM' })} className="w-full bg-[#0b0f17] border border-[#6b4b1c] rounded-lg px-3 py-2.5"><option value="">Pilih produk...</option>{products.filter((p) => Number(p.damaged || 0) > 0).map((p) => <option key={p.id} value={p.id}>{p.name} — rusak {formatNum(p.damaged)} {p.unit}</option>)}</select></div><div><label className="text-xs text-[#fcd34d] block mb-1">Sumber barang rusak</label><select value={supplierClaimForm.sourceDamageOperationId} onChange={(e) => setSupplierClaimForm({ ...supplierClaimForm, sourceDamageOperationId: e.target.value })} className="w-full bg-[#0b0f17] border border-[#6b4b1c] rounded-lg px-3 py-2.5"><option value="">Saldo rusak umum / tanpa tautan</option>{claimSources.map((tx) => <option key={`${tx.operation_id}-${tx.id}`} value={tx.operation_id}>{tx.document_type === 'TEMUAN_RUSAK' ? 'Temuan Rusak' : 'Penerimaan Rusak'} · {tx.ref} · {formatNum(Number(tx.damaged_change ?? tx.change))} {tx.unit}</option>)}</select></div><div><label className="text-xs text-[#fcd34d] block mb-1">Jumlah diretur</label><input type="number" min="0.01" step="any" value={supplierClaimForm.qty} onChange={(e) => setSupplierClaimForm({ ...supplierClaimForm, qty: e.target.value })} className="w-full bg-[#0b0f17] border border-[#6b4b1c] rounded-lg px-3 py-2.5" /></div><div><label className="text-xs text-[#fcd34d] block mb-1">Supplier / pabrik</label><input value={supplierClaimForm.supplier} onChange={(e) => setSupplierClaimForm({ ...supplierClaimForm, supplier: e.target.value })} placeholder="Nama pemasok" className="w-full bg-[#0b0f17] border border-[#6b4b1c] rounded-lg px-3 py-2.5" /></div><div><label className="text-xs text-[#fcd34d] block mb-1">No. PO</label><input value={supplierClaimForm.poNo} onChange={(e) => setSupplierClaimForm({ ...supplierClaimForm, poNo: e.target.value })} placeholder="PO/... (opsional)" className="w-full bg-[#0b0f17] border border-[#6b4b1c] rounded-lg px-3 py-2.5" /></div><div><label className="text-xs text-[#fcd34d] block mb-1">No. Retur Pemasok</label><input value={supplierClaimForm.returnNo} onChange={(e) => setSupplierClaimForm({ ...supplierClaimForm, returnNo: e.target.value })} placeholder="Otomatis bila kosong" className="w-full bg-[#0b0f17] border border-[#6b4b1c] rounded-lg px-3 py-2.5" /></div></div><textarea rows={2} value={supplierClaimForm.note} onChange={(e) => setSupplierClaimForm({ ...supplierClaimForm, note: e.target.value })} placeholder="Catatan retur (opsional)" className="w-full mt-3 bg-[#0b0f17] border border-[#6b4b1c] rounded-lg px-3 py-2.5" /><button disabled={saving} onClick={saveSupplierReturn} className="mt-3 px-4 py-2.5 rounded-lg bg-[#d97706] text-white font-semibold text-sm disabled:opacity-50">{saving ? 'Menyimpan...' : 'Simpan Retur ke Pemasok'}</button><div className="mt-5 border-t border-[#6b4b1c] pt-4"><div className="text-sm font-semibold">Menunggu barang pengganti</div>{openClaims.length === 0 ? <p className="text-xs text-[#a99675] mt-2">Belum ada retur pemasok terbuka.</p> : <div className="space-y-2 mt-2">{openClaims.map((claim) => <div key={claim.id} className="flex flex-wrap justify-between gap-2 rounded-lg bg-[#0b0f17] p-3 text-xs"><div><b>{claim.return_no}</b> · {claim.product}<br/><span className="text-[#a99675]">Retur {formatNum(claim.qty)} {claim.unit} · sudah diganti {formatNum(claim.replacement_qty || 0)} · {claim.status}</span></div><button disabled={saving} onClick={() => saveReplacement(claim)} className="px-3 py-1.5 rounded border border-[#22c55e] text-[#4ade80]">Catat Barang Pengganti</button></div>)}</div>}</div></div>}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className={`grid grid-cols-1 lg:grid-cols-3 gap-6 ${activePanel ? 'hidden' : ''}`}>
         <div className="card-surface p-6 lg:col-span-2">
           <h2 className="font-display text-lg font-bold mb-4">Formulir Transaksi</h2>
           <div className={`grid ${canInbound && canOutbound ? 'grid-cols-2' : 'grid-cols-1'} gap-2 mb-5 p-1 bg-[#0b0f17] rounded-xl border border-[#1a222e]`}>
@@ -342,7 +352,7 @@ const CatatStok = () => {
               const remaining = remainingFor(row.productId);
               const availableStacks = type === 'KELUAR' ? availableStacksFor(row.productId) : [];
               return (
-                <div key={index} className={`grid gap-2 items-end p-3 rounded-lg border border-[#1a222e] bg-[#0b0f17] ${type === 'MASUK' ? 'grid-cols-1 md:grid-cols-[minmax(190px,1fr)_105px_145px_175px_52px]' : 'grid-cols-1 md:grid-cols-[minmax(170px,1fr)_100px_135px_150px_140px_52px]'}`}>
+                <div key={index} className={`grid gap-2 items-end p-3 rounded-lg border border-[#1a222e] bg-[#0b0f17] ${type === 'MASUK' ? 'grid-cols-1 md:grid-cols-[minmax(190px,1fr)_125px_125px_175px_52px]' : 'grid-cols-1 md:grid-cols-[minmax(170px,1fr)_100px_135px_150px_140px_52px]'}`}>
                   <div>
                     <label className="text-[10px] text-[#6b7688] mb-1 block">Produk</label>
                     <select value={row.productId} disabled={Boolean(selectedPO)} onChange={(e) => { const chosenProduct = products.find((item) => item.id === e.target.value); setTransactionInput(index, { productId: e.target.value, inputMode: 'QTY', inputValue: 1, channel: chosenProduct?.channel || 'KOM' }); }} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb] disabled:opacity-70">
@@ -351,18 +361,19 @@ const CatatStok = () => {
                     </select>
                     {selectedPO && product && <div className="text-[10px] text-[#60a5fa] mt-1">Sisa PO: {formatNum(remaining)} {product.unit}</div>}<label className="text-[10px] text-[#6b7688] mt-2 mb-1 block">Saluran</label><select value={row.channel || product?.channel || 'KOM'} onChange={(e) => setRow(index, { channel: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2 text-xs"><option value="PSO">PSO</option><option value="KOM">KOM</option></select>
                   </div>
-                  <div>
+                  {type === 'KELUAR' && <div>
                     <label className="text-[10px] text-[#6b7688] mb-1 block">Input Berdasarkan</label>
                     <select value={row.inputMode || 'QTY'} onChange={(e) => setTransactionInput(index, { inputMode: e.target.value, inputValue: e.target.value === 'WEIGHT' ? totalWeight(row.qty, product) : row.qty })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2.5 text-xs outline-none focus:border-[#2563eb]">
                       <option value="QTY">Jumlah</option>
                       <option value="WEIGHT" disabled={!Number(product?.weight || 0)}>Berat</option>
                     </select>
-                  </div>
-                  <div>
+                  </div>}
+                  {type === 'MASUK' && <><div><label className="text-[10px] text-[#22c55e] mb-1 block">Baik ({product?.unit || 'unit'})</label><input type="number" min="0" step="any" value={row.goodQty ?? 0} onChange={(e) => setRow(index, { goodQty: e.target.value })} className="w-full bg-[#0b0f17] border border-[#1f6f45] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#22c55e]" /></div><div><label className="text-[10px] text-[#f59e0b] mb-1 block">Rusak ({product?.unit || 'unit'})</label><input type="number" min="0" step="any" value={row.damagedQty ?? 0} onChange={(e) => setRow(index, { damagedQty: e.target.value })} className="w-full bg-[#0b0f17] border border-[#794b1c] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#f59e0b]" />{product && receiptQty(row) > 0 && <div className="text-[9px] text-[#60a5fa] mt-1">Total {formatNum(receiptQty(row))} {product.unit} · {formatNum(totalWeight(receiptQty(row), product))} kg</div>}</div></>}
+                  {type === 'KELUAR' && <div>
                     <label className="text-[10px] text-[#6b7688] mb-1 block">{row.inputMode === 'WEIGHT' ? 'Berat (kg)' : `Jumlah (${product?.unit || 'unit'})`}</label>
                     <input type="number" min="0.01" step="any" value={row.inputValue} onChange={(e) => setTransactionInput(index, { inputValue: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" />
                     {product && Number(row.qty || 0) > 0 && <div className="text-[9px] text-[#60a5fa] mt-1">{formatNum(row.qty)} {product.unit} · {formatNum(totalWeight(row.qty, product))} kg{packagingText(row.qty, product, formatNum) ? ` · ${packagingText(row.qty, product, formatNum)}` : ''}</div>}
-                  </div>
+                  </div>}
                   {type === 'MASUK' && (
                     <div><label className="text-[10px] text-[#6b7688] mb-1 flex items-center gap-1"><CalendarDays size={11} /> Kedaluwarsa / Lokasi</label><input type="date" value={row.exp || ''} onChange={(e) => setRow(index, { exp: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm" /><select value={row.stackCode || product?.location || ''} onChange={(e) => setRow(index, { stackCode: e.target.value })} className="w-full mt-1 bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2 text-xs"><option value="">Pilih lokasi...</option>{STACKS.map((code) => <option key={code}>{code}</option>)}</select></div>
                   )}
@@ -380,9 +391,7 @@ const CatatStok = () => {
             <div><label className="text-sm font-medium mb-1.5 block">Nomor Plat Kendaraan</label><input value={polisi} onChange={(e) => setPolisi(e.target.value)} placeholder="B 1441 PQF" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm" /></div>
             {type === 'KELUAR' ? (
               <div><label className="text-sm font-medium mb-1.5 block">Nama Pengambil / Sopir</label><input value={pengambil} onChange={(e) => setPengambil(e.target.value)} placeholder="Contoh: KOYUM" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm" /></div>
-            ) : (
-              <div><label className="text-sm font-medium mb-1.5 block">Kondisi Barang</label><select value={kondisi} onChange={(e) => setKondisi(e.target.value)} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm"><option value="BAIK">Baik (Good)</option><option value="RUSAK">Rusak (Damage)</option></select></div>
-            )}
+            ) : <div className="rounded-lg border border-[#1f3657] bg-[#0d1728] px-3 py-2.5 text-xs text-[#8fb8ef]">Isi kuantum <b>Baik</b> dan <b>Rusak</b> pada setiap komoditas.</div>}
             {type === 'KELUAR' && <div><label className="text-sm font-medium mb-1.5 block">Kondisi Barang</label><select value={kondisi} onChange={(e) => setKondisi(e.target.value)} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm"><option value="BAIK">Baik (Good)</option><option value="RUSAK">Rusak (Damage)</option></select></div>}
           </div>
           <div className="mt-4"><label className="text-sm font-medium mb-1.5 block">Keterangan</label><textarea value={ket} onChange={(e) => setKet(e.target.value)} rows={2} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm resize-none" /></div>
