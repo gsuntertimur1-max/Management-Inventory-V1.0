@@ -13,7 +13,7 @@ const CONSIGNMENT_ZONES = ['18/A01', '18/A02', '18/A03', '18/A04', '18/B01 (½)'
 const emptyRow = () => ({ productId: '', inputMode: 'QTY', inputValue: 1, qty: 1, exp: '', stackCode: '', documentNo: '', channel: '' });
 
 const CatatStok = () => {
-  const { products, suppliers, purchaseOrders, settings, stackAllocations, addReceipt, createOutboundLoad, canInbound, canOutbound } = useData();
+  const { products, suppliers, purchaseOrders, settings, stackAllocations, addReceipt, createOutboundLoad, recordStockDamage, canInbound, canOutbound } = useData();
   const STACKS = stackCodes(settings?.warehouses);
   const navigate = useNavigate();
   const [type, setType] = useState(canOutbound ? 'KELUAR' : 'MASUK');
@@ -36,6 +36,7 @@ const CatatStok = () => {
   const [grossWeight, setGrossWeight] = useState('');
   const [grossMin, setGrossMin] = useState('');
   const [grossMax, setGrossMax] = useState('');
+  const [damageForm, setDamageForm] = useState(null);
   const [feeChargeMode, setFeeChargeMode] = useState('PENGAMBIL');
 
   const activePOs = useMemo(
@@ -126,6 +127,16 @@ const CatatStok = () => {
     const item = (selectedPO.items || []).find((poItem) => poItem.productId === productId);
     if (!item) return 0;
     return Math.max(Number(item.qty || 0) - Number(item.receivedQty || 0), 0);
+  };
+  const damageStacks = (stackAllocations || []).filter((allocation) => allocation.productId === damageForm?.productId && Number(allocation.primaryQty || 0) > 0);
+  const saveDamageDiscovery = async () => {
+    if (!damageForm?.productId || !damageForm?.stackCode || Number(damageForm.qty) <= 0 || !damageForm.cause?.trim()) return toast.error('Pilih produk, tumpukan, jumlah, dan penyebab kerusakan');
+    setSaving(true);
+    try {
+      await recordStockDamage({ ...damageForm, qty: Number(damageForm.qty), cause: damageForm.cause.trim(), note: damageForm.note || '', referenceNo: damageForm.referenceNo || '' });
+      toast.success('Temuan kerusakan tercatat. Barang dipindahkan ke stok rusak.');
+      setDamageForm(null);
+    } catch (e) { toast.error(e?.response?.data?.detail || 'Gagal mencatat kerusakan'); } finally { setSaving(false); }
   };
 
   const submit = async () => {
@@ -256,9 +267,11 @@ const CatatStok = () => {
     <div className="space-y-6">
       <div>
         <div className="label-mono mb-2">Operasional Gudang</div>
-        <h1 className="font-display text-4xl font-bold">Pencatatan Stok Keluar / Masuk</h1>
+        <div className="flex flex-wrap items-center justify-between gap-3"><h1 className="font-display text-4xl font-bold">Pencatatan Stok Keluar / Masuk</h1><button type="button" onClick={() => setDamageForm({ productId: '', stackCode: '', qty: '', channel: 'KOM', cause: '', note: '', referenceNo: '' })} className="px-4 py-2.5 rounded-lg border border-[#ef4444] text-[#f87171] text-sm font-semibold">+ Temuan Kerusakan</button></div>
         <p className="text-[#8b93a1] mt-2 max-w-3xl">Penerimaan langsung menambah stok. Pengeluaran membuat antrian pemuatan terlebih dahulu; stok baru berkurang setelah proses muat selesai.</p>
       </div>
+
+      {damageForm && <div className="card-surface p-5 border border-[#7f1d1d]"><div className="flex items-start justify-between gap-3"><div><h2 className="font-display text-xl font-bold text-[#fecaca]">Temuan Kerusakan Stok</h2><p className="text-xs text-[#fca5a5] mt-1">Stok baik pada tumpukan akan dipindahkan ke saldo stok rusak dan tetap dapat dikeluarkan lewat SO kondisi rusak.</p></div><button onClick={() => setDamageForm(null)} className="text-[#fca5a5]">×</button></div><div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4"><div><label className="text-xs text-[#fca5a5] block mb-1">Produk</label><select value={damageForm.productId} onChange={(e) => setDamageForm({ ...damageForm, productId: e.target.value, stackCode: '', channel: products.find((p) => p.id === e.target.value)?.channel || 'KOM' })} className="w-full bg-[#0b0f17] border border-[#5b2430] rounded-lg px-3 py-2.5"><option value="">Pilih produk...</option>{products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}</select></div><div><label className="text-xs text-[#fca5a5] block mb-1">Tumpukan asal</label><select value={damageForm.stackCode} onChange={(e) => setDamageForm({ ...damageForm, stackCode: e.target.value })} className="w-full bg-[#0b0f17] border border-[#5b2430] rounded-lg px-3 py-2.5"><option value="">Pilih tumpukan...</option>{damageStacks.map((allocation) => <option key={allocation.id} value={allocation.stackCode}>{allocation.stackCode} — tersedia {formatNum(allocation.primaryQty)} {allocation.unit}</option>)}</select></div><div><label className="text-xs text-[#fca5a5] block mb-1">Jumlah rusak</label><input type="number" min="0.01" step="any" value={damageForm.qty} onChange={(e) => setDamageForm({ ...damageForm, qty: e.target.value })} className="w-full bg-[#0b0f17] border border-[#5b2430] rounded-lg px-3 py-2.5" /></div><div><label className="text-xs text-[#fca5a5] block mb-1">Penyebab</label><input value={damageForm.cause} onChange={(e) => setDamageForm({ ...damageForm, cause: e.target.value })} placeholder="Bocor, basah, hama, kemasan robek..." className="w-full bg-[#0b0f17] border border-[#5b2430] rounded-lg px-3 py-2.5" /></div><div><label className="text-xs text-[#fca5a5] block mb-1">Saluran</label><select value={damageForm.channel} onChange={(e) => setDamageForm({ ...damageForm, channel: e.target.value })} className="w-full bg-[#0b0f17] border border-[#5b2430] rounded-lg px-3 py-2.5"><option value="PSO">PSO</option><option value="KOM">KOM</option></select></div><div><label className="text-xs text-[#fca5a5] block mb-1">No. BA / Referensi</label><input value={damageForm.referenceNo} onChange={(e) => setDamageForm({ ...damageForm, referenceNo: e.target.value })} placeholder="Opsional" className="w-full bg-[#0b0f17] border border-[#5b2430] rounded-lg px-3 py-2.5" /></div></div><textarea rows={2} value={damageForm.note} onChange={(e) => setDamageForm({ ...damageForm, note: e.target.value })} placeholder="Keterangan tambahan (opsional)" className="w-full mt-3 bg-[#0b0f17] border border-[#5b2430] rounded-lg px-3 py-2.5" /><button disabled={saving} onClick={saveDamageDiscovery} className="mt-3 px-4 py-2.5 rounded-lg bg-[#dc2626] text-white font-semibold text-sm disabled:opacity-50">{saving ? 'Menyimpan...' : 'Simpan Temuan Kerusakan'}</button></div>}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="card-surface p-6 lg:col-span-2">

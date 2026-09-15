@@ -123,6 +123,7 @@ export const DataProvider = ({ children }) => {
   const deleteProduct = async (id) => { await api.delete(`/products-master/${id}`); await fetchAll(); };
   const addTransaction = async (payload) => { await api.post('/transactions', payload); await fetchAll(); };
   const addReceipt = async (payload) => { const { data } = await api.post('/receipts', payload); await fetchAll(); return data; };
+  const recordStockDamage = async (payload) => { const { data } = await api.post('/stock-damage-discoveries', payload); await fetchAll(); return data; };
 
   const createOutboundLoad = async (payload) => {
     const { data } = await api.post('/outbound-loads', payload);
@@ -224,7 +225,7 @@ export const DataProvider = ({ children }) => {
       canManageSettings: hasPermission(user?.role, 'settings'),
       theme, setTheme,
       login, logout, ...state, fetchAll,
-      addProduct, updateProduct, deleteProduct, addTransaction, addReceipt,
+      addProduct, updateProduct, deleteProduct, addTransaction, addReceipt, recordStockDamage,
       createOutboundLoad, refreshOutboundLoads, startOutboundLoad, completeOutboundLoad, createConsignmentReturn, createSalesReturn, settleOutboundDocument, updateSJStatus, cancelOutboundLoad, editOutboundLoad, cancelPurchaseOrder,
       addSupplier, addPO, addUser, updateUser, deleteUser, changeUserPassword, updateSettings, resetData, importCsv,
       addStackAllocation, updateStackAllocation, deleteStackAllocation,

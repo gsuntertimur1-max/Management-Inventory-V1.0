@@ -24,6 +24,7 @@ from backend.server import (
     ensure_channel_stock,
     normalize_channel,
 )
+from backend.stack_allocations import decrease_stack_allocation
 
 router = APIRouter(prefix="/api")
 
@@ -66,6 +67,16 @@ class ReceiptInput(BaseModel):
     grossMax: float = Field(default=0, ge=0)
     # PENGIRIM ditagihkan pada pengirim; TERMAKSUK berarti sudah masuk harga/dokumen.
     unloadingFeeChargeMode: Literal["", "PENGIRIM", "TERMASUK"] = ""
+
+
+class DamageDiscoveryInput(BaseModel):
+    productId: str
+    stackCode: str
+    qty: float = Field(gt=0)
+    channel: str = ""
+    cause: str = Field(min_length=3, max_length=200)
+    note: str = ""
+    referenceNo: str = ""
 
 
 def _number(value, default=0.0) -> float:
@@ -457,6 +468,34 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
         "purchaseOrder": updated_po,
         "message": "Penerimaan stok berhasil disimpan",
     }
+
+
+@router.post("/stock-damage-discoveries")
+async def record_stock_damage_discovery(body: DamageDiscoveryInput, user: dict = Depends(require_write)):
+    """Pindahkan stok baik yang ditemukan rusak ke saldo rusak tanpa menghapus jejak asal."""
+    product = await db.products.find_one({"id": body.productId}, {"_id": 0})
+    if not product:
+        raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
+    _validate_pack_qty(product, float(body.qty))
+    stack_code = body.stackCode.strip().upper()
+    allocation = await db.stack_allocations.find_one({"productId": body.productId, "stackCode": stack_code}, {"_id": 0, "primaryQty": 1})
+    if not allocation or float(allocation.get("primaryQty", 0) or 0) + 1e-9 < float(body.qty):
+        raise HTTPException(status_code=400, detail=f"Stok baik pada tumpukan {stack_code} tidak mencukupi")
+    channel = normalize_channel(body.channel, normalize_channel(product.get("channel")))
+    await ensure_channel_stock(product)
+    if float(product.get("stock", 0) or 0) + 1e-9 < float(body.qty) or float(product.get("channelStock", {}).get(channel, {}).get("stock", 0) or 0) + 1e-9 < float(body.qty):
+        raise HTTPException(status_code=400, detail="Saldo stok baik tidak mencukupi untuk dipindahkan menjadi stok rusak")
+
+    operation_id, time = new_id(), now_iso()
+    await db.products.update_one({"id": product["id"]}, {"$inc": {"stock": -float(body.qty), "damaged": float(body.qty), f"channelStock.{channel}.stock": -float(body.qty), f"channelStock.{channel}.damaged": float(body.qty)}})
+    try:
+        await decrease_stack_allocation(product["id"], stack_code, float(body.qty), user.get("name", ""))
+        transaction = {"id": new_id(), "operation_id": operation_id, "time": time, "ref": body.referenceNo.strip() or f"TR-{time[:10].replace('-', '')}", "type": "PENYESUAIAN", "document_type": "TEMUAN_RUSAK", "kondisi": "RUSAK", "product": product.get("name", ""), "sku": product.get("sku", ""), "change": 0, "good_change": -float(body.qty), "damaged_change": float(body.qty), "unit": product.get("unit", ""), "weight": float(product.get("weight", 0) or 0), "total_weight": float(product.get("weight", 0) or 0) * float(body.qty), "secondary": product.get("secondary", ""), "secondaryQty": float(product.get("secondaryQty", 0) or 0), "channel": channel, "stackCode": stack_code, "operator": user.get("name", ""), "cause": body.cause.strip(), "keterangan": body.note.strip()}
+        await db.transactions.insert_one(dict(transaction))
+    except Exception:
+        await db.products.update_one({"id": product["id"]}, {"$inc": {"stock": float(body.qty), "damaged": -float(body.qty), f"channelStock.{channel}.stock": float(body.qty), f"channelStock.{channel}.damaged": -float(body.qty)}})
+        raise
+    return {"operationId": operation_id, "transaction": transaction}
 
 
 @router.post("/import/master-csv")
