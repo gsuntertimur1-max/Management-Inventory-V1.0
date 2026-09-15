@@ -24,7 +24,7 @@ from backend.server import (
     ensure_channel_stock,
     normalize_channel,
 )
-from backend.stack_allocations import decrease_stack_allocation
+from backend.stack_allocations import allocate_stock_to_stack, decrease_stack_allocation
 
 router = APIRouter(prefix="/api")
 
@@ -77,6 +77,25 @@ class DamageDiscoveryInput(BaseModel):
     cause: str = Field(min_length=3, max_length=200)
     note: str = ""
     referenceNo: str = ""
+
+
+class SupplierReturnInput(BaseModel):
+    productId: str
+    qty: float = Field(gt=0)
+    channel: str = ""
+    supplier: str = ""
+    sourceDamageOperationId: str = ""
+    sourceStackCode: str = ""
+    poNo: str = ""
+    returnNo: str = ""
+    note: str = ""
+
+
+class SupplierReplacementInput(BaseModel):
+    qty: float = Field(gt=0)
+    stackCode: str
+    referenceNo: str = ""
+    note: str = ""
 
 
 def _number(value, default=0.0) -> float:
@@ -496,6 +515,75 @@ async def record_stock_damage_discovery(body: DamageDiscoveryInput, user: dict =
         await db.products.update_one({"id": product["id"]}, {"$inc": {"stock": float(body.qty), "damaged": -float(body.qty), f"channelStock.{channel}.stock": float(body.qty), f"channelStock.{channel}.damaged": -float(body.qty)}})
         raise
     return {"operationId": operation_id, "transaction": transaction}
+
+
+@router.get("/supplier-returns")
+async def list_supplier_returns(user: dict = Depends(get_current_user)):
+    return await db.supplier_returns.find({}, {"_id": 0}).sort("created_at", -1).to_list(2000)
+
+
+@router.post("/supplier-returns")
+async def create_supplier_return(body: SupplierReturnInput, user: dict = Depends(require_write)):
+    product = await db.products.find_one({"id": body.productId}, {"_id": 0})
+    if not product:
+        raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
+    _validate_pack_qty(product, float(body.qty))
+    channel = normalize_channel(body.channel, normalize_channel(product.get("channel")))
+    await ensure_channel_stock(product)
+    if float(product.get("damaged", 0) or 0) + 1e-9 < float(body.qty) or float(product.get("channelStock", {}).get(channel, {}).get("damaged", 0) or 0) + 1e-9 < float(body.qty):
+        raise HTTPException(status_code=400, detail="Stok rusak tidak mencukupi untuk diretur ke pemasok")
+    source = None
+    if body.sourceDamageOperationId:
+        source = await db.transactions.find_one({"operation_id": body.sourceDamageOperationId, "product": product.get("name", ""), "kondisi": "RUSAK"}, {"_id": 0})
+        if not source:
+            raise HTTPException(status_code=400, detail="Sumber barang rusak tidak ditemukan")
+        source_qty = float(source.get("damaged_change", source.get("change", 0)) or 0)
+        used = await db.supplier_returns.aggregate([{"$match": {"source_damage_operation_id": body.sourceDamageOperationId, "product_id": body.productId}}, {"$group": {"_id": None, "total": {"$sum": "$qty"}}}]).to_list(1)
+        if float(body.qty) > source_qty - float(used[0]["total"] if used else 0) + 1e-9:
+            raise HTTPException(status_code=400, detail="Jumlah retur melebihi barang rusak pada sumber yang dipilih")
+    now = now_iso()
+    return_no = body.returnNo.strip() or f"RP-{operational_now().strftime('%Y%m%d')}-{await next_sequence('supplier-return', 0):04d}"
+    if await db.supplier_returns.find_one({"return_no": return_no}, {"_id": 1}):
+        raise HTTPException(status_code=409, detail="Nomor retur pemasok sudah digunakan")
+    doc = {"id": new_id(), "return_no": return_no, "created_at": now, "product_id": body.productId, "product": product.get("name", ""), "sku": product.get("sku", ""), "qty": float(body.qty), "unit": product.get("unit", ""), "channel": channel, "supplier": body.supplier.strip(), "po_no": body.poNo.strip(), "source_damage_operation_id": body.sourceDamageOperationId, "source_stack_code": body.sourceStackCode.strip().upper() or (source or {}).get("stackCode", ""), "note": body.note.strip(), "status": "MENUNGGU_PENGGANTIAN", "replacement_qty": 0.0, "created_by": user.get("name", "")}
+    await db.products.update_one({"id": body.productId}, {"$inc": {"damaged": -float(body.qty), f"channelStock.{channel}.damaged": -float(body.qty)}})
+    try:
+        await db.supplier_returns.insert_one(dict(doc))
+        await db.transactions.insert_one({"id": new_id(), "operation_id": doc["id"], "time": now, "ref": return_no, "type": "KELUAR", "document_type": "RETUR_PEMASOK", "parent_document": body.poNo.strip() or body.sourceDamageOperationId, "kondisi": "RUSAK", "product": doc["product"], "sku": doc["sku"], "change": -doc["qty"], "damaged_change": -doc["qty"], "unit": doc["unit"], "channel": channel, "stackCode": doc["source_stack_code"], "penerima": doc["supplier"], "operator": user.get("name", ""), "keterangan": doc["note"]})
+    except Exception:
+        await db.products.update_one({"id": body.productId}, {"$inc": {"damaged": float(body.qty), f"channelStock.{channel}.damaged": float(body.qty)}})
+        raise
+    return doc
+
+
+@router.post("/supplier-returns/{return_id}/replacement")
+async def receive_supplier_replacement(return_id: str, body: SupplierReplacementInput, user: dict = Depends(require_write)):
+    claim = await db.supplier_returns.find_one({"id": return_id}, {"_id": 0})
+    if not claim:
+        raise HTTPException(status_code=404, detail="Retur pemasok tidak ditemukan")
+    remaining = float(claim.get("qty", 0) or 0) - float(claim.get("replacement_qty", 0) or 0)
+    if float(body.qty) > remaining + 1e-9:
+        raise HTTPException(status_code=400, detail=f"Penggantian melebihi sisa retur ({remaining:g} {claim.get('unit', '')})")
+    product = await db.products.find_one({"id": claim["product_id"]}, {"_id": 0})
+    if not product:
+        raise HTTPException(status_code=404, detail="Produk pengganti tidak ditemukan")
+    _validate_pack_qty(product, float(body.qty))
+    stack_code = body.stackCode.strip().upper()
+    from backend.stack_allocations import valid_stack_codes
+    if stack_code not in await valid_stack_codes():
+        raise HTTPException(status_code=400, detail="Tumpukan pengganti tidak valid")
+    now = now_iso(); channel = claim.get("channel", normalize_channel(product.get("channel")))
+    await db.products.update_one({"id": product["id"]}, {"$inc": {"stock": float(body.qty), f"channelStock.{channel}.stock": float(body.qty)}})
+    try:
+        await allocate_stock_to_stack(product, stack_code, float(body.qty), user.get("name", ""))
+        replacement_qty = float(claim.get("replacement_qty", 0) or 0) + float(body.qty)
+        status = "SELESAI_DIGANTI" if replacement_qty + 1e-9 >= float(claim["qty"]) else "DIGANTI_SEBAGIAN"
+        await db.supplier_returns.update_one({"id": return_id}, {"$set": {"replacement_qty": replacement_qty, "status": status, "replacement_at": now, "replacement_note": body.note.strip(), "replacement_reference": body.referenceNo.strip()}})
+        await db.transactions.insert_one({"id": new_id(), "operation_id": new_id(), "time": now, "ref": body.referenceNo.strip() or f"PG-{claim['return_no']}", "type": "MASUK", "document_type": "PENGGANTIAN_PEMASOK", "parent_document": claim["return_no"], "kondisi": "BAIK", "product": product.get("name", ""), "sku": product.get("sku", ""), "change": float(body.qty), "unit": product.get("unit", ""), "channel": channel, "stackCode": stack_code, "penerima": claim.get("supplier", ""), "operator": user.get("name", ""), "keterangan": body.note.strip()})
+    except Exception:
+        await db.products.update_one({"id": product["id"]}, {"$inc": {"stock": -float(body.qty), f"channelStock.{channel}.stock": -float(body.qty)}})
+        raise
+    return await db.supplier_returns.find_one({"id": return_id}, {"_id": 0})
 
 
 @router.post("/import/master-csv")

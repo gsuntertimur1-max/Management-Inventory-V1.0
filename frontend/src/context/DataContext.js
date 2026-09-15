@@ -30,6 +30,7 @@ const EMPTY = {
   consignmentLayoutHistory: [],
   consignmentOpnames: [],
   monitoringStock: [],
+  supplierReturns: [],
   settings: DEFAULT_SETTINGS,
 };
 
@@ -50,7 +51,7 @@ export const DataProvider = ({ children }) => {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [p, suppliersRes, sj, loads, po, t, stacks, treatments, consignmentStockRes, consignmentLayoutsRes, consignmentHistoryRes, consignmentOpnamesRes, monitoringStockRes, settingsRes, usersRes] = await Promise.all([
+      const [p, suppliersRes, sj, loads, po, t, stacks, treatments, consignmentStockRes, consignmentLayoutsRes, consignmentHistoryRes, consignmentOpnamesRes, monitoringStockRes, supplierReturnsRes, settingsRes, usersRes] = await Promise.all([
         api.get('/products'),
         api.get('/suppliers'),
         api.get('/surat-jalan'),
@@ -64,6 +65,7 @@ export const DataProvider = ({ children }) => {
         api.get('/consignment-layout-history'),
         api.get('/consignment-opnames'),
         api.get('/monitoring-stock'),
+        api.get('/supplier-returns'),
         api.get('/settings'),
         hasPermission(user?.role, 'users') ? api.get('/users') : Promise.resolve({ data: [] }),
       ]);
@@ -82,6 +84,7 @@ export const DataProvider = ({ children }) => {
         consignmentLayoutHistory: consignmentHistoryRes.data,
         consignmentOpnames: consignmentOpnamesRes.data,
         monitoringStock: monitoringStockRes.data,
+        supplierReturns: supplierReturnsRes.data,
         settings: { ...DEFAULT_SETTINGS, ...settingsRes.data },
       });
     } catch (e) {
@@ -124,6 +127,8 @@ export const DataProvider = ({ children }) => {
   const addTransaction = async (payload) => { await api.post('/transactions', payload); await fetchAll(); };
   const addReceipt = async (payload) => { const { data } = await api.post('/receipts', payload); await fetchAll(); return data; };
   const recordStockDamage = async (payload) => { const { data } = await api.post('/stock-damage-discoveries', payload); await fetchAll(); return data; };
+  const createSupplierReturn = async (payload) => { const { data } = await api.post('/supplier-returns', payload); await fetchAll(); return data; };
+  const receiveSupplierReplacement = async (id, payload) => { const { data } = await api.post(`/supplier-returns/${id}/replacement`, payload); await fetchAll(); return data; };
 
   const createOutboundLoad = async (payload) => {
     const { data } = await api.post('/outbound-loads', payload);
@@ -225,7 +230,7 @@ export const DataProvider = ({ children }) => {
       canManageSettings: hasPermission(user?.role, 'settings'),
       theme, setTheme,
       login, logout, ...state, fetchAll,
-      addProduct, updateProduct, deleteProduct, addTransaction, addReceipt, recordStockDamage,
+      addProduct, updateProduct, deleteProduct, addTransaction, addReceipt, recordStockDamage, createSupplierReturn, receiveSupplierReplacement,
       createOutboundLoad, refreshOutboundLoads, startOutboundLoad, completeOutboundLoad, createConsignmentReturn, createSalesReturn, settleOutboundDocument, updateSJStatus, cancelOutboundLoad, editOutboundLoad, cancelPurchaseOrder,
       addSupplier, addPO, addUser, updateUser, deleteUser, changeUserPassword, updateSettings, resetData, importCsv,
       addStackAllocation, updateStackAllocation, deleteStackAllocation,
