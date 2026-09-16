@@ -17,10 +17,17 @@ from backend.operational_guards import router as operational_guards_router, ensu
 from backend.operational_corrections import router as operational_corrections_router
 from backend.integrity_control import router as integrity_control_router
 from backend.stock_opname import router as stock_opname_router
+from backend.stack_lots import router as stack_lots_router, ensure_stack_lot_indexes
+from backend.fefo_flow import router as fefo_flow_router
+from backend.lot_corrections import router as lot_corrections_router
 
+# Lot-aware wrappers must precede the generic correction/guard routes.
+app.include_router(lot_corrections_router)
 # Koreksi penerimaan mendaftarkan pembungkus /api/receipts lebih dulu agar
-# metadata tumpukan/area rusak tersimpan sebelum route operasional lama.
+# metadata tumpukan/area rusak dan lot penerimaan tersimpan.
 app.include_router(operational_corrections_router)
+# FEFO completion wraps the serialized outbound completion route.
+app.include_router(fefo_flow_router)
 # Guard routes must be registered before the original operational routers so
 # the same public paths are serialized across Railway workers.
 app.include_router(operational_guards_router)
@@ -33,6 +40,7 @@ app.include_router(pdf_documents_router)
 app.include_router(queue_flow_router)
 app.include_router(integrity_control_router)
 app.include_router(stock_opname_router)
+app.include_router(stack_lots_router)
 
 _original_lifespan = app.router.lifespan_context
 
@@ -42,6 +50,7 @@ async def hardened_lifespan(application):
     async with _original_lifespan(application):
         await ensure_performance_indexes()
         await ensure_operational_guard_indexes()
+        await ensure_stack_lot_indexes()
         yield
 
 
