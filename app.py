@@ -16,6 +16,7 @@ from backend.runtime_hardening import ensure_performance_indexes, hardening_midd
 from backend.operational_guards import router as operational_guards_router, ensure_operational_guard_indexes
 from backend.operational_corrections import router as operational_corrections_router
 from backend.integrity_control import router as integrity_control_router
+from backend.stock_opname import router as stock_opname_router
 
 # Koreksi penerimaan mendaftarkan pembungkus /api/receipts lebih dulu agar
 # metadata tumpukan/area rusak tersimpan sebelum route operasional lama.
@@ -31,6 +32,7 @@ app.include_router(stack_allocations_router)
 app.include_router(pdf_documents_router)
 app.include_router(queue_flow_router)
 app.include_router(integrity_control_router)
+app.include_router(stock_opname_router)
 
 _original_lifespan = app.router.lifespan_context
 
