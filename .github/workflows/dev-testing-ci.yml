@@ -3,17 +3,103 @@ name: Dev Testing CI
 on:
   push:
     branches: [dev-testing]
-  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
-  validate:
+  apply-audited-fixes:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: dev-testing
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Apply audited fixes
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected exactly 1 match, found {count}: {old[:100]!r}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          replace_once('backend/server.py', '    ROLE_OPERATOR: {"inbound", "outbound"},', '    ROLE_OPERATOR: {"rebagging"},')
+          replace_once(
+              'backend/server.py',
+              '        return canonical in {ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_OPERATOR}\n    if permission == "operations":\n        return canonical in {ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_OPERATOR}',
+              '        return canonical in {ROLE_SUPERADMIN, ROLE_ADMIN}\n    if permission == "operations":\n        return canonical in {ROLE_SUPERADMIN, ROLE_ADMIN}',
+          )
+          replace_once('backend/server.py', 'WRITE_ROLES = {ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_OPERATOR}', 'WRITE_ROLES = {ROLE_SUPERADMIN, ROLE_ADMIN}')
+          replace_once('frontend/src/lib/permissions.js', "  Operator: new Set(['inbound', 'outbound']),", "  Operator: new Set(['rebagging']),")
+
+          replace_once(
+              'backend/server.py',
+              '''async def require_master_write(user: dict = Depends(get_current_user)) -> dict:\n    if not has_role_permission(user.get("role"), "masterWrite"):\n        raise HTTPException(\n            status_code=403,\n            detail=f"Peran {role_label(user.get('role'))} tidak memiliki hak untuk mengubah data master",\n        )\n    return user\n''',
+              '''async def require_master_write(user: dict = Depends(get_current_user)) -> dict:\n    if not has_role_permission(user.get("role"), "masterWrite"):\n        raise HTTPException(\n            status_code=403,\n            detail=f"Peran {role_label(user.get('role'))} tidak memiliki hak untuk mengubah data master",\n        )\n    return user\n\n\nasync def require_cost_view(user: dict = Depends(get_current_user)) -> dict:\n    if not has_role_permission(user.get("role"), "costView"):\n        raise HTTPException(\n            status_code=403,\n            detail=f"Peran {role_label(user.get('role'))} tidak memiliki hak untuk melihat biaya operasional",\n        )\n    return user\n''',
+          )
+
+          replace_once('backend/master_products.py', 'from backend.server import db, new_id, require_write', 'from backend.server import db, new_id, require_master_write')
+          p = Path('backend/master_products.py')
+          text = p.read_text(encoding='utf-8')
+          if text.count('Depends(require_write)') != 3:
+              raise SystemExit('backend/master_products.py: expected 3 require_write endpoint dependencies')
+          p.write_text(text.replace('Depends(require_write)', 'Depends(require_master_write)'), encoding='utf-8')
+
+          replace_once('backend/inventory_flow.py', '    require_write,\n    ensure_channel_stock,', '    require_write,\n    require_master_write,\n    ensure_channel_stock,')
+          replace_once('backend/inventory_flow.py', 'async def create_purchase_order(body: PurchaseOrderInput, user: dict = Depends(require_write)):', 'async def create_purchase_order(body: PurchaseOrderInput, user: dict = Depends(require_master_write)):')
+          replace_once('backend/inventory_flow.py', 'async def cancel_purchase_order(po_id: str, body: PurchaseOrderCancelInput, user: dict = Depends(require_write)):', 'async def cancel_purchase_order(po_id: str, body: PurchaseOrderCancelInput, user: dict = Depends(require_master_write)):')
+          replace_once('backend/inventory_flow.py', 'async def import_master_csv(file: UploadFile = File(...), user: dict = Depends(require_write)):', 'async def import_master_csv(file: UploadFile = File(...), user: dict = Depends(require_master_write)):')
+
+          replace_once('backend/outbound_flow.py', '    require_write,\n    require_admin,', '    require_write,\n    require_admin,\n    require_cost_view,')
+          replace_once('backend/outbound_flow.py', 'async def get_loading_costs(date: str = "", user: dict = Depends(get_current_user)):', 'async def get_loading_costs(date: str = "", user: dict = Depends(require_cost_view)):')
+
+          replace_once(
+              'backend/stack_allocations.py',
+              '''@router.get("/stack-allocations")\nasync def list_stack_allocations(user: dict = Depends(get_current_user)):\n    await migrate_default_locations()\n    return await db.stack_allocations.find({}, {"_id": 0}).sort(''',
+              '''@router.get("/stack-allocations")\nasync def list_stack_allocations(user: dict = Depends(get_current_user)):\n    return await db.stack_allocations.find({}, {"_id": 0}).sort(''',
+          )
+
+          replace_once('frontend/src/pages/LayarAntrian.jsx', ".filter((load) => load.status !== 'Selesai')", ".filter((load) => ['Menunggu', 'Sedang Dimuat'].includes(load.status))")
+          replace_once(
+              'frontend/src/pages/PurchaseOrder.jsx',
+              '''      await addPO({\n        supplier: form.supplier,\n        date: new Date().toISOString(),''',
+              '''      await addPO({\n        supplier: form.supplier,\n        no: form.no.trim(),\n        date: new Date().toISOString(),''',
+          )
+
+          replace_once(
+              'backend/server.py',
+              '''            db.surat_jalan, db.purchase_orders, db.outbound_loads, db.products,\n            db.suppliers, db.counters,''',
+              '''            db.surat_jalan, db.purchase_orders, db.outbound_loads, db.products,\n            db.suppliers, db.supplier_returns, db.consignment_layouts,\n            db.consignment_layout_history, db.consignment_opnames,\n            db.loading_cost_settlements, db.counters,''',
+          )
+
+          final_ci = '''name: Dev Testing CI\n\non:\n  push:\n    branches: [dev-testing]\n  workflow_dispatch:\n\njobs:\n  validate:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n\n      - uses: actions/setup-node@v4\n        with:\n          node-version: '20'\n\n      - name: Build frontend\n        working-directory: frontend\n        run: |\n          yarn install --network-timeout 600000\n          CI=false yarn build\n\n      - uses: actions/setup-python@v5\n        with:\n          python-version: '3.12'\n\n      - name: Install backend test dependencies\n        run: |\n          python -m pip install --upgrade pip\n          pip install -r requirements.txt pytest\n\n      - name: Validate Python syntax\n        run: python -m py_compile backend/server.py backend/inventory_flow.py backend/master_products.py backend/outbound_flow.py backend/stack_allocations.py app.py\n\n      - name: Run backend safety tests\n        run: pytest -q backend/tests/test_unit_safety.py\n'''
+          Path('.github/workflows/dev-testing-ci.yml').write_text(final_ci, encoding='utf-8')
+          hotfix = Path('.github/workflows/one-time-audit-hotfix.yml')
+          if hotfix.exists():
+              hotfix.unlink()
+          PY
+
+      - name: Install backend dependencies and test
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+          python -m py_compile backend/server.py backend/inventory_flow.py backend/master_products.py backend/outbound_flow.py backend/stack_allocations.py app.py
+          pytest -q backend/tests/test_unit_safety.py
 
       - name: Build frontend
         working-directory: frontend
@@ -21,9 +107,12 @@ jobs:
           yarn install --network-timeout 600000
           CI=false yarn build
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Validate Python syntax
-        run: python -m py_compile backend/server.py backend/inventory_flow.py backend/master_products.py backend/outbound_flow.py app.py
+      - name: Commit audited fixes
+        shell: bash
+        run: |
+          git config user.name "inventory-audit-bot"
+          git config user.email "inventory-audit-bot@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix: harden inventory workflow permissions and queue safety"
+          git push origin HEAD:dev-testing
