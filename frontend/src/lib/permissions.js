@@ -30,7 +30,7 @@ export const canonicalRole = (role) => ({
 }[role] || role || 'Pemantau');
 
 const ROLE_PERMISSIONS = {
-  Administrator: new Set(['masterWrite', 'inbound', 'outbound', 'rebagging', 'qc', 'users', 'settings', 'costView']),
+  Administrator: new Set(['masterWrite', 'inbound', 'outbound', 'rebagging', 'qc', 'users', 'settings', 'costView', 'corrections']),
   Supervisor: new Set(['masterWrite', 'inbound', 'outbound', 'costView']),
   Operator: new Set(['rebagging']),
   QC: new Set(['qc']),
