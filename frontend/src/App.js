@@ -21,6 +21,7 @@ import OpnameKonsinyasi from './pages/OpnameKonsinyasi';
 import KoreksiOperasional from './pages/KoreksiOperasional';
 import KontrolIntegritas from './pages/KontrolIntegritas';
 import OpnameGudang from './pages/OpnameGudang';
+import FefoLot from './pages/FefoLot';
 import { hasPermission, roleLabel } from './lib/permissions';
 
 const Loading = () => (
@@ -55,6 +56,7 @@ function AppRoutes() {
       <Route path="/produk" element={<Protected><DaftarProduk /></Protected>} />
       <Route path="/import" element={<Protected permission="masterWrite"><ImportData /></Protected>} />
       <Route path="/tumpukan" element={<Protected><TumpukanStok /></Protected>} />
+      <Route path="/fefo" element={<Protected><FefoLot /></Protected>} />
       <Route path="/opname-gudang" element={<Protected><OpnameGudang /></Protected>} />
       <Route path="/opname-konsinyasi" element={<Protected><OpnameKonsinyasi /></Protected>} />
       <Route path="/catat" element={<Protected permission="operations"><CatatStok /></Protected>} />
