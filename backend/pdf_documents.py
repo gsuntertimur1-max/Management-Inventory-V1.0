@@ -283,18 +283,18 @@ async def export_bon_muat_pdf(load_id: str, user: dict = Depends(get_current_use
     if not load:
         raise HTTPException(status_code=404, detail="Bon Muat tidak ditemukan")
 
-    # Bon Muat adalah instruksi fisik pemuatan: gabungkan baris produk yang sama.
+    # Gabungkan hanya baris dengan produk, dokumen, dan tumpukan asal yang sama.
     # Riwayat pengeluaran dan Surat Jalan tetap memakai baris asli beserta dokumen sumbernya.
     grouped: dict[str, dict] = {}
     for item in load.get("items", []):
-        key = item.get("productId") or f"{item.get('sku', '')}|{item.get('name', '')}"
+        key = f"{item.get('productId') or item.get('sku', '')}|{item.get('documentNo', '')}|{item.get('stackCode', '')}|{item.get('channel', '')}"
         entry = grouped.setdefault(key, {**item, "qty": 0.0, "berat": 0.0})
         entry["qty"] += float(item.get("qty", 0) or 0)
         entry["berat"] += float(item.get("berat", 0) or 0)
 
     buffer = io.BytesIO()
     width = 80 * mm
-    height = max(150 * mm, (124 + (len(grouped) * 13)) * mm)
+    height = max(150 * mm, (124 + (len(grouped) * 18)) * mm)
     c = canvas.Canvas(buffer, pagesize=(width, height))
     mid = width / 2
     if THERMAL_LOGO.exists():
@@ -315,7 +315,7 @@ async def export_bon_muat_pdf(load_id: str, user: dict = Depends(get_current_use
         ("Tujuan", load.get("party", "-")),
         ("No. Polisi", load.get("polisi", "-")),
         ("Nama Sopir", load.get("pengambil", "-")),
-        ("Pemuatan", load.get("unit_loading", "-")),
+        ("Lokasi muat", load.get("unit_loading", "-")),
     ]
     for label, value in fields:
         c.setFont("Helvetica", 6.5); c.drawString(5 * mm, y, label)
@@ -331,6 +331,7 @@ async def export_bon_muat_pdf(load_id: str, user: dict = Depends(get_current_use
         full_secondary = int(qty // secondary_qty) if secondary_qty else 0
         remaining_primary = qty - (full_secondary * secondary_qty) if secondary_qty else qty
         c.setFont("Helvetica-Bold", 6.7); c.drawString(5 * mm, y, str(item.get("name", ""))[:48]); y -= 4 * mm
+        c.setFont("Helvetica", 6.2); c.drawString(7 * mm, y, f"{item.get('documentNo') or load.get('ref', '-')} | Tumpukan: {item.get('stackCode') or item.get('location') or '-'}"[:72]); y -= 4 * mm
         c.setFont("Helvetica", 6.2)
         c.drawString(7 * mm, y, f"Total: {_num(qty)} {item.get('unit', 'pcs')} | {_num(item.get('berat', 0))} {item.get('measureUnit', 'kg')}")
         y -= 4 * mm

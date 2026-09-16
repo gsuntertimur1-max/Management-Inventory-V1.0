@@ -206,6 +206,20 @@ def _loading_unit_from_products(products: List[dict]) -> tuple[str, str]:
     return " / ".join(labels) if labels else "-", queue_prefix or "A"
 
 
+def loading_units_from_items(items: List[dict]) -> tuple[str, str]:
+    """Use each physical source; mixed GBB loads have their own queue series."""
+    units = []
+    for item in items:
+        source = str(item.get("stackCode") or item.get("location") or "").strip().upper()
+        match = re.search(r"(?:^|\b)(MP1|(?:UNIT\s*)?(?:1[7-9]|2[0-4]))(?=/|\b)", source)
+        unit = match.group(1).replace("UNIT", "").strip() if match else ""
+        if unit and unit not in units:
+            units.append(unit)
+    if not units:
+        return "Lokasi belum tercatat", "A"
+    return " / ".join(f"Unit {unit}" if unit != "MP1" else "MP1" for unit in units), (units[0] if len(units) == 1 else "M")
+
+
 @router.get("/outbound-loads")
 async def list_outbound_loads(user: dict = Depends(get_current_user)):
     return await db.outbound_loads.find({}, {"_id": 0}).sort("created_at", -1).to_list(2000)
@@ -301,6 +315,7 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         if qty > available + 1e-9:
             raise HTTPException(status_code=400, detail=f"Stok {channel} untuk {product.get('name', 'produk')} tidak mencukupi. Tersedia {available:g} {product.get('unit', '')}")
 
+    multi_source = len(refs) > 1 or len(body.items) > 1
     load_items = []
     for item in body.items:
         product = products[item.productId]
@@ -310,14 +325,27 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         qty = float(item.qty)
         weight = float(product.get("weight", 0) or 0)
         stack_code = item.stackCode.strip().upper()
+        if multi_source and not stack_code:
+            raise HTTPException(status_code=400, detail=f"Pilih tumpukan asal untuk setiap barang pada pemuatan multi-SO/multi-produk ({product.get('name', '')})")
         channel = normalize_channel(item.channel, normalize_channel(product.get("channel")))
         if stack_code and stack_code not in await valid_stack_codes():
             raise HTTPException(status_code=400, detail="Tumpukan asal tidak valid")
         actual_location = stack_code or product.get("location", "")
         load_items.append({"productId": item.productId, "documentNo": item_ref, "sku": product.get("sku", ""), "name": product.get("name", ""), "channel": channel, "qty": qty, "unit": product.get("unit", ""), "weight": weight, "measureUnit": product.get("measureUnit", "kg") or "kg", "berat": weight * qty, "secondary": product.get("secondary", ""), "secondaryQty": float(product.get("secondaryQty", 0) or 0), "location": product.get("location", ""), "stackCode": stack_code, "crewGroup": _crew_group(actual_location), "loadingFee": _loading_fee(product, qty, charge_mode_override=body.loadingFeeChargeMode)})
 
-    ordered_products = [products[product_id] for product_id in item_order]
-    unit_loading, queue_prefix = _loading_unit_from_products(ordered_products)
+    if multi_source and body.kondisi == "BAIK":
+        quantities_by_stack = defaultdict(float)
+        for item in load_items:
+            quantities_by_stack[(item["productId"], item["stackCode"])] += item["qty"]
+        active_loads = await db.outbound_loads.find({"status": {"$in": ["Menunggu", "Sedang Dimuat"]}, "kondisi": "BAIK"}, {"_id": 0, "items": 1}).to_list(5000)
+        for (product_id, stack_code), qty in quantities_by_stack.items():
+            allocation = await db.stack_allocations.find_one({"productId": product_id, "stackCode": stack_code}, {"_id": 0, "primaryQty": 1})
+            reserved = sum(float(line.get("qty", 0) or 0) for load in active_loads for line in load.get("items", []) if line.get("productId") == product_id and line.get("stackCode") == stack_code)
+            available = float((allocation or {}).get("primaryQty", 0) or 0) - reserved
+            if qty > available + 1e-9:
+                raise HTTPException(status_code=400, detail=f"Stok tumpukan {stack_code} untuk {products[product_id].get('name', '')} tidak cukup (tersedia {max(available, 0):g})")
+
+    unit_loading, queue_prefix = loading_units_from_items(load_items)
 
     op_now = operational_now()
     operational_date = op_now.strftime("%Y-%m-%d")

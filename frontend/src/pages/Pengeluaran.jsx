@@ -121,7 +121,7 @@ const Pengeluaran = () => {
     }
 
     const logoUrl = `${window.location.origin}/bulog-sunter.png`;
-    const itemNames = (load.items || []).map((item) => `<div class="product-name">${escapeHtml(item.name)}</div>`).join('');
+    const itemNames = (load.items || []).map((item) => `<div class="product-name">${escapeHtml(item.name)}</div><div class="field-value">${escapeHtml(item.documentNo || load.ref || '-')} · Tumpukan: ${escapeHtml(item.stackCode || item.location || '-')}</div>`).join('');
     const colly = (load.items || []).map((item) => `${escapeHtml(formatNum(item.qty))} ${escapeHtml(item.unit || '')}`).join(' + ') || '-';
 
     w.document.open();
@@ -161,10 +161,10 @@ const Pengeluaran = () => {
 
       <div class="grid"><div class="k">Colly:</div><div class="v">${colly}</div></div>
       <div class="grid"><div class="k">Tonase:</div><div class="v">${escapeHtml(formatNum(load.total_berat || 0))} Kg</div></div>
-      <div class="grid"><div class="k">Pemuatan:</div><div class="v">${escapeHtml(load.unit_loading || '-')}</div></div>
+      <div class="grid"><div class="k">Lokasi muat:</div><div class="v">${escapeHtml(load.unit_loading || '-')}</div></div>
 
       <div class="rule"></div>
-      <div class="grid"><div class="k">Dokumen ${escapeHtml(load.document_type || 'SO')}:</div><div class="v">${escapeHtml(load.ref || '-')}</div></div>
+      <div class="grid"><div class="k">Dokumen ${escapeHtml(load.document_type || 'SO')}:</div><div class="v">${escapeHtml((load.documents || [load.ref]).join(', ') || '-')}</div></div>
       <div class="field"><div class="field-name">Tujuan / A.N:</div><div class="field-value">${escapeHtml(load.party || '-')}</div></div>
       <div class="grid"><div class="k">No. Plat:</div><div class="v">${escapeHtml(load.polisi || '-')}</div></div>
       <div class="grid"><div class="k">Pengambil:</div><div class="v">${escapeHtml(load.pengambil || '-')}</div></div>

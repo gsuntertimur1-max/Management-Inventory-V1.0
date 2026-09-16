@@ -10,6 +10,7 @@ os.environ.setdefault("JWT_SECRET", "test-only-jwt-secret")
 
 import server
 from backend.inventory_flow import ReceiptItemInput, receipt_condition_quantities
+from backend.outbound_flow import loading_units_from_items
 from fastapi import HTTPException
 
 
@@ -72,3 +73,9 @@ def test_receipt_quantities_preserve_legacy_condition_and_validate_split_total()
     assert receipt_condition_quantities(split_item, "BAIK") == (994.0, 6.0)
     with pytest.raises(HTTPException, match="Total penerimaan"):
         receipt_condition_quantities(ReceiptItemInput(productId="minyak", qty=1000, goodQty=994, damagedQty=5), "BAIK")
+
+
+def test_mixed_loading_sources_get_distinct_queue_prefix():
+    assert loading_units_from_items([{"stackCode": "18/A01"}, {"stackCode": "19/B02"}]) == ("Unit 18 / Unit 19", "M")
+    assert loading_units_from_items([{"stackCode": "18/A01"}, {"stackCode": "18/B02"}]) == ("Unit 18", "18")
+    assert loading_units_from_items([{"location": "Gudang 18"}, {"location": "Gudang 19"}]) == ("Unit 18 / Unit 19", "M")

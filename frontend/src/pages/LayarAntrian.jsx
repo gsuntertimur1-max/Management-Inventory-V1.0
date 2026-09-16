@@ -153,6 +153,7 @@ const LayarAntrian = () => {
             </div>
             <div className="font-semibold">{load.party}</div>
             <div className="label-mono text-[10px] mt-1">{load.ref || 'Tanpa referensi'} · {load.polisi || 'Tanpa no. polisi'}</div>
+            <div className="text-xs text-[#60a5fa] mt-1">Lokasi muat: {load.unit_loading || '-'}</div>
             <div className="mt-4 pt-4 border-t border-[#151d28] flex justify-between text-xs"><span className="text-[#8b93a1]">{formatNum((load.items || []).length)} jenis barang</span><span className="font-mono">{formatNum(load.total_unit || 0)} unit</span></div>
           </div>
         ))}
