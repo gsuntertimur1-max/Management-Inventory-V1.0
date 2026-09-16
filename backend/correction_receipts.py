@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from backend.server import db, require_admin, require_write
 from backend.inventory_flow import ReceiptInput, receipt_condition_quantities
@@ -77,7 +77,7 @@ async def enrich_receipt_result(body: ReceiptInput, result: dict) -> dict:
 
 
 @router.post("/receipts")
-async def guarded_receive_stock_with_metadata(body: ReceiptInput, user: dict = Depends(require_write)):
+async def guarded_receive_stock_with_metadata(body: ReceiptInput, request: Request, user: dict = Depends(require_write)):
     from backend.stack_allocations import valid_stack_codes
 
     valid_stacks = None
@@ -93,7 +93,7 @@ async def guarded_receive_stock_with_metadata(body: ReceiptInput, user: dict = D
         if stack_code not in valid_stacks:
             raise HTTPException(status_code=400, detail="Lokasi tumpukan penerimaan tidak valid")
 
-    result = await guarded_receive_stock(body, user)
+    result = await guarded_receive_stock(body, request, user)
     return await enrich_receipt_result(body, result)
 
 
