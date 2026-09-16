@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutGrid, Boxes, Layers, ArrowLeftRight, Send, History, ClipboardList, Truck, MonitorSmartphone, Users, Settings, PlusCircle, LogOut, Menu, ChevronDown, PackageSearch, Workflow, ShoppingCart, ShieldCheck, ClipboardCheck, TriangleAlert, RefreshCcw, Activity } from 'lucide-react';
+import { LayoutGrid, Boxes, Layers, ArrowLeftRight, Send, History, ClipboardList, Truck, MonitorSmartphone, Users, Settings, PlusCircle, LogOut, Menu, ChevronDown, PackageSearch, Workflow, ShoppingCart, ShieldCheck, ClipboardCheck, TriangleAlert, RefreshCcw, Activity, CalendarClock } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { hasPermission, roleLabel } from '../lib/permissions';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from './ui/sheet';
@@ -13,6 +13,7 @@ const NAV_GROUPS = [
     label: 'Inventori', icon: PackageSearch, items: [
       { to: '/produk', label: 'Daftar Produk', icon: Boxes },
       { to: '/tumpukan', label: 'Tumpukan Stok', icon: Layers },
+      { to: '/fefo', label: 'Lot & FEFO', icon: CalendarClock },
       { to: '/opname-gudang', label: 'Stock Opname GBB', icon: ClipboardCheck },
       { to: '/opname-konsinyasi', label: 'Opname Bazar/E-commerce', icon: ClipboardCheck },
     ],
@@ -82,25 +83,17 @@ const Layout = ({ children }) => {
           <nav className="hidden xl:flex flex-1 flex-wrap items-center justify-center gap-1 px-2">
             {visibleGroups.map((group) => group.to ? (
               <NavLink key={group.to} to={group.to} end={group.to === '/'} className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
-                <group.icon size={15} />
-                <span>{group.label}</span>
+                <group.icon size={15} /><span>{group.label}</span>
               </NavLink>
             ) : (
               <DropdownMenu key={group.label}>
                 <DropdownMenuTrigger asChild>
-                  <button type="button" className={`nav-link outline-none ${isGroupActive(group) ? 'active' : ''}`}>
-                    <group.icon size={15} />
-                    <span>{group.label}</span>
-                    <ChevronDown size={13} />
-                  </button>
+                  <button type="button" className={`nav-link outline-none ${isGroupActive(group) ? 'active' : ''}`}><group.icon size={15} /><span>{group.label}</span><ChevronDown size={13} /></button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" className="min-w-52 border-[#242f3d] bg-[#0d121b] p-1.5 text-[#e7ebf2] shadow-xl">
                   {group.items.map((item) => (
                     <DropdownMenuItem key={item.to} asChild className="cursor-pointer rounded-lg p-0 focus:bg-[#172033] focus:text-white">
-                      <NavLink to={item.to} className={`flex w-full items-center gap-2.5 px-3 py-2.5 text-sm ${isPathActive(item.to) ? 'bg-[#2563eb]/15 text-[#60a5fa]' : 'text-[#aab4c4]'}`}>
-                        <item.icon size={17} />
-                        <span>{item.label}</span>
-                      </NavLink>
+                      <NavLink to={item.to} className={`flex w-full items-center gap-2.5 px-3 py-2.5 text-sm ${isPathActive(item.to) ? 'bg-[#2563eb]/15 text-[#60a5fa]' : 'text-[#aab4c4]'}`}><item.icon size={17} /><span>{item.label}</span></NavLink>
                     </DropdownMenuItem>
                   ))}
                 </DropdownMenuContent>
@@ -109,56 +102,30 @@ const Layout = ({ children }) => {
           </nav>
 
           <div className="hidden xl:flex items-center gap-2 shrink-0">
-            {canWrite && <button data-testid="header-catat-btn" onClick={() => navigate('/catat')} className="btn-primary inline-flex items-center gap-1.5 text-xs font-semibold px-3.5 py-2 rounded-lg">
-              <PlusCircle size={15} /> Catat Transaksi
-            </button>}
+            {canWrite && <button data-testid="header-catat-btn" onClick={() => navigate('/catat')} className="btn-primary inline-flex items-center gap-1.5 text-xs font-semibold px-3.5 py-2 rounded-lg"><PlusCircle size={15} /> Catat Transaksi</button>}
             <div className="flex items-center gap-2 pl-2">
-              <div className="text-right leading-tight hidden md:block">
-                <div className="text-[13px] font-semibold">{user?.name}</div>
-                <div className="label-mono text-[9px]">{roleLabel(user?.role)}</div>
-              </div>
-              <button data-testid="logout-btn" onClick={logout} title="Keluar" className="w-9 h-9 rounded-lg border border-[#242f3d] flex items-center justify-center text-[#8b93a1] hover:text-white hover:bg-[#141a24] transition-colors">
-                <LogOut size={16} />
-              </button>
+              <div className="text-right leading-tight hidden md:block"><div className="text-[13px] font-semibold">{user?.name}</div><div className="label-mono text-[9px]">{roleLabel(user?.role)}</div></div>
+              <button data-testid="logout-btn" onClick={logout} title="Keluar" className="w-9 h-9 rounded-lg border border-[#242f3d] flex items-center justify-center text-[#8b93a1] hover:text-white hover:bg-[#141a24] transition-colors"><LogOut size={16} /></button>
             </div>
           </div>
 
           <div className="ml-auto xl:hidden">
             <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
-              <SheetTrigger asChild>
-                <button type="button" aria-label="Buka menu navigasi" className="w-11 h-11 rounded-xl border border-[#242f3d] flex items-center justify-center text-[#c7d0dc] hover:text-white hover:bg-[#141a24] transition-colors">
-                  <Menu size={21} />
-                </button>
-              </SheetTrigger>
+              <SheetTrigger asChild><button type="button" aria-label="Buka menu navigasi" className="w-11 h-11 rounded-xl border border-[#242f3d] flex items-center justify-center text-[#c7d0dc] hover:text-white hover:bg-[#141a24] transition-colors"><Menu size={21} /></button></SheetTrigger>
               <SheetContent side="right" className="w-[min(88vw,360px)] h-[100dvh] p-0 border-[#242f3d] bg-[#090d14] text-[#e7ebf2] flex flex-col">
-                <SheetHeader className="text-left px-5 pt-6 pb-4 border-b border-[#1a222e]">
-                  <SheetTitle className="font-display text-lg text-white">Menu Inventori</SheetTitle>
-                  <SheetDescription className="text-[#8b93a1]">{user?.name || 'Pengguna'} · {roleLabel(user?.role)}</SheetDescription>
-                </SheetHeader>
-
+                <SheetHeader className="text-left px-5 pt-6 pb-4 border-b border-[#1a222e]"><SheetTitle className="font-display text-lg text-white">Menu Inventori</SheetTitle><SheetDescription className="text-[#8b93a1]">{user?.name || 'Pengguna'} · {roleLabel(user?.role)}</SheetDescription></SheetHeader>
                 <nav aria-label="Navigasi mobile" className="flex-1 overflow-y-auto px-3 py-4">
                   {visibleGroups.map((group) => group.to ? (
-                    <NavLink key={group.to} to={group.to} end={group.to === '/'} onClick={() => setMobileMenuOpen(false)} className={`mobile-nav-link mb-1 ${isGroupActive(group) ? 'active' : ''}`}>
-                      <group.icon size={19} /><span>{group.label}</span>
-                    </NavLink>
+                    <NavLink key={group.to} to={group.to} end={group.to === '/'} onClick={() => setMobileMenuOpen(false)} className={`mobile-nav-link mb-1 ${isGroupActive(group) ? 'active' : ''}`}><group.icon size={19} /><span>{group.label}</span></NavLink>
                   ) : (
                     <Accordion key={group.label} type="single" collapsible defaultValue={isGroupActive(group) ? group.label : undefined}>
                       <AccordionItem value={group.label} className="border-0">
-                        <AccordionTrigger className={`mobile-nav-link mb-1 py-3 hover:no-underline [&>svg]:ml-auto ${isGroupActive(group) ? 'active' : ''}`}>
-                          <span className="flex items-center gap-3"><group.icon size={19} />{group.label}</span>
-                        </AccordionTrigger>
-                        <AccordionContent className="pb-2 pl-4 space-y-1">
-                          {group.items.map((item) => (
-                            <NavLink key={item.to} to={item.to} onClick={() => setMobileMenuOpen(false)} className={`mobile-nav-link ${isPathActive(item.to) ? 'active' : ''}`}>
-                              <item.icon size={18} /><span>{item.label}</span>
-                            </NavLink>
-                          ))}
-                        </AccordionContent>
+                        <AccordionTrigger className={`mobile-nav-link mb-1 py-3 hover:no-underline [&>svg]:ml-auto ${isGroupActive(group) ? 'active' : ''}`}><span className="flex items-center gap-3"><group.icon size={19} />{group.label}</span></AccordionTrigger>
+                        <AccordionContent className="pb-2 pl-4 space-y-1">{group.items.map((item) => <NavLink key={item.to} to={item.to} onClick={() => setMobileMenuOpen(false)} className={`mobile-nav-link ${isPathActive(item.to) ? 'active' : ''}`}><item.icon size={18} /><span>{item.label}</span></NavLink>)}</AccordionContent>
                       </AccordionItem>
                     </Accordion>
                   ))}
                 </nav>
-
                 <div className="p-4 border-t border-[#1a222e] space-y-2 pb-[max(1rem,env(safe-area-inset-bottom))]">
                   {canWrite && <button data-testid="mobile-catat-btn" onClick={goToTransaction} className="btn-primary w-full inline-flex items-center justify-center gap-2 text-sm font-semibold px-4 py-3 rounded-xl"><PlusCircle size={18} /> Catat Transaksi</button>}
                   <button data-testid="mobile-logout-btn" onClick={handleLogout} className="w-full inline-flex items-center justify-center gap-2 text-sm font-semibold px-4 py-3 rounded-xl border border-[#242f3d] text-[#c7d0dc] hover:text-white hover:bg-[#141a24] transition-colors"><LogOut size={18} /> Keluar</button>
@@ -168,7 +135,6 @@ const Layout = ({ children }) => {
           </div>
         </div>
       </header>
-
       <main className="app-main max-w-[1440px] mx-auto px-4 sm:px-6 py-5 sm:py-8 fade-up">{children}</main>
     </div>
   );
