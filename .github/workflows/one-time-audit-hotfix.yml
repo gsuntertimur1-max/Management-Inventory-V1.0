@@ -1,0 +1,176 @@
+name: One-time audited inventory hotfix
+
+on:
+  push:
+    branches: [dev-testing]
+    paths:
+      - '.github/workflows/one-time-audit-hotfix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply-hotfix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev-testing
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Apply audited fixes
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected exactly 1 match, found {count}: {old[:100]!r}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          # 1) Final role model: Operator = Rebagging only; operational stock writes = Superadmin/Admin.
+          replace_once(
+              'backend/server.py',
+              '    ROLE_OPERATOR: {"inbound", "outbound"},',
+              '    ROLE_OPERATOR: {"rebagging"},',
+          )
+          replace_once(
+              'backend/server.py',
+              '        return canonical in {ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_OPERATOR}\n    if permission == "operations":\n        return canonical in {ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_OPERATOR}',
+              '        return canonical in {ROLE_SUPERADMIN, ROLE_ADMIN}\n    if permission == "operations":\n        return canonical in {ROLE_SUPERADMIN, ROLE_ADMIN}',
+          )
+          replace_once(
+              'backend/server.py',
+              'WRITE_ROLES = {ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_OPERATOR}',
+              'WRITE_ROLES = {ROLE_SUPERADMIN, ROLE_ADMIN}',
+          )
+          replace_once(
+              'frontend/src/lib/permissions.js',
+              "  Operator: new Set(['inbound', 'outbound']),",
+              "  Operator: new Set(['rebagging']),",
+          )
+
+          # 2) Add a dedicated backend dependency for loading-cost visibility.
+          replace_once(
+              'backend/server.py',
+              '''async def require_master_write(user: dict = Depends(get_current_user)) -> dict:\n    if not has_role_permission(user.get("role"), "masterWrite"):\n        raise HTTPException(\n            status_code=403,\n            detail=f"Peran {role_label(user.get('role'))} tidak memiliki hak untuk mengubah data master",\n        )\n    return user\n''',
+              '''async def require_master_write(user: dict = Depends(get_current_user)) -> dict:\n    if not has_role_permission(user.get("role"), "masterWrite"):\n        raise HTTPException(\n            status_code=403,\n            detail=f"Peran {role_label(user.get('role'))} tidak memiliki hak untuk mengubah data master",\n        )\n    return user\n\n\nasync def require_cost_view(user: dict = Depends(get_current_user)) -> dict:\n    if not has_role_permission(user.get("role"), "costView"):\n        raise HTTPException(\n            status_code=403,\n            detail=f"Peran {role_label(user.get('role'))} tidak memiliki hak untuk melihat biaya operasional",\n        )\n    return user\n''',
+          )
+
+          # 3) Master Product endpoints must be protected on the backend, not only hidden in UI.
+          replace_once(
+              'backend/master_products.py',
+              'from backend.server import db, new_id, require_write',
+              'from backend.server import db, new_id, require_master_write',
+          )
+          p = Path('backend/master_products.py')
+          text = p.read_text(encoding='utf-8')
+          if text.count('Depends(require_write)') != 3:
+              raise SystemExit('backend/master_products.py: expected 3 require_write endpoint dependencies')
+          p.write_text(text.replace('Depends(require_write)', 'Depends(require_master_write)'), encoding='utf-8')
+
+          # 4) PO creation/cancellation and master import are master-data operations.
+          replace_once(
+              'backend/inventory_flow.py',
+              '    require_write,\n    ensure_channel_stock,',
+              '    require_write,\n    require_master_write,\n    ensure_channel_stock,',
+          )
+          replace_once(
+              'backend/inventory_flow.py',
+              'async def create_purchase_order(body: PurchaseOrderInput, user: dict = Depends(require_write)):',
+              'async def create_purchase_order(body: PurchaseOrderInput, user: dict = Depends(require_master_write)):',
+          )
+          replace_once(
+              'backend/inventory_flow.py',
+              'async def cancel_purchase_order(po_id: str, body: PurchaseOrderCancelInput, user: dict = Depends(require_write)):',
+              'async def cancel_purchase_order(po_id: str, body: PurchaseOrderCancelInput, user: dict = Depends(require_master_write)):',
+          )
+          replace_once(
+              'backend/inventory_flow.py',
+              'async def import_master_csv(file: UploadFile = File(...), user: dict = Depends(require_write)):',
+              'async def import_master_csv(file: UploadFile = File(...), user: dict = Depends(require_master_write)):',
+          )
+
+          # 5) Loading cost report needs costView permission.
+          replace_once(
+              'backend/outbound_flow.py',
+              '    require_write,\n    require_admin,',
+              '    require_write,\n    require_admin,\n    require_cost_view,',
+          )
+          replace_once(
+              'backend/outbound_flow.py',
+              'async def get_loading_costs(date: str = "", user: dict = Depends(get_current_user)):',
+              'async def get_loading_costs(date: str = "", user: dict = Depends(require_cost_view)):',
+          )
+
+          # 6) A GET request must not silently migrate/modify stock data.
+          replace_once(
+              'backend/stack_allocations.py',
+              '''@router.get("/stack-allocations")\nasync def list_stack_allocations(user: dict = Depends(get_current_user)):\n    await migrate_default_locations()\n    return await db.stack_allocations.find({}, {"_id": 0}).sort(''',
+              '''@router.get("/stack-allocations")\nasync def list_stack_allocations(user: dict = Depends(get_current_user)):\n    return await db.stack_allocations.find({}, {"_id": 0}).sort(''',
+          )
+
+          # 7) Cancelled queues must never appear as active/loading.
+          replace_once(
+              'frontend/src/pages/LayarAntrian.jsx',
+              ".filter((load) => load.status !== 'Selesai')",
+              ".filter((load) => ['Menunggu', 'Sedang Dimuat'].includes(load.status))",
+          )
+
+          # 8) Actually submit the manually entered PO number.
+          replace_once(
+              'frontend/src/pages/PurchaseOrder.jsx',
+              '''      await addPO({\n        supplier: form.supplier,\n        date: new Date().toISOString(),''',
+              '''      await addPO({\n        supplier: form.supplier,\n        no: form.no.trim(),\n        date: new Date().toISOString(),''',
+          )
+
+          # 9) Full reset must clear records introduced by newer modules too.
+          replace_once(
+              'backend/server.py',
+              '''            db.surat_jalan, db.purchase_orders, db.outbound_loads, db.products,\n            db.suppliers, db.counters,''',
+              '''            db.surat_jalan, db.purchase_orders, db.outbound_loads, db.products,\n            db.suppliers, db.supplier_returns, db.consignment_layouts,\n            db.consignment_layout_history, db.consignment_opnames,\n            db.loading_cost_settlements, db.counters,''',
+          )
+
+          # 10) CI must execute the existing safety tests, not only compile Python.
+          replace_once(
+              '.github/workflows/dev-testing-ci.yml',
+              '''      - name: Validate Python syntax\n        run: python -m py_compile backend/server.py backend/inventory_flow.py backend/master_products.py backend/outbound_flow.py app.py\n''',
+              '''      - name: Install backend test dependencies\n        run: |\n          python -m pip install --upgrade pip\n          pip install -r requirements.txt pytest\n\n      - name: Validate Python syntax\n        run: python -m py_compile backend/server.py backend/inventory_flow.py backend/master_products.py backend/outbound_flow.py app.py\n\n      - name: Run backend safety tests\n        run: pytest -q backend/tests/test_unit_safety.py\n''',
+          )
+          PY
+
+      - name: Install backend dependencies and test
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+          python -m py_compile backend/server.py backend/inventory_flow.py backend/master_products.py backend/outbound_flow.py backend/stack_allocations.py app.py
+          pytest -q backend/tests/test_unit_safety.py
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          yarn install --network-timeout 600000
+          CI=false yarn build
+
+      - name: Commit audited fixes
+        shell: bash
+        run: |
+          git config user.name "inventory-audit-bot"
+          git config user.email "inventory-audit-bot@users.noreply.github.com"
+          git rm .github/workflows/one-time-audit-hotfix.yml
+          git add backend/server.py backend/inventory_flow.py backend/master_products.py backend/outbound_flow.py backend/stack_allocations.py frontend/src/lib/permissions.js frontend/src/pages/LayarAntrian.jsx frontend/src/pages/PurchaseOrder.jsx .github/workflows/dev-testing-ci.yml
+          git diff --cached --check
+          git commit -m "fix: harden inventory workflow permissions and queue safety"
+          git push origin HEAD:dev-testing
