@@ -3,17 +3,162 @@ name: Dev Testing CI
 on:
   push:
     branches: [dev-testing]
-  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
-  validate:
+  harden-consistency:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: dev-testing
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Apply consistency fixes
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected exactly 1 match, found {count}: {old[:120]!r}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          # Inbound: compensate stack allocation as well as product/channel stock.
+          replace_once(
+              'backend/inventory_flow.py',
+              '    stock_changes = []\n    txns = []\n\n    try:',
+              '    stock_changes = []\n    stack_changes = []\n    txns = []\n\n    try:',
+          )
+          replace_once(
+              'backend/inventory_flow.py',
+              '''            if good_qty > 0 and stack_code:\n                from backend.stack_allocations import allocate_stock_to_stack\n                await allocate_stock_to_stack(product, stack_code, good_qty, user.get("name", ""))\n''',
+              '''            if good_qty > 0 and stack_code:\n                from backend.stack_allocations import allocate_stock_to_stack\n                await allocate_stock_to_stack(product, stack_code, good_qty, user.get("name", ""))\n                stack_changes.append({"productId": product["id"], "stackCode": stack_code, "qty": good_qty})\n''',
+          )
+          replace_once(
+              'backend/inventory_flow.py',
+              '''    except Exception:\n        await db.transactions.delete_many({"operation_id": operation_id})\n        for change in reversed(stock_changes):\n            rollback = {"$inc": {change["field"]: -change["qty"], f"channelStock.{change['channel']}.{change['field']}": -change["qty"]}}\n            if change["expChanged"]:\n                rollback["$set"] = {"exp": change["previousExp"]}\n            await db.products.update_one({"id": change["productId"]}, rollback)\n        raise\n''',
+              '''    except Exception:\n        await db.transactions.delete_many({"operation_id": operation_id})\n        for change in reversed(stack_changes):\n            try:\n                await decrease_stack_allocation(change["productId"], change["stackCode"], change["qty"], "Sistem (rollback penerimaan)")\n            except Exception:\n                pass\n        for change in reversed(stock_changes):\n            rollback = {"$inc": {change["field"]: -change["qty"], f"channelStock.{change['channel']}.{change['field']}": -change["qty"]}}\n            if change["expChanged"]:\n                rollback["$set"] = {"exp": change["previousExp"]}\n            await db.products.update_one({"id": change["productId"]}, rollback)\n        raise\n''',
+          )
+
+          # Damage discovery: if transaction logging fails, restore the chosen stack too.
+          replace_once(
+              'backend/inventory_flow.py',
+              '''    except Exception:\n        await db.products.update_one({"id": product["id"]}, {"$inc": {"stock": float(body.qty), "damaged": -float(body.qty), f"channelStock.{channel}.stock": float(body.qty), f"channelStock.{channel}.damaged": -float(body.qty)}})\n        raise\n    return {"operationId": operation_id, "transaction": transaction}\n''',
+              '''    except Exception:\n        try:\n            await allocate_stock_to_stack(product, stack_code, float(body.qty), "Sistem (rollback temuan rusak)")\n        except Exception:\n            pass\n        await db.transactions.delete_many({"operation_id": operation_id})\n        await db.products.update_one({"id": product["id"]}, {"$inc": {"stock": float(body.qty), "damaged": -float(body.qty), f"channelStock.{channel}.stock": float(body.qty), f"channelStock.{channel}.damaged": -float(body.qty)}})\n        raise\n    return {"operationId": operation_id, "transaction": transaction}\n''',
+          )
+
+          # Supplier return: don't leave an orphan claim if transaction logging fails.
+          replace_once(
+              'backend/inventory_flow.py',
+              '''    except Exception:\n        await db.products.update_one({"id": body.productId}, {"$inc": {"damaged": float(body.qty), f"channelStock.{channel}.damaged": float(body.qty)}})\n        raise\n    return doc\n''',
+              '''    except Exception:\n        await db.transactions.delete_many({"operation_id": doc["id"]})\n        await db.supplier_returns.delete_many({"id": doc["id"]})\n        await db.products.update_one({"id": body.productId}, {"$inc": {"damaged": float(body.qty), f"channelStock.{channel}.damaged": float(body.qty)}})\n        raise\n    return doc\n''',
+          )
+
+          old_replacement = '''@router.post("/supplier-returns/{return_id}/replacement")\nasync def receive_supplier_replacement(return_id: str, body: SupplierReplacementInput, user: dict = Depends(require_write)):\n    claim = await db.supplier_returns.find_one({"id": return_id}, {"_id": 0})\n    if not claim:\n        raise HTTPException(status_code=404, detail="Retur pemasok tidak ditemukan")\n    remaining = float(claim.get("qty", 0) or 0) - float(claim.get("replacement_qty", 0) or 0)\n    if float(body.qty) > remaining + 1e-9:\n        raise HTTPException(status_code=400, detail=f"Penggantian melebihi sisa retur ({remaining:g} {claim.get('unit', '')})")\n    product = await db.products.find_one({"id": claim["product_id"]}, {"_id": 0})\n    if not product:\n        raise HTTPException(status_code=404, detail="Produk pengganti tidak ditemukan")\n    _validate_pack_qty(product, float(body.qty))\n    stack_code = body.stackCode.strip().upper()\n    from backend.stack_allocations import valid_stack_codes\n    if stack_code not in await valid_stack_codes():\n        raise HTTPException(status_code=400, detail="Tumpukan pengganti tidak valid")\n    now = now_iso(); channel = claim.get("channel", normalize_channel(product.get("channel")))\n    await db.products.update_one({"id": product["id"]}, {"$inc": {"stock": float(body.qty), f"channelStock.{channel}.stock": float(body.qty)}})\n    try:\n        await allocate_stock_to_stack(product, stack_code, float(body.qty), user.get("name", ""))\n        replacement_qty = float(claim.get("replacement_qty", 0) or 0) + float(body.qty)\n        status = "SELESAI_DIGANTI" if replacement_qty + 1e-9 >= float(claim["qty"]) else "DIGANTI_SEBAGIAN"\n        await db.supplier_returns.update_one({"id": return_id}, {"$set": {"replacement_qty": replacement_qty, "status": status, "replacement_at": now, "replacement_note": body.note.strip(), "replacement_reference": body.referenceNo.strip()}})\n        await db.transactions.insert_one({"id": new_id(), "operation_id": new_id(), "time": now, "ref": body.referenceNo.strip() or f"PG-{claim['return_no']}", "type": "MASUK", "document_type": "PENGGANTIAN_PEMASOK", "parent_document": claim["return_no"], "kondisi": "BAIK", "product": product.get("name", ""), "sku": product.get("sku", ""), "change": float(body.qty), "unit": product.get("unit", ""), "channel": channel, "stackCode": stack_code, "penerima": claim.get("supplier", ""), "operator": user.get("name", ""), "keterangan": body.note.strip()})\n    except Exception:\n        await db.products.update_one({"id": product["id"]}, {"$inc": {"stock": -float(body.qty), f"channelStock.{channel}.stock": -float(body.qty)}})\n        raise\n    return await db.supplier_returns.find_one({"id": return_id}, {"_id": 0})\n'''
+          new_replacement = '''@router.post("/supplier-returns/{return_id}/replacement")\nasync def receive_supplier_replacement(return_id: str, body: SupplierReplacementInput, user: dict = Depends(require_write)):\n    claim = await db.supplier_returns.find_one({"id": return_id}, {"_id": 0})\n    if not claim:\n        raise HTTPException(status_code=404, detail="Retur pemasok tidak ditemukan")\n    remaining = float(claim.get("qty", 0) or 0) - float(claim.get("replacement_qty", 0) or 0)\n    if float(body.qty) > remaining + 1e-9:\n        raise HTTPException(status_code=400, detail=f"Penggantian melebihi sisa retur ({remaining:g} {claim.get('unit', '')})")\n    product = await db.products.find_one({"id": claim["product_id"]}, {"_id": 0})\n    if not product:\n        raise HTTPException(status_code=404, detail="Produk pengganti tidak ditemukan")\n    _validate_pack_qty(product, float(body.qty))\n    stack_code = body.stackCode.strip().upper()\n    from backend.stack_allocations import valid_stack_codes\n    if stack_code not in await valid_stack_codes():\n        raise HTTPException(status_code=400, detail="Tumpukan pengganti tidak valid")\n    now = now_iso(); channel = claim.get("channel", normalize_channel(product.get("channel")))\n    await ensure_channel_stock(product)\n    operation_id = new_id()\n    stack_added = False\n    claim_updated = False\n    replacement_qty = float(claim.get("replacement_qty", 0) or 0) + float(body.qty)\n    status = "SELESAI_DIGANTI" if replacement_qty + 1e-9 >= float(claim["qty"]) else "DIGANTI_SEBAGIAN"\n    await db.products.update_one({"id": product["id"]}, {"$inc": {"stock": float(body.qty), f"channelStock.{channel}.stock": float(body.qty)}})\n    try:\n        await allocate_stock_to_stack(product, stack_code, float(body.qty), user.get("name", ""))\n        stack_added = True\n        result = await db.supplier_returns.update_one(\n            {"id": return_id, "replacement_qty": float(claim.get("replacement_qty", 0) or 0)},\n            {"$set": {"replacement_qty": replacement_qty, "status": status, "replacement_at": now, "replacement_note": body.note.strip(), "replacement_reference": body.referenceNo.strip()}},\n        )\n        if result.matched_count == 0:\n            raise HTTPException(status_code=409, detail="Data retur pemasok berubah. Muat ulang lalu coba kembali.")\n        claim_updated = True\n        await db.transactions.insert_one({"id": new_id(), "operation_id": operation_id, "time": now, "ref": body.referenceNo.strip() or f"PG-{claim['return_no']}", "type": "MASUK", "document_type": "PENGGANTIAN_PEMASOK", "parent_document": claim["return_no"], "kondisi": "BAIK", "product": product.get("name", ""), "sku": product.get("sku", ""), "change": float(body.qty), "good_change": float(body.qty), "unit": product.get("unit", ""), "channel": channel, "stackCode": stack_code, "penerima": claim.get("supplier", ""), "operator": user.get("name", ""), "keterangan": body.note.strip()})\n    except Exception:\n        await db.transactions.delete_many({"operation_id": operation_id})\n        if claim_updated:\n            await db.supplier_returns.replace_one({"id": return_id, "replacement_qty": replacement_qty}, dict(claim), upsert=False)\n        if stack_added:\n            try:\n                await decrease_stack_allocation(product["id"], stack_code, float(body.qty), "Sistem (rollback penggantian pemasok)")\n            except Exception:\n                pass\n        await db.products.update_one({"id": product["id"]}, {"$inc": {"stock": -float(body.qty), f"channelStock.{channel}.stock": -float(body.qty)}})\n        raise\n    return await db.supplier_returns.find_one({"id": return_id}, {"_id": 0})\n'''
+          replace_once('backend/inventory_flow.py', old_replacement, new_replacement)
+
+          # Outbound completion: reverse both channel stock and stack when a later step fails.
+          replace_once(
+              'backend/outbound_flow.py',
+              '    stock_changes = []\n    transactions = []\n    kondisi = load.get("kondisi", "BAIK")',
+              '    stock_changes = []\n    stack_changes = []\n    transactions = []\n    kondisi = load.get("kondisi", "BAIK")',
+          )
+          replace_once(
+              'backend/outbound_flow.py',
+              '''            stock_changes.append((product["id"], qty))\n            if item.get("stackCode") and kondisi == "BAIK":\n                await decrease_stack_allocation(product["id"], item["stackCode"], qty, user.get("name", "Sistem (pengeluaran)"))\n''',
+              '''            stock_changes.append({"productId": product["id"], "qty": qty, "field": field, "channel": channel})\n            if item.get("stackCode") and kondisi == "BAIK":\n                await decrease_stack_allocation(product["id"], item["stackCode"], qty, user.get("name", "Sistem (pengeluaran)"))\n                stack_changes.append({"product": product, "stackCode": item["stackCode"], "qty": qty})\n''',
+          )
+          replace_once(
+              'backend/outbound_flow.py',
+              '''                "ref": load.get("ref") or load.get("antrian", ""),\n                "bon_no": load.get("bon_no", ""),''',
+              '''                "ref": item.get("documentNo") or load.get("ref") or load.get("antrian", ""),\n                "source_document": item.get("documentNo") or load.get("ref", ""),\n                "stackCode": item.get("stackCode", ""),\n                "bon_no": load.get("bon_no", ""),''',
+          )
+          replace_once(
+              'backend/outbound_flow.py',
+              '''        await db.outbound_loads.update_one(\n            {"id": load_id},\n            {"$set": {\n                "status": "Selesai",''',
+              '''        load_result = await db.outbound_loads.update_one(\n            {"id": load_id, "status": "Sedang Dimuat"},\n            {"$set": {\n                "status": "Selesai",''',
+          )
+          replace_once(
+              'backend/outbound_flow.py',
+              '''                "document_status": "Menunggu CR/SO" if load.get("document_type") == "CT" else "Menunggu SO/Retur" if load.get("document_type") in {"MEMO", "ND"} else "Selesai",\n            }},\n        )\n\n    except Exception:\n        await db.transactions.delete_many({"operation_id": operation_id})\n        await db.surat_jalan.delete_many({"operation_id": operation_id})\n        for product_id, qty in reversed(stock_changes):\n            await db.products.update_one({"id": product_id}, {"$inc": {field: qty}})\n        raise\n''',
+              '''                "document_status": "Menunggu CR/SO" if load.get("document_type") == "CT" else "Menunggu SO/Retur" if load.get("document_type") in {"MEMO", "ND"} else "Selesai",\n            }},\n        )\n        if load_result.matched_count == 0:\n            raise HTTPException(status_code=409, detail="Status pemuatan berubah. Muat ulang lalu periksa transaksi.")\n\n    except Exception:\n        await db.transactions.delete_many({"operation_id": operation_id})\n        await db.surat_jalan.delete_many({"operation_id": operation_id})\n        for change in reversed(stack_changes):\n            try:\n                await allocate_stock_to_stack(change["product"], change["stackCode"], change["qty"], "Sistem (rollback pengeluaran)")\n            except Exception:\n                pass\n        for change in reversed(stock_changes):\n            await db.products.update_one(\n                {"id": change["productId"]},\n                {"$inc": {change["field"]: change["qty"], f"channelStock.{change['channel']}.{change['field']}": change["qty"]}},\n            )\n        raise\n''',
+          )
+
+          # CR/Retur from CT/Memo/ND: compensate product channel, stack, linked document and partial transaction inserts.
+          replace_once(
+              'backend/outbound_flow.py',
+              '    link_items, stock_changes = [], []\n    try:',
+              '    link_items, stock_changes, stack_changes = [], [], []\n    link_applied = False\n    try:',
+          )
+          replace_once(
+              'backend/outbound_flow.py',
+              '                stock_changes.append((item.productId, "stock", good_qty))',
+              '                stock_changes.append((item.productId, "stock", good_qty, return_channel))',
+          )
+          replace_once(
+              'backend/outbound_flow.py',
+              '''                for placement in placements:\n                    await allocate_stock_to_stack(product, placement.stackCode, float(placement.goodQty), user.get("name", ""))\n''',
+              '''                for placement in placements:\n                    await allocate_stock_to_stack(product, placement.stackCode, float(placement.goodQty), user.get("name", ""))\n                    stack_changes.append((item.productId, placement.stackCode.strip().upper(), float(placement.goodQty)))\n''',
+          )
+          replace_once(
+              'backend/outbound_flow.py',
+              '                stock_changes.append((item.productId, "damaged", float(item.damagedQty)))',
+              '                stock_changes.append((item.productId, "damaged", float(item.damagedQty), return_channel))',
+          )
+          replace_once(
+              'backend/outbound_flow.py',
+              '''        await db.outbound_loads.update_one({"id": load_id}, {"$push": {"document_links": link}, "$set": {"document_status": status}})\n        txns = [{"id": new_id(), "load_id": load_id, "time": link["time"], "ref": document_no, "type": "MASUK", "kondisi": "PENGEMBALIAN", "document_type": body.returnType, "parent_document": load.get("ref", ""), "product": x["name"], "change": x["goodQty"] + x["damagedQty"], "good_change": x["goodQty"], "damaged_change": x["damagedQty"], "unit": x["unit"], "channel": x.get("channel", ""), "penerima": load.get("party", ""), "operator": user.get("name", ""), "keterangan": body.note.strip()} for x in link_items]\n        await db.transactions.insert_many(txns)\n        return link\n    except Exception:\n        for product_id, field, qty in reversed(stock_changes):\n            await db.products.update_one({"id": product_id}, {"$inc": {field: -qty}})\n        raise\n''',
+              '''        await db.outbound_loads.update_one({"id": load_id}, {"$push": {"document_links": link}, "$set": {"document_status": status}})\n        link_applied = True\n        txns = [{"id": new_id(), "load_id": load_id, "time": link["time"], "ref": document_no, "type": "MASUK", "kondisi": "PENGEMBALIAN", "document_type": body.returnType, "parent_document": load.get("ref", ""), "product": x["name"], "change": x["goodQty"] + x["damagedQty"], "good_change": x["goodQty"], "damaged_change": x["damagedQty"], "unit": x["unit"], "channel": x.get("channel", ""), "penerima": load.get("party", ""), "operator": user.get("name", ""), "keterangan": body.note.strip()} for x in link_items]\n        await db.transactions.insert_many(txns)\n        return link\n    except Exception:\n        await db.transactions.delete_many({"load_id": load_id, "ref": document_no, "document_type": body.returnType})\n        if link_applied:\n            await db.outbound_loads.update_one({"id": load_id}, {"$pull": {"document_links": {"id": link["id"]}}, "$set": {"document_status": load.get("document_status", "Selesai")}})\n        for product_id, stack_code, qty in reversed(stack_changes):\n            try:\n                await decrease_stack_allocation(product_id, stack_code, qty, "Sistem (rollback retur)")\n            except Exception:\n                pass\n        for product_id, field, qty, channel in reversed(stock_changes):\n            await db.products.update_one({"id": product_id}, {"$inc": {field: -qty, f"channelStock.{channel}.{field}": -qty}})\n        raise\n''',
+          )
+
+          # SO return: also reverse its stack and document link.
+          replace_once(
+              'backend/outbound_flow.py',
+              '    link_items, reversals = [], []\n    try:',
+              '    link_items, reversals, stack_changes = [], [], []\n    link_applied = False\n    try:',
+          )
+          # This exact line occurs in SO return after the consignment-return placement block was already changed above.
+          replace_once(
+              'backend/outbound_flow.py',
+              '''                reversals.append((item.productId, "stock", good_qty, channel))\n                await allocate_stock_to_stack(product, stack_code, good_qty, user.get("name", ""))\n''',
+              '''                reversals.append((item.productId, "stock", good_qty, channel))\n                await allocate_stock_to_stack(product, stack_code, good_qty, user.get("name", ""))\n                stack_changes.append((item.productId, stack_code, good_qty))\n''',
+          )
+          replace_once(
+              'backend/outbound_flow.py',
+              '''        await db.outbound_loads.update_one({"id": load_id}, {"$push": {"document_links": link}, "$set": {"document_status": "Retur SO Tercatat"}})\n        await db.transactions.insert_many([{"id": new_id(), "load_id": load_id, "time": link["time"], "ref": return_no, "type": "MASUK", "kondisi": "RETUR_SO", "document_type": "SO_RETUR", "parent_document": source_no, "product": item["name"], "change": item["goodQty"] + item["damagedQty"], "good_change": item["goodQty"], "damaged_change": item["damagedQty"], "unit": item["unit"], "channel": item["channel"], "penerima": load.get("party", ""), "operator": user.get("name", ""), "keterangan": body.note.strip()} for item in link_items])\n        return link\n    except Exception:\n        for product_id, field, qty, channel in reversed(reversals):\n            await db.products.update_one({"id": product_id}, {"$inc": {field: -qty, f"channelStock.{channel}.{field}": -qty}})\n        raise\n''',
+              '''        await db.outbound_loads.update_one({"id": load_id}, {"$push": {"document_links": link}, "$set": {"document_status": "Retur SO Tercatat"}})\n        link_applied = True\n        await db.transactions.insert_many([{"id": new_id(), "load_id": load_id, "time": link["time"], "ref": return_no, "type": "MASUK", "kondisi": "RETUR_SO", "document_type": "SO_RETUR", "parent_document": source_no, "product": item["name"], "change": item["goodQty"] + item["damagedQty"], "good_change": item["goodQty"], "damaged_change": item["damagedQty"], "unit": item["unit"], "channel": item["channel"], "penerima": load.get("party", ""), "operator": user.get("name", ""), "keterangan": body.note.strip()} for item in link_items])\n        return link\n    except Exception:\n        await db.transactions.delete_many({"load_id": load_id, "ref": return_no, "document_type": "SO_RETUR"})\n        if link_applied:\n            await db.outbound_loads.update_one({"id": load_id}, {"$pull": {"document_links": {"id": link["id"]}}, "$set": {"document_status": load.get("document_status", "Selesai")}})\n        for product_id, stack_code, qty in reversed(stack_changes):\n            try:\n                await decrease_stack_allocation(product_id, stack_code, qty, "Sistem (rollback retur SO)")\n            except Exception:\n                pass\n        for product_id, field, qty, channel in reversed(reversals):\n            await db.products.update_one({"id": product_id}, {"$inc": {field: -qty, f"channelStock.{channel}.{field}": -qty}})\n        raise\n''',
+          )
+
+          # Document settlement: if audit transaction insertion fails, remove the link again.
+          replace_once(
+              'backend/outbound_flow.py',
+              '''    await db.outbound_loads.update_one({"id": load_id}, {"$push": {"document_links": link}, "$set": {"document_status": "Selesai Dokumen" if complete else "SO Sebagian · Belum Selesai"}})\n    await db.transactions.insert_many([{"id": new_id(), "load_id": load_id, "time": link["time"], "ref": document_no, "type": "DOKUMEN", "kondisi": "—", "document_type": "SO", "parent_document": load.get("ref", ""), "product": item["name"], "change": 0, "settled_qty": item["qty"], "unit": item["unit"], "channel": item.get("channel", ""), "penerima": load.get("party", ""), "operator": user.get("name", ""), "keterangan": body.note.strip()} for item in items])\n    return link''',
+              '''    try:\n        await db.outbound_loads.update_one({"id": load_id}, {"$push": {"document_links": link}, "$set": {"document_status": "Selesai Dokumen" if complete else "SO Sebagian · Belum Selesai"}})\n        await db.transactions.insert_many([{"id": new_id(), "load_id": load_id, "time": link["time"], "ref": document_no, "type": "DOKUMEN", "kondisi": "—", "document_type": "SO", "parent_document": load.get("ref", ""), "product": item["name"], "change": 0, "settled_qty": item["qty"], "unit": item["unit"], "channel": item.get("channel", ""), "penerima": load.get("party", ""), "operator": user.get("name", ""), "keterangan": body.note.strip()} for item in items])\n        return link\n    except Exception:\n        await db.transactions.delete_many({"load_id": load_id, "ref": document_no, "document_type": "SO"})\n        await db.outbound_loads.update_one({"id": load_id}, {"$pull": {"document_links": {"id": link["id"]}}, "$set": {"document_status": load.get("document_status", "Selesai")}})\n        raise''',
+          )
+          PY
+
+      - name: Install backend dependencies and test
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+          python -m py_compile backend/server.py backend/inventory_flow.py backend/master_products.py backend/outbound_flow.py backend/stack_allocations.py app.py
+          pytest -q backend/tests/test_unit_safety.py
 
       - name: Build frontend
         working-directory: frontend
@@ -21,17 +166,13 @@ jobs:
           yarn install --network-timeout 600000
           CI=false yarn build
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install backend test dependencies
+      - name: Commit consistency fixes
+        shell: bash
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt pytest
-
-      - name: Validate Python syntax
-        run: python -m py_compile backend/server.py backend/inventory_flow.py backend/master_products.py backend/outbound_flow.py backend/stack_allocations.py app.py
-
-      - name: Run backend safety tests
-        run: pytest -q backend/tests/test_unit_safety.py
+          git config user.name "inventory-audit-bot"
+          git config user.email "inventory-audit-bot@users.noreply.github.com"
+          rm -f frontend/yarn.lock
+          git add backend/inventory_flow.py backend/outbound_flow.py
+          git diff --cached --check
+          git commit -m "fix: keep stock stack and document rollback consistent"
+          git push origin HEAD:dev-testing
