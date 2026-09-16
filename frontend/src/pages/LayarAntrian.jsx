@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Clock, Loader, Maximize2, Minimize2, RefreshCw, Volume2, VolumeX } from 'lucide-react';
 import api from '../lib/api';
 import { formatNum } from '../mock';
@@ -39,8 +39,14 @@ const LayarAntrian = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState('');
 
-  const active = [...queueLoads].sort((a, b) => (a.antrian || '').localeCompare(b.antrian || ''));
-  const loadingLoads = active.filter((load) => load.status === 'Sedang Dimuat');
+  const active = useMemo(
+    () => [...queueLoads].sort((a, b) => (a.antrian || '').localeCompare(b.antrian || '')),
+    [queueLoads],
+  );
+  const loadingLoads = useMemo(
+    () => active.filter((load) => load.status === 'Sedang Dimuat'),
+    [active],
+  );
 
   const refreshQueue = useCallback(async () => {
     setRefreshing(true);
@@ -114,7 +120,7 @@ const LayarAntrian = () => {
   useEffect(() => {
     const activeQueueNumbers = new Set(active.map((load) => load.antrian).filter(Boolean));
     announcedQueuesRef.current = new Set([...announcedQueuesRef.current].filter((queue) => activeQueueNumbers.has(queue)));
-  }, [queueLoads]);
+  }, [active]);
 
   const enterPresentation = async () => {
     setPresentationMode(true);
