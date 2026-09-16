@@ -1,8 +1,14 @@
 import os
+import sys
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 os.environ.setdefault("MONGO_URL", "mongodb://127.0.0.1:27017")
 os.environ.setdefault("DB_NAME", "management_inventory_test")
