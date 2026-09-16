@@ -18,6 +18,7 @@ import Pengaturan from './pages/Pengaturan';
 import ImportData from './pages/ImportData';
 import TumpukanStok from './pages/TumpukanStok';
 import OpnameKonsinyasi from './pages/OpnameKonsinyasi';
+import KoreksiOperasional from './pages/KoreksiOperasional';
 import { hasPermission, roleLabel } from './lib/permissions';
 
 const Loading = () => (
@@ -30,9 +31,7 @@ const AccessDenied = ({ userRole }) => (
   <div className="card-surface p-8 text-center max-w-xl mx-auto">
     <div className="label-mono mb-2">Akses Terbatas</div>
     <h1 className="font-display text-2xl font-bold">Menu tidak tersedia untuk peran ini</h1>
-    <p className="text-[#8b93a1] mt-2">
-      Peran Anda ({roleLabel(userRole)}) tidak memiliki hak untuk membuka proses ini.
-    </p>
+    <p className="text-[#8b93a1] mt-2">Peran Anda ({roleLabel(userRole)}) tidak memiliki hak untuk membuka proses ini.</p>
   </div>
 );
 
@@ -59,6 +58,7 @@ function AppRoutes() {
       <Route path="/temuan-kerusakan" element={<Protected permission="operations"><CatatStok panel="damage" /></Protected>} />
       <Route path="/retur-pemasok" element={<Protected permission="operations"><CatatStok panel="supplier-return" /></Protected>} />
       <Route path="/pengeluaran" element={<Protected permission="outboundPage"><Pengeluaran /></Protected>} />
+      <Route path="/koreksi-operasional" element={<Protected permission="corrections"><KoreksiOperasional /></Protected>} />
       <Route path="/riwayat" element={<Protected><Riwayat /></Protected>} />
       <Route path="/po" element={<Protected><PurchaseOrder /></Protected>} />
       <Route path="/supplier" element={<Protected><Supplier /></Protected>} />
@@ -72,22 +72,11 @@ function AppRoutes() {
 
 function AppShell() {
   const { theme } = useData();
-  return (
-    <>
-      <Toaster theme={theme} position="bottom-right" richColors />
-      <BrowserRouter>
-        <AppRoutes />
-      </BrowserRouter>
-    </>
-  );
+  return <><Toaster theme={theme} position="bottom-right" richColors /><BrowserRouter><AppRoutes /></BrowserRouter></>;
 }
 
 function App() {
-  return (
-    <DataProvider>
-      <AppShell />
-    </DataProvider>
-  );
+  return <DataProvider><AppShell /></DataProvider>;
 }
 
 export default App;
