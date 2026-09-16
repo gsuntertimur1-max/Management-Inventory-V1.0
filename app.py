@@ -14,7 +14,11 @@ from backend.pdf_documents import router as pdf_documents_router
 from backend.queue_flow import router as queue_flow_router
 from backend.runtime_hardening import ensure_performance_indexes, hardening_middleware
 from backend.operational_guards import router as operational_guards_router, ensure_operational_guard_indexes
+from backend.operational_corrections import router as operational_corrections_router
 
+# Koreksi penerimaan mendaftarkan pembungkus /api/receipts lebih dulu agar
+# metadata tumpukan/area rusak tersimpan sebelum route operasional lama.
+app.include_router(operational_corrections_router)
 # Guard routes must be registered before the original operational routers so
 # the same public paths are serialized across Railway workers.
 app.include_router(operational_guards_router)
