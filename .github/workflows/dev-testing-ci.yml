@@ -31,7 +31,7 @@ jobs:
           pip install -r requirements.txt pytest
 
       - name: Validate Python syntax
-        run: python -m py_compile backend/server.py backend/inventory_flow.py backend/master_products.py backend/outbound_flow.py backend/consignment.py backend/stack_allocations.py backend/pdf_documents.py backend/operational_guards.py app.py
+        run: python -m py_compile backend/server.py backend/inventory_flow.py backend/master_products.py backend/outbound_flow.py backend/consignment.py backend/stack_allocations.py backend/pdf_documents.py backend/operational_guards.py backend/correction_receipts.py backend/correction_reversal.py backend/correction_outbound.py backend/operational_corrections.py app.py
 
       - name: Run backend safety tests
-        run: pytest -q backend/tests/test_unit_safety.py backend/tests/test_operational_guards.py
+        run: pytest -q backend/tests/test_unit_safety.py backend/tests/test_operational_guards.py backend/tests/test_corrections.py backend/tests/test_operational_corrections_routes.py
