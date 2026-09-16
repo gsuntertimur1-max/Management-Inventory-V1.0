@@ -403,6 +403,7 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
     transaction_ref = po.get("no") if po else (body.ref.strip() or f"IN-{op_now.strftime('%Y%m%d%H%M%S%f')}")
     time = now_iso()
     stock_changes = []
+    stack_changes = []
     txns = []
 
     try:
@@ -438,6 +439,7 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
             if good_qty > 0 and stack_code:
                 from backend.stack_allocations import allocate_stock_to_stack
                 await allocate_stock_to_stack(product, stack_code, good_qty, user.get("name", ""))
+                stack_changes.append({"productId": product["id"], "stackCode": stack_code, "qty": good_qty})
 
             def receipt_txn(kondisi: str, qty: float, loading_cost: dict, include_weighing: bool):
                 return {
@@ -509,6 +511,11 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
 
     except Exception:
         await db.transactions.delete_many({"operation_id": operation_id})
+        for change in reversed(stack_changes):
+            try:
+                await decrease_stack_allocation(change["productId"], change["stackCode"], change["qty"], "Sistem (rollback penerimaan)")
+            except Exception:
+                pass
         for change in reversed(stock_changes):
             rollback = {"$inc": {change["field"]: -change["qty"], f"channelStock.{change['channel']}.{change['field']}": -change["qty"]}}
             if change["expChanged"]:
@@ -547,6 +554,11 @@ async def record_stock_damage_discovery(body: DamageDiscoveryInput, user: dict =
         transaction = {"id": new_id(), "operation_id": operation_id, "time": time, "ref": body.referenceNo.strip() or f"TR-{time[:10].replace('-', '')}", "type": "PENYESUAIAN", "document_type": "TEMUAN_RUSAK", "kondisi": "RUSAK", "product": product.get("name", ""), "sku": product.get("sku", ""), "change": 0, "good_change": -float(body.qty), "damaged_change": float(body.qty), "unit": product.get("unit", ""), "weight": float(product.get("weight", 0) or 0), "total_weight": float(product.get("weight", 0) or 0) * float(body.qty), "secondary": product.get("secondary", ""), "secondaryQty": float(product.get("secondaryQty", 0) or 0), "channel": channel, "stackCode": stack_code, "operator": user.get("name", ""), "cause": body.cause.strip(), "keterangan": body.note.strip()}
         await db.transactions.insert_one(dict(transaction))
     except Exception:
+        try:
+            await allocate_stock_to_stack(product, stack_code, float(body.qty), "Sistem (rollback temuan rusak)")
+        except Exception:
+            pass
+        await db.transactions.delete_many({"operation_id": operation_id})
         await db.products.update_one({"id": product["id"]}, {"$inc": {"stock": float(body.qty), "damaged": -float(body.qty), f"channelStock.{channel}.stock": float(body.qty), f"channelStock.{channel}.damaged": -float(body.qty)}})
         raise
     return {"operationId": operation_id, "transaction": transaction}
@@ -586,6 +598,8 @@ async def create_supplier_return(body: SupplierReturnInput, user: dict = Depends
         await db.supplier_returns.insert_one(dict(doc))
         await db.transactions.insert_one({"id": new_id(), "operation_id": doc["id"], "time": now, "ref": return_no, "type": "KELUAR", "document_type": "RETUR_PEMASOK", "parent_document": body.poNo.strip() or body.sourceDamageOperationId, "kondisi": "RUSAK", "product": doc["product"], "sku": doc["sku"], "change": -doc["qty"], "damaged_change": -doc["qty"], "unit": doc["unit"], "channel": channel, "stackCode": doc["source_stack_code"], "penerima": doc["supplier"], "operator": user.get("name", ""), "keterangan": doc["note"]})
     except Exception:
+        await db.transactions.delete_many({"operation_id": doc["id"]})
+        await db.supplier_returns.delete_many({"id": doc["id"]})
         await db.products.update_one({"id": body.productId}, {"$inc": {"damaged": float(body.qty), f"channelStock.{channel}.damaged": float(body.qty)}})
         raise
     return doc
@@ -608,14 +622,33 @@ async def receive_supplier_replacement(return_id: str, body: SupplierReplacement
     if stack_code not in await valid_stack_codes():
         raise HTTPException(status_code=400, detail="Tumpukan pengganti tidak valid")
     now = now_iso(); channel = claim.get("channel", normalize_channel(product.get("channel")))
+    await ensure_channel_stock(product)
+    operation_id = new_id()
+    stack_added = False
+    claim_updated = False
+    replacement_qty = float(claim.get("replacement_qty", 0) or 0) + float(body.qty)
+    status = "SELESAI_DIGANTI" if replacement_qty + 1e-9 >= float(claim["qty"]) else "DIGANTI_SEBAGIAN"
     await db.products.update_one({"id": product["id"]}, {"$inc": {"stock": float(body.qty), f"channelStock.{channel}.stock": float(body.qty)}})
     try:
         await allocate_stock_to_stack(product, stack_code, float(body.qty), user.get("name", ""))
-        replacement_qty = float(claim.get("replacement_qty", 0) or 0) + float(body.qty)
-        status = "SELESAI_DIGANTI" if replacement_qty + 1e-9 >= float(claim["qty"]) else "DIGANTI_SEBAGIAN"
-        await db.supplier_returns.update_one({"id": return_id}, {"$set": {"replacement_qty": replacement_qty, "status": status, "replacement_at": now, "replacement_note": body.note.strip(), "replacement_reference": body.referenceNo.strip()}})
-        await db.transactions.insert_one({"id": new_id(), "operation_id": new_id(), "time": now, "ref": body.referenceNo.strip() or f"PG-{claim['return_no']}", "type": "MASUK", "document_type": "PENGGANTIAN_PEMASOK", "parent_document": claim["return_no"], "kondisi": "BAIK", "product": product.get("name", ""), "sku": product.get("sku", ""), "change": float(body.qty), "unit": product.get("unit", ""), "channel": channel, "stackCode": stack_code, "penerima": claim.get("supplier", ""), "operator": user.get("name", ""), "keterangan": body.note.strip()})
+        stack_added = True
+        result = await db.supplier_returns.update_one(
+            {"id": return_id, "replacement_qty": float(claim.get("replacement_qty", 0) or 0)},
+            {"$set": {"replacement_qty": replacement_qty, "status": status, "replacement_at": now, "replacement_note": body.note.strip(), "replacement_reference": body.referenceNo.strip()}},
+        )
+        if result.matched_count == 0:
+            raise HTTPException(status_code=409, detail="Data retur pemasok berubah. Muat ulang lalu coba kembali.")
+        claim_updated = True
+        await db.transactions.insert_one({"id": new_id(), "operation_id": operation_id, "time": now, "ref": body.referenceNo.strip() or f"PG-{claim['return_no']}", "type": "MASUK", "document_type": "PENGGANTIAN_PEMASOK", "parent_document": claim["return_no"], "kondisi": "BAIK", "product": product.get("name", ""), "sku": product.get("sku", ""), "change": float(body.qty), "good_change": float(body.qty), "unit": product.get("unit", ""), "channel": channel, "stackCode": stack_code, "penerima": claim.get("supplier", ""), "operator": user.get("name", ""), "keterangan": body.note.strip()})
     except Exception:
+        await db.transactions.delete_many({"operation_id": operation_id})
+        if claim_updated:
+            await db.supplier_returns.replace_one({"id": return_id, "replacement_qty": replacement_qty}, dict(claim), upsert=False)
+        if stack_added:
+            try:
+                await decrease_stack_allocation(product["id"], stack_code, float(body.qty), "Sistem (rollback penggantian pemasok)")
+            except Exception:
+                pass
         await db.products.update_one({"id": product["id"]}, {"$inc": {"stock": -float(body.qty), f"channelStock.{channel}.stock": -float(body.qty)}})
         raise
     return await db.supplier_returns.find_one({"id": return_id}, {"_id": 0})

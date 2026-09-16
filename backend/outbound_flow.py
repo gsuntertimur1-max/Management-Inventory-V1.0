@@ -680,6 +680,7 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
         final_items.append(item)
     final_loading_cost = {key: sum(float(item.get("loadingFee", {}).get(key, 0) or 0) for item in final_items) for key in ("labor", "daily", "warehouse", "total", "chargeable")}
     stock_changes = []
+    stack_changes = []
     transactions = []
     kondisi = load.get("kondisi", "BAIK")
     field = "damaged" if kondisi == "RUSAK" else "stock"
@@ -708,16 +709,19 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
                     status_code=409,
                     detail=f"Stok {product.get('name', '')} berubah atau tidak mencukupi. Periksa stok lalu coba lagi.",
                 )
-            stock_changes.append((product["id"], qty))
+            stock_changes.append({"productId": product["id"], "qty": qty, "field": field, "channel": channel})
             if item.get("stackCode") and kondisi == "BAIK":
                 await decrease_stack_allocation(product["id"], item["stackCode"], qty, user.get("name", "Sistem (pengeluaran)"))
+                stack_changes.append({"product": product, "stackCode": item["stackCode"], "qty": qty})
 
             transactions.append({
                 "id": new_id(),
                 "operation_id": operation_id,
                 "load_id": load["id"],
                 "time": completed_at,
-                "ref": load.get("ref") or load.get("antrian", ""),
+                "ref": item.get("documentNo") or load.get("ref") or load.get("antrian", ""),
+                "source_document": item.get("documentNo") or load.get("ref", ""),
+                "stackCode": item.get("stackCode", ""),
                 "bon_no": load.get("bon_no", ""),
                 "antrian": load.get("antrian", ""),
                 "type": "KELUAR",
@@ -803,8 +807,8 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
         if transactions:
             await db.transactions.insert_many([dict(txn) for txn in transactions])
         await db.surat_jalan.insert_one(dict(sj))
-        await db.outbound_loads.update_one(
-            {"id": load_id},
+        load_result = await db.outbound_loads.update_one(
+            {"id": load_id, "status": "Sedang Dimuat"},
             {"$set": {
                 "status": "Selesai",
                 "completed_at": completed_at,
@@ -816,12 +820,22 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
                 "document_status": "Menunggu CR/SO" if load.get("document_type") == "CT" else "Menunggu SO/Retur" if load.get("document_type") in {"MEMO", "ND"} else "Selesai",
             }},
         )
+        if load_result.matched_count == 0:
+            raise HTTPException(status_code=409, detail="Status pemuatan berubah. Muat ulang lalu periksa transaksi.")
 
     except Exception:
         await db.transactions.delete_many({"operation_id": operation_id})
         await db.surat_jalan.delete_many({"operation_id": operation_id})
-        for product_id, qty in reversed(stock_changes):
-            await db.products.update_one({"id": product_id}, {"$inc": {field: qty}})
+        for change in reversed(stack_changes):
+            try:
+                await allocate_stock_to_stack(change["product"], change["stackCode"], change["qty"], "Sistem (rollback pengeluaran)")
+            except Exception:
+                pass
+        for change in reversed(stock_changes):
+            await db.products.update_one(
+                {"id": change["productId"]},
+                {"$inc": {change["field"]: change["qty"], f"channelStock.{change['channel']}.{change['field']}": change["qty"]}},
+            )
         raise
 
     for product_id in {item.get("productId") for item in load.get("items", []) if item.get("productId")}:
@@ -862,7 +876,8 @@ async def create_consignment_return(load_id: str, body: ConsignmentReturnInput, 
         raise HTTPException(status_code=400, detail="Produk retur tidak boleh dicatat lebih dari satu baris")
 
     original = {item.get("productId"): item for item in load.get("items", [])}
-    link_items, stock_changes = [], []
+    link_items, stock_changes, stack_changes = [], [], []
+    link_applied = False
     try:
         for item in body.items:
             source = original.get(item.productId)
@@ -886,14 +901,15 @@ async def create_consignment_return(load_id: str, body: ConsignmentReturnInput, 
                 return_channel = normalize_channel(source.get("channel"), normalize_channel(product.get("channel")))
                 await ensure_channel_stock(product)
                 await db.products.update_one({"id": item.productId}, {"$inc": {"stock": good_qty, f"channelStock.{return_channel}.stock": good_qty}})
-                stock_changes.append((item.productId, "stock", good_qty))
+                stock_changes.append((item.productId, "stock", good_qty, return_channel))
                 for placement in placements:
                     await allocate_stock_to_stack(product, placement.stackCode, float(placement.goodQty), user.get("name", ""))
+                    stack_changes.append((item.productId, placement.stackCode.strip().upper(), float(placement.goodQty)))
             if item.damagedQty:
                 return_channel = normalize_channel(source.get("channel"), normalize_channel(product.get("channel")))
                 await ensure_channel_stock(product)
                 await db.products.update_one({"id": item.productId}, {"$inc": {"damaged": float(item.damagedQty), f"channelStock.{return_channel}.damaged": float(item.damagedQty)}})
-                stock_changes.append((item.productId, "damaged", float(item.damagedQty)))
+                stock_changes.append((item.productId, "damaged", float(item.damagedQty), return_channel))
             link_items.append({"productId": item.productId, "name": source.get("name", ""), "unit": source.get("unit", ""), "channel": source.get("channel", ""), "goodQty": good_qty, "damagedQty": float(item.damagedQty), "stackCode": placements[0].stackCode.strip().upper() if len(placements) == 1 else "", "placements": [{"goodQty": float(placement.goodQty), "stackCode": placement.stackCode.strip().upper()} for placement in placements]})
         if not link_items:
             raise HTTPException(status_code=400, detail="Isi jumlah barang yang dikembalikan")
@@ -902,12 +918,21 @@ async def create_consignment_return(load_id: str, body: ConsignmentReturnInput, 
         complete = all(sum(_linked_totals(prospective, product_id)) >= float(source.get("qty", 0) or 0) - 1e-9 for product_id, source in original.items())
         status = "Selesai Dokumen" if complete else f"{body.returnType} Tercatat · Menunggu SO"
         await db.outbound_loads.update_one({"id": load_id}, {"$push": {"document_links": link}, "$set": {"document_status": status}})
+        link_applied = True
         txns = [{"id": new_id(), "load_id": load_id, "time": link["time"], "ref": document_no, "type": "MASUK", "kondisi": "PENGEMBALIAN", "document_type": body.returnType, "parent_document": load.get("ref", ""), "product": x["name"], "change": x["goodQty"] + x["damagedQty"], "good_change": x["goodQty"], "damaged_change": x["damagedQty"], "unit": x["unit"], "channel": x.get("channel", ""), "penerima": load.get("party", ""), "operator": user.get("name", ""), "keterangan": body.note.strip()} for x in link_items]
         await db.transactions.insert_many(txns)
         return link
     except Exception:
-        for product_id, field, qty in reversed(stock_changes):
-            await db.products.update_one({"id": product_id}, {"$inc": {field: -qty}})
+        await db.transactions.delete_many({"load_id": load_id, "ref": document_no, "document_type": body.returnType})
+        if link_applied:
+            await db.outbound_loads.update_one({"id": load_id}, {"$pull": {"document_links": {"id": link["id"]}}, "$set": {"document_status": load.get("document_status", "Selesai")}})
+        for product_id, stack_code, qty in reversed(stack_changes):
+            try:
+                await decrease_stack_allocation(product_id, stack_code, qty, "Sistem (rollback retur)")
+            except Exception:
+                pass
+        for product_id, field, qty, channel in reversed(stock_changes):
+            await db.products.update_one({"id": product_id}, {"$inc": {field: -qty, f"channelStock.{channel}.{field}": -qty}})
         raise
 
 
@@ -948,7 +973,8 @@ async def create_sales_return(load_id: str, body: SalesReturnInput, user: dict =
         product_id = item.get("productId")
         original[product_id] = {**item, "qty": float(original.get(product_id, {}).get("qty", 0) or 0) + float(item.get("qty", 0) or 0)}
 
-    link_items, reversals = [], []
+    link_items, reversals, stack_changes = [], [], []
+    link_applied = False
     try:
         for item in body.items:
             source = original.get(item.productId)
@@ -973,6 +999,7 @@ async def create_sales_return(load_id: str, body: SalesReturnInput, user: dict =
                 await db.products.update_one({"id": item.productId}, {"$inc": {"stock": good_qty, f"channelStock.{channel}.stock": good_qty}})
                 reversals.append((item.productId, "stock", good_qty, channel))
                 await allocate_stock_to_stack(product, stack_code, good_qty, user.get("name", ""))
+                stack_changes.append((item.productId, stack_code, good_qty))
             if damaged_qty:
                 await db.products.update_one({"id": item.productId}, {"$inc": {"damaged": damaged_qty, f"channelStock.{channel}.damaged": damaged_qty}})
                 reversals.append((item.productId, "damaged", damaged_qty, channel))
@@ -982,9 +1009,18 @@ async def create_sales_return(load_id: str, body: SalesReturnInput, user: dict =
 
         link = {"id": new_id(), "type": "SO_RETUR", "no": return_no, "sourceDocumentNo": source_no, "time": now_iso(), "items": link_items, "note": body.note.strip(), "operator": user.get("name", "")}
         await db.outbound_loads.update_one({"id": load_id}, {"$push": {"document_links": link}, "$set": {"document_status": "Retur SO Tercatat"}})
+        link_applied = True
         await db.transactions.insert_many([{"id": new_id(), "load_id": load_id, "time": link["time"], "ref": return_no, "type": "MASUK", "kondisi": "RETUR_SO", "document_type": "SO_RETUR", "parent_document": source_no, "product": item["name"], "change": item["goodQty"] + item["damagedQty"], "good_change": item["goodQty"], "damaged_change": item["damagedQty"], "unit": item["unit"], "channel": item["channel"], "penerima": load.get("party", ""), "operator": user.get("name", ""), "keterangan": body.note.strip()} for item in link_items])
         return link
     except Exception:
+        await db.transactions.delete_many({"load_id": load_id, "ref": return_no, "document_type": "SO_RETUR"})
+        if link_applied:
+            await db.outbound_loads.update_one({"id": load_id}, {"$pull": {"document_links": {"id": link["id"]}}, "$set": {"document_status": load.get("document_status", "Selesai")}})
+        for product_id, stack_code, qty in reversed(stack_changes):
+            try:
+                await decrease_stack_allocation(product_id, stack_code, qty, "Sistem (rollback retur SO)")
+            except Exception:
+                pass
         for product_id, field, qty, channel in reversed(reversals):
             await db.products.update_one({"id": product_id}, {"$inc": {field: -qty, f"channelStock.{channel}.{field}": -qty}})
         raise
@@ -1015,6 +1051,11 @@ async def settle_outbound_document(load_id: str, body: SettlementInput, user: di
     link = {"id": new_id(), "type": "SO", "no": document_no, "time": now_iso(), "items": items, "note": body.note.strip(), "operator": user.get("name", "")}
     prospective = {**load, "document_links": [*load.get("document_links", []), link]}
     complete = all(sum(_linked_totals(prospective, pid)) >= float(source.get("qty", 0) or 0) - 1e-9 for pid, source in original.items())
-    await db.outbound_loads.update_one({"id": load_id}, {"$push": {"document_links": link}, "$set": {"document_status": "Selesai Dokumen" if complete else "SO Sebagian · Belum Selesai"}})
-    await db.transactions.insert_many([{"id": new_id(), "load_id": load_id, "time": link["time"], "ref": document_no, "type": "DOKUMEN", "kondisi": "—", "document_type": "SO", "parent_document": load.get("ref", ""), "product": item["name"], "change": 0, "settled_qty": item["qty"], "unit": item["unit"], "channel": item.get("channel", ""), "penerima": load.get("party", ""), "operator": user.get("name", ""), "keterangan": body.note.strip()} for item in items])
-    return link
+    try:
+        await db.outbound_loads.update_one({"id": load_id}, {"$push": {"document_links": link}, "$set": {"document_status": "Selesai Dokumen" if complete else "SO Sebagian · Belum Selesai"}})
+        await db.transactions.insert_many([{"id": new_id(), "load_id": load_id, "time": link["time"], "ref": document_no, "type": "DOKUMEN", "kondisi": "—", "document_type": "SO", "parent_document": load.get("ref", ""), "product": item["name"], "change": 0, "settled_qty": item["qty"], "unit": item["unit"], "channel": item.get("channel", ""), "penerima": load.get("party", ""), "operator": user.get("name", ""), "keterangan": body.note.strip()} for item in items])
+        return link
+    except Exception:
+        await db.transactions.delete_many({"load_id": load_id, "ref": document_no, "document_type": "SO"})
+        await db.outbound_loads.update_one({"id": load_id}, {"$pull": {"document_links": {"id": link["id"]}}, "$set": {"document_status": load.get("document_status", "Selesai")}})
+        raise
