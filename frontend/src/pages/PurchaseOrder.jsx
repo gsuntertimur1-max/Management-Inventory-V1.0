@@ -88,6 +88,7 @@ const PurchaseOrder = () => {
     try {
       await addPO({
         supplier: form.supplier,
+        no: form.no.trim(),
         date: new Date().toISOString(),
         items: selectedItems.map((item) => ({ productId: item.productId, qty: Number(item.qty) })),
       });

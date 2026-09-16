@@ -263,7 +263,6 @@ async def migrate_default_locations() -> None:
 
 @router.get("/stack-allocations")
 async def list_stack_allocations(user: dict = Depends(get_current_user)):
-    await migrate_default_locations()
     return await db.stack_allocations.find({}, {"_id": 0}).sort(
         [("stackCode", 1), ("productName", 1)]
     ).to_list(10000)

@@ -14,7 +14,7 @@ const LayarAntrian = () => {
   const [lastUpdated, setLastUpdated] = useState(new Date());
   const [refreshing, setRefreshing] = useState(false);
   const active = outboundLoads
-    .filter((load) => load.status !== 'Selesai')
+    .filter((load) => ['Menunggu', 'Sedang Dimuat'].includes(load.status))
     .sort((a, b) => (a.antrian || '').localeCompare(b.antrian || ''));
   const loading = active.find((load) => load.status === 'Sedang Dimuat');
 

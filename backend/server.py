@@ -187,7 +187,7 @@ ROLE_PERMISSIONS = {
     ROLE_ADMIN: {"masterWrite", "inbound", "outbound", "costView"},
     # Operator Gudang hanya mencatat arus stok harian; master dan pengaturan
     # tetap khusus Admin Gudang/Superadmin.
-    ROLE_OPERATOR: {"inbound", "outbound"},
+    ROLE_OPERATOR: {"rebagging"},
     ROLE_QC: {"qc"},
     # Modul persetujuan Kepala Gudang dan layar pembayaran mandor akan memakai
     # izin khusus ini saat endpoint-nya ditambahkan. Keduanya tetap read-only
@@ -201,9 +201,9 @@ ROLE_PERMISSIONS = {
 def has_role_permission(role: Optional[str], permission: str) -> bool:
     canonical = canonical_role(role)
     if permission == "currentWrite":
-        return canonical in {ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_OPERATOR}
+        return canonical in {ROLE_SUPERADMIN, ROLE_ADMIN}
     if permission == "operations":
-        return canonical in {ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_OPERATOR}
+        return canonical in {ROLE_SUPERADMIN, ROLE_ADMIN}
     return permission in ROLE_PERMISSIONS.get(canonical, set())
 
 
@@ -215,7 +215,7 @@ def role_label(role: Optional[str]) -> str:
 # The current Railway branch has no separate Rebagging/QC endpoints yet. The
 # generic write dependency covers the currently exposed inbound/outbound
 # operations. Master/settings routes use their dedicated Admin dependency.
-WRITE_ROLES = {ROLE_SUPERADMIN, ROLE_ADMIN, ROLE_OPERATOR}
+WRITE_ROLES = {ROLE_SUPERADMIN, ROLE_ADMIN}
 
 
 async def require_write(user: dict = Depends(get_current_user)) -> dict:
@@ -232,6 +232,15 @@ async def require_master_write(user: dict = Depends(get_current_user)) -> dict:
         raise HTTPException(
             status_code=403,
             detail=f"Peran {role_label(user.get('role'))} tidak memiliki hak untuk mengubah data master",
+        )
+    return user
+
+
+async def require_cost_view(user: dict = Depends(get_current_user)) -> dict:
+    if not has_role_permission(user.get("role"), "costView"):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Peran {role_label(user.get('role'))} tidak memiliki hak untuk melihat biaya operasional",
         )
     return user
 
@@ -287,7 +296,9 @@ async def seed_master(force: bool = False):
         for collection in (
             db.stack_allocations, db.stack_history, db.stack_treatments, db.transactions,
             db.surat_jalan, db.purchase_orders, db.outbound_loads, db.products,
-            db.suppliers, db.counters,
+            db.suppliers, db.supplier_returns, db.consignment_layouts,
+            db.consignment_layout_history, db.consignment_opnames,
+            db.loading_cost_settlements, db.counters,
         ):
             await collection.delete_many({})
     text = (ROOT_DIR / 'seed_data.csv').read_text(encoding='utf-8')

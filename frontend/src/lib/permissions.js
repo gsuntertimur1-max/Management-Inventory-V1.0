@@ -32,7 +32,7 @@ export const canonicalRole = (role) => ({
 const ROLE_PERMISSIONS = {
   Administrator: new Set(['masterWrite', 'inbound', 'outbound', 'rebagging', 'qc', 'users', 'settings', 'costView']),
   Supervisor: new Set(['masterWrite', 'inbound', 'outbound', 'costView']),
-  Operator: new Set(['inbound', 'outbound']),
+  Operator: new Set(['rebagging']),
   QC: new Set(['qc']),
   'Kepala Gudang': new Set(['warehouseApprove']),
   Mandor: new Set(['costView']),

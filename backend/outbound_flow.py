@@ -17,6 +17,7 @@ from backend.server import (
     operational_now,
     require_write,
     require_admin,
+    require_cost_view,
     ensure_channel_stock,
     normalize_channel,
     channel_balance,
@@ -424,7 +425,7 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
 
 
 @router.get("/loading-costs")
-async def get_loading_costs(date: str = "", user: dict = Depends(get_current_user)):
+async def get_loading_costs(date: str = "", user: dict = Depends(require_cost_view)):
     target_date = date.strip() or operational_now().strftime("%Y-%m-%d")
     try:
         datetime.strptime(target_date, "%Y-%m-%d")

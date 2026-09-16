@@ -21,6 +21,7 @@ from backend.server import (
     now_iso,
     operational_now,
     require_write,
+    require_master_write,
     ensure_channel_stock,
     normalize_channel,
 )
@@ -253,7 +254,7 @@ async def list_purchase_orders(user: dict = Depends(get_current_user)):
 
 
 @router.post("/purchase-orders-v2")
-async def create_purchase_order(body: PurchaseOrderInput, user: dict = Depends(require_write)):
+async def create_purchase_order(body: PurchaseOrderInput, user: dict = Depends(require_master_write)):
     supplier = body.supplier.strip()
     if not supplier:
         raise HTTPException(status_code=400, detail="Supplier wajib dipilih")
@@ -317,7 +318,7 @@ async def create_purchase_order(body: PurchaseOrderInput, user: dict = Depends(r
 
 
 @router.post("/purchase-orders-v2/{po_id}/cancel")
-async def cancel_purchase_order(po_id: str, body: PurchaseOrderCancelInput, user: dict = Depends(require_write)):
+async def cancel_purchase_order(po_id: str, body: PurchaseOrderCancelInput, user: dict = Depends(require_master_write)):
     """Batalkan sisa PO yang belum diterima, tanpa mengubah penerimaan yang sudah tercatat."""
     raw_po = await db.purchase_orders.find_one({"id": po_id}, {"_id": 0})
     if not raw_po:
@@ -621,7 +622,7 @@ async def receive_supplier_replacement(return_id: str, body: SupplierReplacement
 
 
 @router.post("/import/master-csv")
-async def import_master_csv(file: UploadFile = File(...), user: dict = Depends(require_write)):
+async def import_master_csv(file: UploadFile = File(...), user: dict = Depends(require_master_write)):
     raw = await file.read()
     if (file.filename or "").lower().endswith(".xlsx"):
         try:
