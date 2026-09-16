@@ -38,9 +38,12 @@ async def ensure_performance_indexes() -> None:
         (db.outbound_loads, [("documents", 1)], "outbound_documents"),
         (db.transactions, [("time", -1)], "transactions_time"),
         (db.transactions, [("operation_id", 1), ("time", -1)], "transactions_operation"),
+        (db.transactions, [("product_id", 1), ("time", -1)], "transactions_product_time"),
         (db.surat_jalan, [("time", -1)], "surat_jalan_time"),
         (db.stack_allocations, [("stackCode", 1), ("productName", 1)], "stack_location_product"),
         (db.stack_treatments, [("warehouse", 1), ("stackCode", 1), ("startDate", -1)], "treatment_location_date"),
+        (db.stock_opnames, [("warehouse", 1), ("status", 1), ("createdAt", -1)], "stock_opname_warehouse_status"),
+        (db.stock_opnames, [("createdAt", -1)], "stock_opname_created"),
     )
     for collection, keys, name in indexes:
         try:
@@ -83,6 +86,16 @@ async def _export_products_xlsx(request: Request):
     )
 
 
+async def _cleanup_new_operational_collections() -> None:
+    """Keep reset-data complete as new operational modules are added."""
+    for collection in (
+        db.stock_opnames,
+        db.operation_requests,
+        db.operation_locks,
+    ):
+        await collection.delete_many({})
+
+
 async def hardening_middleware(request: Request, call_next: Callable[[Request], Awaitable]):
     if blocks_legacy_product_mutation(request.method, request.url.path):
         return JSONResponse(
@@ -100,4 +113,15 @@ async def hardening_middleware(request: Request, call_next: Callable[[Request], 
         )
     if request.method.upper() == "GET" and request.url.path.rstrip("/") == "/api/export/products.xlsx":
         return await _export_products_xlsx(request)
-    return await call_next(request)
+
+    response = await call_next(request)
+    if (
+        request.method.upper() == "POST"
+        and request.url.path.rstrip("/") == "/api/admin/reset-data"
+        and 200 <= response.status_code < 300
+    ):
+        try:
+            await _cleanup_new_operational_collections()
+        except Exception as exc:
+            logger.exception("Reset utama berhasil tetapi cleanup modul baru gagal: %s", exc)
+    return response
