@@ -8,7 +8,7 @@ os.environ.setdefault("MONGO_URL", "mongodb://127.0.0.1:27017")
 os.environ.setdefault("DB_NAME", "management_inventory_test")
 os.environ.setdefault("JWT_SECRET", "test-only-jwt-secret")
 
-import server
+from backend import server
 from backend.inventory_flow import ReceiptItemInput, receipt_condition_quantities
 from backend.outbound_flow import loading_units_from_items
 from fastapi import HTTPException
@@ -63,7 +63,7 @@ def test_role_aliases_and_labels_preserve_legacy_values():
     assert server.canonical_role("Superadmin") == "Administrator"
     assert server.canonical_role("Admin") == "Supervisor"
     assert server.role_label("Administrator") == "Superadmin"
-    assert server.role_label("Supervisor") == "Admin"
+    assert server.role_label("Supervisor") == "Admin Gudang"
 
 
 def test_receipt_quantities_preserve_legacy_condition_and_validate_split_total():
