@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutGrid, Boxes, Layers, ArrowLeftRight, Send, History, ClipboardList, Truck, MonitorSmartphone, Users, Settings, PlusCircle, LogOut, Menu, ChevronDown, PackageSearch, Workflow, ShoppingCart, ShieldCheck, ClipboardCheck, TriangleAlert, RefreshCcw, Activity, CalendarClock } from 'lucide-react';
+import { LayoutGrid, Boxes, Layers, ArrowLeftRight, Send, History, ClipboardList, Truck, MonitorSmartphone, Users, Settings, PlusCircle, LogOut, Menu, ChevronDown, PackageSearch, Workflow, ShoppingCart, ShieldCheck, ClipboardCheck, TriangleAlert, RefreshCcw, Activity, CalendarClock, PackageX } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { hasPermission, roleLabel } from '../lib/permissions';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from './ui/sheet';
@@ -14,6 +14,7 @@ const NAV_GROUPS = [
       { to: '/produk', label: 'Daftar Produk', icon: Boxes },
       { to: '/tumpukan', label: 'Tumpukan Stok', icon: Layers },
       { to: '/fefo', label: 'Lot & FEFO', icon: CalendarClock },
+      { to: '/area-barang-rusak', label: 'Area Barang Rusak', icon: PackageX },
       { to: '/opname-gudang', label: 'Stock Opname GBB', icon: ClipboardCheck },
       { to: '/opname-konsinyasi', label: 'Opname Bazar/E-commerce', icon: ClipboardCheck },
     ],
