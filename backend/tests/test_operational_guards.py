@@ -27,11 +27,17 @@ def _first_endpoint(path: str, method: str):
 
 
 def test_guard_routes_precede_original_mutating_routes():
-    assert _first_endpoint("/api/receipts", "POST").__name__ == "guarded_receive_stock"
+    assert _first_endpoint("/api/receipts", "POST").__name__ == "guarded_receive_stock_with_metadata"
     assert _first_endpoint("/api/stock-damage-discoveries", "POST").__name__ == "guarded_stock_damage"
     assert _first_endpoint("/api/supplier-returns", "POST").__name__ == "guarded_supplier_return"
     assert _first_endpoint("/api/outbound-loads", "POST").__name__ == "guarded_create_outbound"
     assert _first_endpoint("/api/outbound-loads/{load_id}/complete", "POST").__name__ == "guarded_complete_outbound"
+
+
+def test_correction_routes_are_superadmin_operational_endpoints():
+    assert _first_endpoint("/api/operational-corrections/receipts", "GET").__name__ == "list_receipt_corrections"
+    assert _first_endpoint("/api/operational-corrections/receipts/{operation_id}/void", "POST").__name__ == "void_receipt_operation"
+    assert _first_endpoint("/api/operational-corrections/outbound/{load_id}", "PUT").__name__ == "correct_completed_outbound_metadata"
 
 
 def test_lock_keys_are_sorted_and_deduplicated():
