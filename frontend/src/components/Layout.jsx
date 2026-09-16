@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutGrid, Boxes, Layers, ArrowLeftRight, Send, History, ClipboardList, Truck, MonitorSmartphone, Users, Settings, PlusCircle, LogOut, Menu, ChevronDown, PackageSearch, Workflow, ShoppingCart, ShieldCheck, ClipboardCheck, TriangleAlert, RefreshCcw } from 'lucide-react';
+import { LayoutGrid, Boxes, Layers, ArrowLeftRight, Send, History, ClipboardList, Truck, MonitorSmartphone, Users, Settings, PlusCircle, LogOut, Menu, ChevronDown, PackageSearch, Workflow, ShoppingCart, ShieldCheck, ClipboardCheck, TriangleAlert, RefreshCcw, Activity } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { hasPermission, roleLabel } from '../lib/permissions';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from './ui/sheet';
@@ -35,6 +35,7 @@ const NAV_GROUPS = [
   { label: 'Riwayat', icon: History, to: '/riwayat' },
   {
     label: 'Administrasi', icon: ShieldCheck, items: [
+      { to: '/kontrol-integritas', label: 'Kontrol Integritas', icon: Activity, permission: 'masterWrite' },
       { to: '/pengguna', label: 'Pengguna', icon: Users, permission: 'users' },
       { to: '/pengaturan', label: 'Pengaturan', icon: Settings, permission: 'settings' },
     ],
