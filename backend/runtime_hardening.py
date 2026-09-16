@@ -20,7 +20,6 @@ def blocks_legacy_product_mutation(method: str, path: str) -> bool:
 
 
 def blocks_legacy_direct_transaction(method: str, path: str) -> bool:
-    """Prevent the old generic stock writer from bypassing stack/channel/queue flows."""
     return str(method or "").upper() == "POST" and str(path or "").rstrip("/") == "/api/transactions"
 
 
@@ -30,7 +29,6 @@ def measure_unit(value: str | None) -> str:
 
 
 async def ensure_performance_indexes() -> None:
-    """Indexes for the read paths used continuously by the warehouse screens."""
     indexes = (
         (db.outbound_loads, [("status", 1), ("created_at", -1)], "queue_status_created"),
         (db.outbound_loads, [("operational_date", 1), ("antrian", 1)], "queue_operational_date"),
@@ -48,7 +46,7 @@ async def ensure_performance_indexes() -> None:
     for collection, keys, name in indexes:
         try:
             await collection.create_index(keys, name=name)
-        except Exception as exc:  # startup must stay available even if one optional index fails
+        except Exception as exc:
             logger.warning("Index %s gagal dibuat: %s", name, exc)
 
 
@@ -87,9 +85,10 @@ async def _export_products_xlsx(request: Request):
 
 
 async def _cleanup_new_operational_collections() -> None:
-    """Keep reset-data complete as new operational modules are added."""
     for collection in (
         db.stock_opnames,
+        db.stack_lots,
+        db.stack_lot_movements,
         db.operation_requests,
         db.operation_locks,
     ):
@@ -98,28 +97,14 @@ async def _cleanup_new_operational_collections() -> None:
 
 async def hardening_middleware(request: Request, call_next: Callable[[Request], Awaitable]):
     if blocks_legacy_product_mutation(request.method, request.url.path):
-        return JSONResponse(
-            status_code=409,
-            content={
-                "detail": "Endpoint master produk lama dinonaktifkan untuk mencegah perubahan stok langsung. Gunakan /api/products-master dan transaksi stok.",
-            },
-        )
+        return JSONResponse(status_code=409, content={"detail": "Endpoint master produk lama dinonaktifkan untuk mencegah perubahan stok langsung. Gunakan /api/products-master dan transaksi stok."})
     if blocks_legacy_direct_transaction(request.method, request.url.path):
-        return JSONResponse(
-            status_code=409,
-            content={
-                "detail": "Transaksi stok langsung versi lama dinonaktifkan. Gunakan penerimaan /api/receipts atau proses pemuatan /api/outbound-loads agar tumpukan, saluran, Bon Muat, dan antrian tetap konsisten.",
-            },
-        )
+        return JSONResponse(status_code=409, content={"detail": "Transaksi stok langsung versi lama dinonaktifkan. Gunakan penerimaan /api/receipts atau proses pemuatan /api/outbound-loads agar tumpukan, saluran, Bon Muat, dan antrian tetap konsisten."})
     if request.method.upper() == "GET" and request.url.path.rstrip("/") == "/api/export/products.xlsx":
         return await _export_products_xlsx(request)
 
     response = await call_next(request)
-    if (
-        request.method.upper() == "POST"
-        and request.url.path.rstrip("/") == "/api/admin/reset-data"
-        and 200 <= response.status_code < 300
-    ):
+    if request.method.upper() == "POST" and request.url.path.rstrip("/") == "/api/admin/reset-data" and 200 <= response.status_code < 300:
         try:
             await _cleanup_new_operational_collections()
         except Exception as exc:
