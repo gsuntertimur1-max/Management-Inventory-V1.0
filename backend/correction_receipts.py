@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from backend.server import db, require_admin, require_write
 from backend.inventory_flow import ReceiptInput, receipt_condition_quantities
 from backend.operational_guards import guarded_receive_stock
+from backend.stack_lots import record_receipt_lots
 
 router = APIRouter(prefix="/api")
 logger = logging.getLogger(__name__)
@@ -94,7 +95,9 @@ async def guarded_receive_stock_with_metadata(body: ReceiptInput, request: Reque
             raise HTTPException(status_code=400, detail="Lokasi tumpukan penerimaan tidak valid")
 
     result = await guarded_receive_stock(body, request, user)
-    return await enrich_receipt_result(body, result)
+    result = await enrich_receipt_result(body, result)
+    await record_receipt_lots(body, result)
+    return result
 
 
 async def product_maps() -> tuple[dict[str, dict], dict[str, dict]]:
@@ -193,8 +196,6 @@ async def list_receipt_corrections(user: dict = Depends(require_admin)):
 
 
 async def recalculate_product_exp(product: dict) -> None:
-    # Penerimaan lama tidak selalu memiliki good_change. Ambil semua penerimaan
-    # aktif produk lalu gunakan txn_quantities agar data legacy tetap dihitung.
     query = {
         "type": "MASUK",
         "operation_id": {"$nin": ["", None]},
