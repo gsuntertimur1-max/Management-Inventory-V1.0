@@ -92,6 +92,99 @@ export const DataProvider = ({ children }) => {
     }
   }, [user?.role]);
 
+  const refreshProducts = useCallback(async () => {
+    const [productsRes, monitoringRes] = await Promise.all([
+      api.get('/products'),
+      api.get('/monitoring-stock'),
+    ]);
+    setState((prev) => ({ ...prev, products: productsRes.data, monitoringStock: monitoringRes.data }));
+  }, []);
+
+  const refreshInventoryFlow = useCallback(async () => {
+    const [productsRes, transactionsRes, poRes, stacksRes, monitoringRes, supplierReturnsRes] = await Promise.all([
+      api.get('/products'),
+      api.get('/transactions'),
+      api.get('/purchase-orders-v2'),
+      api.get('/stack-allocations'),
+      api.get('/monitoring-stock'),
+      api.get('/supplier-returns'),
+    ]);
+    setState((prev) => ({
+      ...prev,
+      products: productsRes.data,
+      transactions: transactionsRes.data,
+      purchaseOrders: poRes.data,
+      stackAllocations: stacksRes.data,
+      monitoringStock: monitoringRes.data,
+      supplierReturns: supplierReturnsRes.data,
+    }));
+  }, []);
+
+  const refreshOutboundFlow = useCallback(async () => {
+    const [loadsRes, sjRes, productsRes, transactionsRes, stacksRes, consignmentRes, monitoringRes] = await Promise.all([
+      api.get('/outbound-loads'),
+      api.get('/surat-jalan'),
+      api.get('/products'),
+      api.get('/transactions'),
+      api.get('/stack-allocations'),
+      api.get('/consignment-stock'),
+      api.get('/monitoring-stock'),
+    ]);
+    setState((prev) => ({
+      ...prev,
+      outboundLoads: loadsRes.data,
+      suratJalan: sjRes.data,
+      products: productsRes.data,
+      transactions: transactionsRes.data,
+      stackAllocations: stacksRes.data,
+      consignmentStock: consignmentRes.data,
+      monitoringStock: monitoringRes.data,
+    }));
+  }, []);
+
+  const refreshOutboundLoads = useCallback(async () => {
+    const { data } = await api.get('/outbound-loads');
+    setState((prev) => ({ ...prev, outboundLoads: data }));
+    return data;
+  }, []);
+
+  const refreshPurchaseOrders = useCallback(async () => {
+    const { data } = await api.get('/purchase-orders-v2');
+    setState((prev) => ({ ...prev, purchaseOrders: data }));
+  }, []);
+
+  const refreshSuratJalan = useCallback(async () => {
+    const { data } = await api.get('/surat-jalan');
+    setState((prev) => ({ ...prev, suratJalan: data }));
+  }, []);
+
+  const refreshStacks = useCallback(async () => {
+    const { data } = await api.get('/stack-allocations');
+    setState((prev) => ({ ...prev, stackAllocations: data }));
+  }, []);
+
+  const refreshTreatments = useCallback(async () => {
+    const { data } = await api.get('/stack-treatments');
+    setState((prev) => ({ ...prev, stackTreatments: data }));
+  }, []);
+
+  const refreshConsignmentLayouts = useCallback(async () => {
+    const [layoutsRes, historyRes] = await Promise.all([
+      api.get('/consignment-layouts'),
+      api.get('/consignment-layout-history'),
+    ]);
+    setState((prev) => ({
+      ...prev,
+      consignmentLayouts: layoutsRes.data,
+      consignmentLayoutHistory: historyRes.data,
+    }));
+  }, []);
+
+  const refreshConsignmentOpnames = useCallback(async () => {
+    const { data } = await api.get('/consignment-opnames');
+    setState((prev) => ({ ...prev, consignmentOpnames: data }));
+  }, []);
+
   useEffect(() => {
     const token = localStorage.getItem('bulog_token');
     if (!token) { setChecking(false); return; }
@@ -121,26 +214,20 @@ export const DataProvider = ({ children }) => {
     setState(EMPTY);
   };
 
-  const addProduct = async (p) => { await api.post('/products-master', p); await fetchAll(); };
-  const updateProduct = async (id, patch) => { await api.put(`/products-master/${id}`, patch); await fetchAll(); };
-  const deleteProduct = async (id) => { await api.delete(`/products-master/${id}`); await fetchAll(); };
-  const addTransaction = async (payload) => { await api.post('/transactions', payload); await fetchAll(); };
-  const addReceipt = async (payload) => { const { data } = await api.post('/receipts', payload); await fetchAll(); return data; };
-  const recordStockDamage = async (payload) => { const { data } = await api.post('/stock-damage-discoveries', payload); await fetchAll(); return data; };
-  const createSupplierReturn = async (payload) => { const { data } = await api.post('/supplier-returns', payload); await fetchAll(); return data; };
-  const receiveSupplierReplacement = async (id, payload) => { const { data } = await api.post(`/supplier-returns/${id}/replacement`, payload); await fetchAll(); return data; };
+  const addProduct = async (p) => { await api.post('/products-master', p); await refreshProducts(); };
+  const updateProduct = async (id, patch) => { await api.put(`/products-master/${id}`, patch); await refreshProducts(); };
+  const deleteProduct = async (id) => { await api.delete(`/products-master/${id}`); await refreshProducts(); };
+  const addTransaction = async (payload) => { await api.post('/transactions', payload); await refreshInventoryFlow(); };
+  const addReceipt = async (payload) => { const { data } = await api.post('/receipts', payload); await refreshInventoryFlow(); return data; };
+  const recordStockDamage = async (payload) => { const { data } = await api.post('/stock-damage-discoveries', payload); await refreshInventoryFlow(); return data; };
+  const createSupplierReturn = async (payload) => { const { data } = await api.post('/supplier-returns', payload); await refreshInventoryFlow(); return data; };
+  const receiveSupplierReplacement = async (id, payload) => { const { data } = await api.post(`/supplier-returns/${id}/replacement`, payload); await refreshInventoryFlow(); return data; };
 
   const createOutboundLoad = async (payload) => {
     const { data } = await api.post('/outbound-loads', payload);
     setState((prev) => ({ ...prev, outboundLoads: [data, ...prev.outboundLoads] }));
     return data;
   };
-
-  const refreshOutboundLoads = useCallback(async () => {
-    const { data } = await api.get('/outbound-loads');
-    setState((prev) => ({ ...prev, outboundLoads: data }));
-    return data;
-  }, []);
 
   const startOutboundLoad = async (id) => {
     const { data } = await api.post(`/outbound-loads/${id}/start`);
@@ -153,17 +240,17 @@ export const DataProvider = ({ children }) => {
 
   const completeOutboundLoad = async (id) => {
     const { data } = await api.post(`/outbound-loads/${id}/complete`);
-    await fetchAll();
+    await refreshOutboundFlow();
     return data;
   };
-  const createConsignmentReturn = async (id, payload) => { const { data } = await api.post(`/outbound-loads/${id}/return`, payload); await fetchAll(); return data; };
-  const createSalesReturn = async (id, payload) => { const { data } = await api.post(`/outbound-loads/${id}/sales-return`, payload); await fetchAll(); return data; };
-  const settleOutboundDocument = async (id, payload) => { const { data } = await api.post(`/outbound-loads/${id}/settle`, payload); await fetchAll(); return data; };
+  const createConsignmentReturn = async (id, payload) => { const { data } = await api.post(`/outbound-loads/${id}/return`, payload); await refreshOutboundFlow(); return data; };
+  const createSalesReturn = async (id, payload) => { const { data } = await api.post(`/outbound-loads/${id}/sales-return`, payload); await refreshOutboundFlow(); return data; };
+  const settleOutboundDocument = async (id, payload) => { const { data } = await api.post(`/outbound-loads/${id}/settle`, payload); await refreshOutboundFlow(); return data; };
 
-  const updateSJStatus = async (id, status) => { await api.put(`/surat-jalan/${id}/status`, { status }); await fetchAll(); };
-  const cancelOutboundLoad = async (id, payload) => { const { data } = await api.post(`/outbound-loads/${id}/cancel`, payload); await fetchAll(); return data; };
-  const editOutboundLoad = async (id, payload) => { const { data } = await api.put(`/outbound-loads/${id}/edit`, payload); await fetchAll(); return data; };
-  const cancelPurchaseOrder = async (id, payload) => { const { data } = await api.post(`/purchase-orders-v2/${id}/cancel`, payload); await fetchAll(); return data; };
+  const updateSJStatus = async (id, status) => { await api.put(`/surat-jalan/${id}/status`, { status }); await refreshSuratJalan(); };
+  const cancelOutboundLoad = async (id, payload) => { const { data } = await api.post(`/outbound-loads/${id}/cancel`, payload); await refreshOutboundLoads(); return data; };
+  const editOutboundLoad = async (id, payload) => { const { data } = await api.put(`/outbound-loads/${id}/edit`, payload); await refreshOutboundLoads(); return data; };
+  const cancelPurchaseOrder = async (id, payload) => { const { data } = await api.post(`/purchase-orders-v2/${id}/cancel`, payload); await refreshPurchaseOrders(); return data; };
 
   const addSupplier = async (sup) => {
     const { data } = await api.post('/suppliers', sup);
@@ -208,12 +295,12 @@ export const DataProvider = ({ children }) => {
     await fetchAll();
     return data;
   };
-  const addStackAllocation = async (payload) => { await api.post('/stack-allocations', payload); await fetchAll(); };
-  const updateStackAllocation = async (id, payload) => { await api.put(`/stack-allocations/${id}`, payload); await fetchAll(); };
-  const deleteStackAllocation = async (id) => { await api.delete(`/stack-allocations/${id}`); await fetchAll(); };
-  const addStackTreatment = async (payload) => { await api.post('/stack-treatments', payload); await fetchAll(); };
-  const saveConsignmentLayout = async (payload) => { await api.put('/consignment-layouts', payload); await fetchAll(); };
-  const addConsignmentOpname = async (payload) => { await api.post('/consignment-opnames', payload); await fetchAll(); };
+  const addStackAllocation = async (payload) => { await api.post('/stack-allocations', payload); await refreshStacks(); };
+  const updateStackAllocation = async (id, payload) => { await api.put(`/stack-allocations/${id}`, payload); await refreshStacks(); };
+  const deleteStackAllocation = async (id) => { await api.delete(`/stack-allocations/${id}`); await refreshStacks(); };
+  const addStackTreatment = async (payload) => { await api.post('/stack-treatments', payload); await refreshTreatments(); };
+  const saveConsignmentLayout = async (payload) => { await api.put('/consignment-layouts', payload); await refreshConsignmentLayouts(); };
+  const addConsignmentOpname = async (payload) => { await api.post('/consignment-opnames', payload); await refreshConsignmentOpnames(); };
 
   return (
     <DataContext.Provider value={{
@@ -242,3 +329,5 @@ export const DataProvider = ({ children }) => {
     </DataContext.Provider>
   );
 };
+
+export default DataContext;
