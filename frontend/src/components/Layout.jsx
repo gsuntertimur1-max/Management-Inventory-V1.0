@@ -19,8 +19,8 @@ const NAV_GROUPS = [
   {
     label: 'Operasional', icon: Workflow, items: [
       { to: '/catat', label: 'Catat Stok', icon: ArrowLeftRight, permission: 'operations' },
-      { to: '/catat?panel=damage', label: 'Temuan Kerusakan', icon: TriangleAlert, permission: 'operations' },
-      { to: '/catat?panel=supplier-return', label: 'Retur / Ganti Pemasok', icon: RefreshCcw, permission: 'operations' },
+      { to: '/temuan-kerusakan', label: 'Temuan Kerusakan', icon: TriangleAlert, permission: 'operations' },
+      { to: '/retur-pemasok', label: 'Retur / Ganti Pemasok', icon: RefreshCcw, permission: 'operations' },
       { to: '/pengeluaran', label: 'Pengeluaran', icon: Send, permission: 'outboundPage' },
       { to: '/antrian', label: 'Layar Antrian', icon: MonitorSmartphone },
     ],

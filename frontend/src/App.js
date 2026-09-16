@@ -56,6 +56,8 @@ function AppRoutes() {
       <Route path="/tumpukan" element={<Protected><TumpukanStok /></Protected>} />
       <Route path="/opname-konsinyasi" element={<Protected><OpnameKonsinyasi /></Protected>} />
       <Route path="/catat" element={<Protected permission="operations"><CatatStok /></Protected>} />
+      <Route path="/temuan-kerusakan" element={<Protected permission="operations"><CatatStok panel="damage" /></Protected>} />
+      <Route path="/retur-pemasok" element={<Protected permission="operations"><CatatStok panel="supplier-return" /></Protected>} />
       <Route path="/pengeluaran" element={<Protected permission="outboundPage"><Pengeluaran /></Protected>} />
       <Route path="/riwayat" element={<Protected><Riwayat /></Protected>} />
       <Route path="/po" element={<Protected><PurchaseOrder /></Protected>} />
