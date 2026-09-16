@@ -1,35 +1,64 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Clock, Loader, Maximize2, Minimize2, RefreshCw, Volume2, VolumeX } from 'lucide-react';
-import { useData } from '../context/DataContext';
+import api from '../lib/api';
 import { formatNum } from '../mock';
 
+const quantitySummary = (items = []) => {
+  const totals = {};
+  items.forEach((item) => {
+    const unit = item.unit || 'unit';
+    totals[unit] = (totals[unit] || 0) + Number(item.qty || 0);
+  });
+  const parts = Object.entries(totals)
+    .filter(([, value]) => Math.abs(value) > 1e-9)
+    .map(([unit, value]) => `${formatNum(value)} ${unit}`);
+  return parts.join(' + ') || '—';
+};
+
+const measureSummary = (items = []) => {
+  const totals = {};
+  items.forEach((item) => {
+    const unit = item.measureUnit || 'kg';
+    totals[unit] = (totals[unit] || 0) + Number(item.berat || 0);
+  });
+  const parts = Object.entries(totals)
+    .filter(([, value]) => Math.abs(value) > 1e-9)
+    .map(([unit, value]) => `${formatNum(value)} ${unit}`);
+  return parts.join(' + ') || '—';
+};
+
 const LayarAntrian = () => {
-  const { outboundLoads, refreshOutboundLoads } = useData();
   const screenRef = useRef(null);
-  const announcedQueueRef = useRef(null);
+  const announcedQueuesRef = useRef(new Set());
+  const [queueLoads, setQueueLoads] = useState([]);
   const [presentationMode, setPresentationMode] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [indonesianVoice, setIndonesianVoice] = useState(null);
   const [voiceNotice, setVoiceNotice] = useState('');
   const [lastUpdated, setLastUpdated] = useState(new Date());
   const [refreshing, setRefreshing] = useState(false);
-  const active = outboundLoads
-    .filter((load) => ['Menunggu', 'Sedang Dimuat'].includes(load.status))
-    .sort((a, b) => (a.antrian || '').localeCompare(b.antrian || ''));
-  const loading = active.find((load) => load.status === 'Sedang Dimuat');
+  const [refreshError, setRefreshError] = useState('');
+
+  const active = [...queueLoads].sort((a, b) => (a.antrian || '').localeCompare(b.antrian || ''));
+  const loadingLoads = active.filter((load) => load.status === 'Sedang Dimuat');
 
   const refreshQueue = useCallback(async () => {
     setRefreshing(true);
     try {
-      await refreshOutboundLoads();
+      const { data } = await api.get('/outbound-queue');
+      setQueueLoads(Array.isArray(data) ? data : []);
       setLastUpdated(new Date());
+      setRefreshError('');
+    } catch (error) {
+      setRefreshError('Data antrian belum dapat diperbarui. Tampilan terakhir tetap dipertahankan.');
     } finally {
       setRefreshing(false);
     }
-  }, [refreshOutboundLoads]);
+  }, []);
 
   useEffect(() => {
-    const intervalId = window.setInterval(refreshQueue, 60000);
+    refreshQueue();
+    const intervalId = window.setInterval(refreshQueue, 30000);
     return () => window.clearInterval(intervalId);
   }, [refreshQueue]);
 
@@ -63,24 +92,34 @@ const LayarAntrian = () => {
   }, []);
 
   useEffect(() => {
-    const queueNumber = loading?.antrian;
-    if (!voiceEnabled || !indonesianVoice || !queueNumber || announcedQueueRef.current === queueNumber || !('speechSynthesis' in window)) return;
+    if (!voiceEnabled || !indonesianVoice || !('speechSynthesis' in window)) return;
+    const nextLoad = loadingLoads.find((load) => load.antrian && !announcedQueuesRef.current.has(load.antrian));
+    if (!nextLoad) return;
 
-    window.speechSynthesis.cancel();
+    const queueNumber = nextLoad.antrian;
     const spokenQueueNumber = String(queueNumber).replace(/[^a-zA-Z0-9]/g, '').split('').join(' ');
-    const message = new SpeechSynthesisUtterance(`Nomor antrian ${spokenQueueNumber}. Silakan menuju area pemuatan.`);
+    const location = nextLoad.unit_loading && nextLoad.unit_loading !== '-'
+      ? ` menuju ${nextLoad.unit_loading}`
+      : ' menuju area pemuatan';
+    const message = new SpeechSynthesisUtterance(`Nomor antrian ${spokenQueueNumber}. Silakan${location}.`);
     message.voice = indonesianVoice;
     message.lang = indonesianVoice.lang || 'id-ID';
     message.rate = 0.85;
     message.volume = 1;
+    window.speechSynthesis.cancel();
     window.speechSynthesis.speak(message);
-    announcedQueueRef.current = queueNumber;
-  }, [indonesianVoice, loading?.antrian, voiceEnabled]);
+    announcedQueuesRef.current.add(queueNumber);
+  }, [indonesianVoice, loadingLoads, voiceEnabled]);
+
+  useEffect(() => {
+    const activeQueueNumbers = new Set(active.map((load) => load.antrian).filter(Boolean));
+    announcedQueuesRef.current = new Set([...announcedQueuesRef.current].filter((queue) => activeQueueNumbers.has(queue)));
+  }, [queueLoads]);
 
   const enterPresentation = async () => {
     setPresentationMode(true);
     setVoiceEnabled(true);
-    announcedQueueRef.current = null;
+    announcedQueuesRef.current = new Set();
     try {
       await screenRef.current?.requestFullscreen?.();
     } catch (error) {
@@ -95,9 +134,13 @@ const LayarAntrian = () => {
 
   const toggleVoice = () => {
     if (voiceEnabled && 'speechSynthesis' in window) window.speechSynthesis.cancel();
-    announcedQueueRef.current = null;
+    announcedQueuesRef.current = new Set();
     setVoiceEnabled((enabled) => !enabled);
   };
+
+  const loadingQueueLabel = loadingLoads.length
+    ? loadingLoads.map((load) => load.antrian).filter(Boolean).join(' · ')
+    : '—';
 
   return (
     <div ref={screenRef} className={`${presentationMode ? 'queue-fullscreen fixed inset-0 z-[60] overflow-y-auto bg-[#070a10] p-4 sm:p-8' : ''} space-y-6`}>
@@ -105,7 +148,7 @@ const LayarAntrian = () => {
         <div>
           <div className="label-mono mb-2">Monitor Pemuatan</div>
           <h1 className="font-display text-4xl font-bold">Layar Antrian Pemuatan</h1>
-          <p className="text-[#8b93a1] mt-2">Nomor antrian reset setiap hari dan hanya menampilkan proses yang belum selesai.</p>
+          <p className="text-[#8b93a1] mt-2">Nomor antrian reset setiap hari, dipisahkan menurut unit pemuatan, dan hanya menampilkan proses aktif.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
           <button type="button" onClick={toggleVoice} className="queue-action inline-flex min-h-11 items-center gap-2 rounded-xl border border-[#242f3d] px-3.5 py-2.5 text-sm text-[#c7d0dc] hover:bg-[#141a24]">
@@ -127,18 +170,28 @@ const LayarAntrian = () => {
           {voiceNotice}
         </div>
       )}
+      {refreshError && (
+        <div role="status" className="rounded-xl border border-[#ef4444]/30 bg-[#ef4444]/10 px-4 py-3 text-sm text-[#fca5a5]">
+          {refreshError}
+        </div>
+      )}
 
       <div className="flex items-end justify-between gap-4 border-y border-[#161d29] py-4">
-        <div className="text-xs text-[#6b7688]">Diperbarui otomatis setiap 1 menit · Terakhir {lastUpdated.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</div>
-        <div className="text-right shrink-0"><div className="label-mono">Sedang Dilayani</div><div className="font-display text-4xl sm:text-5xl font-bold text-[#60a5fa]">{loading ? loading.antrian : '—'}</div></div>
+        <div className="text-xs text-[#6b7688]">Diperbarui otomatis setiap 30 detik · Terakhir {lastUpdated.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</div>
+        <div className="text-right shrink-0"><div className="label-mono">Sedang Dilayani</div><div className="font-display text-3xl sm:text-5xl font-bold text-[#60a5fa]">{loadingQueueLabel}</div></div>
       </div>
 
-      {loading && (
-        <div className="queue-loading-card card-surface p-8 relative overflow-hidden">
-          <div className="flex items-center gap-3 mb-2"><Loader size={20} className="text-[#3b82f6] animate-spin" /><span className="label-mono text-[#60a5fa]">Sedang Dimuat</span></div>
-          <div className="font-display text-7xl font-bold mb-2">{loading.antrian}</div>
-          <div className="text-xl font-semibold">{loading.party}</div>
-          <div className="text-[#aab4c4] mt-1">{loading.ref || 'Tanpa referensi'} · {formatNum(loading.total_unit || 0)} unit · {formatNum(loading.total_berat || 0)} kg</div>
+      {loadingLoads.length > 0 && (
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          {loadingLoads.map((loading) => (
+            <div key={loading.id} className="queue-loading-card card-surface p-8 relative overflow-hidden">
+              <div className="flex items-center gap-3 mb-2"><Loader size={20} className="text-[#3b82f6] animate-spin" /><span className="label-mono text-[#60a5fa]">Sedang Dimuat · {loading.unit_loading || '-'}</span></div>
+              <div className="font-display text-6xl sm:text-7xl font-bold mb-2">{loading.antrian}</div>
+              <div className="text-xl font-semibold">{loading.party}</div>
+              <div className="text-[#aab4c4] mt-1">{(loading.documents || [loading.ref]).filter(Boolean).join(', ') || 'Tanpa referensi'}</div>
+              <div className="text-sm text-[#8b93a1] mt-2">{quantitySummary(loading.items)} · {measureSummary(loading.items)}</div>
+            </div>
+          ))}
         </div>
       )}
 
@@ -152,9 +205,12 @@ const LayarAntrian = () => {
                 : <span className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full" style={{ background: 'rgba(59,130,246,.15)', color: '#3b82f6' }}><Loader size={12} className="animate-spin" /> Dimuat</span>}
             </div>
             <div className="font-semibold">{load.party}</div>
-            <div className="label-mono text-[10px] mt-1">{load.ref || 'Tanpa referensi'} · {load.polisi || 'Tanpa no. polisi'}</div>
+            <div className="label-mono text-[10px] mt-1">{(load.documents || [load.ref]).filter(Boolean).join(', ') || 'Tanpa referensi'} · {load.polisi || 'Tanpa no. polisi'}</div>
             <div className="text-xs text-[#60a5fa] mt-1">Lokasi muat: {load.unit_loading || '-'}</div>
-            <div className="mt-4 pt-4 border-t border-[#151d28] flex justify-between text-xs"><span className="text-[#8b93a1]">{formatNum((load.items || []).length)} jenis barang</span><span className="font-mono">{formatNum(load.total_unit || 0)} unit</span></div>
+            <div className="mt-4 pt-4 border-t border-[#151d28] space-y-1 text-xs">
+              <div className="flex justify-between gap-3"><span className="text-[#8b93a1]">{formatNum((load.items || []).length)} jenis barang</span><span className="font-mono text-right">{quantitySummary(load.items)}</span></div>
+              <div className="text-right font-mono text-[#6b7688]">{measureSummary(load.items)}</div>
+            </div>
           </div>
         ))}
       </div>

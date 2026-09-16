@@ -18,6 +18,7 @@ from backend import server
 from backend.inventory_flow import ReceiptItemInput, receipt_condition_quantities
 from backend.outbound_flow import loading_units_from_items, _linked_totals, _source_product_totals, _all_source_documents_settled
 from backend.stack_allocations import _parse_treatment_date
+from backend.runtime_hardening import blocks_legacy_product_mutation, measure_unit
 from fastapi import HTTPException
 
 
@@ -100,3 +101,18 @@ def test_treatment_date_parser_rejects_invalid_dates():
     assert _parse_treatment_date("2026-09-16", "Tanggal").isoformat() == "2026-09-16"
     with pytest.raises(HTTPException, match="YYYY-MM-DD"):
         _parse_treatment_date("16/09/2026", "Tanggal")
+
+
+def test_legacy_product_mutations_are_blocked_but_reads_remain_available():
+    assert blocks_legacy_product_mutation("POST", "/api/products") is True
+    assert blocks_legacy_product_mutation("PUT", "/api/products/p1") is True
+    assert blocks_legacy_product_mutation("DELETE", "/api/products/p1") is True
+    assert blocks_legacy_product_mutation("GET", "/api/products") is False
+    assert blocks_legacy_product_mutation("POST", "/api/products-master") is False
+
+
+def test_measure_unit_normalization_never_labels_liter_or_pcs_as_kg():
+    assert measure_unit("liter") == "liter"
+    assert measure_unit("pcs") == "pcs"
+    assert measure_unit("kg") == "kg"
+    assert measure_unit("unknown") == "kg"

@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi.responses import FileResponse
@@ -10,6 +11,8 @@ from backend.outbound_flow import router as outbound_flow_router
 from backend.consignment import router as consignment_router
 from backend.stack_allocations import router as stack_allocations_router
 from backend.pdf_documents import router as pdf_documents_router
+from backend.queue_flow import router as queue_flow_router
+from backend.runtime_hardening import ensure_performance_indexes, hardening_middleware
 
 app.include_router(inventory_flow_router)
 app.include_router(master_products_router)
@@ -17,6 +20,20 @@ app.include_router(outbound_flow_router)
 app.include_router(consignment_router)
 app.include_router(stack_allocations_router)
 app.include_router(pdf_documents_router)
+app.include_router(queue_flow_router)
+
+_original_lifespan = app.router.lifespan_context
+
+
+@asynccontextmanager
+async def hardened_lifespan(application):
+    async with _original_lifespan(application):
+        await ensure_performance_indexes()
+        yield
+
+
+app.router.lifespan_context = hardened_lifespan
+app.middleware("http")(hardening_middleware)
 
 ROOT_DIR = Path(__file__).resolve().parent
 BUILD_DIR = ROOT_DIR / "frontend" / "build"
