@@ -69,19 +69,23 @@ const OpnameGudang = () => {
     }));
   };
 
+  const draftPayload = (opname) => ({
+    note: opname.note || '',
+    lines: (opname.lines || []).map((line) => ({
+      allocationId: line.allocationId,
+      physicalQty: Number(line.physicalQty || 0),
+      channel: line.channel || 'KOM',
+      note: line.note || '',
+    })),
+  });
+
+  const persistDraft = async (opname) => api.put(`/stock-opnames/${opname.id}`, draftPayload(opname));
+
   const saveDraft = async () => {
     if (!selected || selected.status !== 'DRAFT' || saving) return;
     setSaving(true);
     try {
-      const response = await api.put(`/stock-opnames/${selected.id}`, {
-        note: selected.note || '',
-        lines: (selected.lines || []).map((line) => ({
-          allocationId: line.allocationId,
-          physicalQty: Number(line.physicalQty || 0),
-          channel: line.channel || 'KOM',
-          note: line.note || '',
-        })),
-      });
+      const response = await persistDraft(selected);
       setOpnames((prev) => prev.map((item) => item.id === selected.id ? response.data : item));
       toast.success('Draft stock opname disimpan.');
     } catch (e) { toast.error(apiError(e)); } finally { setSaving(false); }
@@ -92,10 +96,11 @@ const OpnameGudang = () => {
     if (!window.confirm(`Ajukan ${selected.no} untuk persetujuan? Setelah diajukan, angka fisik tidak dapat diedit.`)) return;
     setSaving(true);
     try {
-      await saveDraft();
+      const saved = await persistDraft(selected);
       const response = await api.post(`/stock-opnames/${selected.id}/submit`, { note: '' });
       setOpnames((prev) => prev.map((item) => item.id === selected.id ? response.data : item));
-      toast.success('Stock opname diajukan untuk persetujuan.');
+      if (saved.data?.updatedAt) toast.success('Draft terbaru tersimpan dan stock opname diajukan untuk persetujuan.');
+      else toast.success('Stock opname diajukan untuk persetujuan.');
     } catch (e) { toast.error(apiError(e)); } finally { setSaving(false); }
   };
 
@@ -124,7 +129,6 @@ const OpnameGudang = () => {
   };
 
   const differenceCount = (selected?.lines || []).filter((line) => Math.abs(Number(line.difference || 0)) > 0.000001).length;
-  const totalDifference = (selected?.lines || []).reduce((sum, line) => sum + Number(line.difference || 0), 0);
 
   return (
     <div className="space-y-6">
@@ -142,13 +146,13 @@ const OpnameGudang = () => {
 
         <div className="card-surface p-5 min-w-0">
           {!selected ? <div className="py-16 text-center text-[#8b93a1]">Pilih stock opname di sebelah kiri.</div> : <>
-            <div className="flex flex-wrap items-start justify-between gap-3 mb-4"><div><div className="flex items-center gap-2"><h2 className="font-display text-xl font-bold">{selected.no}</h2><span className={`text-[10px] border rounded-full px-2 py-1 ${statusClass(selected.status)}`}>{selected.status}</span></div><p className="text-xs text-[#8b93a1] mt-1">GBB {selected.warehouse} · dibuat {selected.createdBy}</p></div><div className="flex gap-2"><div className="rounded-lg bg-[#0b0f17] px-3 py-2 text-xs"><span className="text-[#8b93a1]">Baris selisih</span><div className="font-mono text-lg font-bold">{differenceCount}</div></div><div className="rounded-lg bg-[#0b0f17] px-3 py-2 text-xs"><span className="text-[#8b93a1]">Net selisih</span><div className={`font-mono text-lg font-bold ${totalDifference === 0 ? 'text-[#4ade80]' : 'text-[#fbbf24]'}`}>{totalDifference > 0 ? '+' : ''}{formatNum(totalDifference)}</div></div></div></div>
+            <div className="flex flex-wrap items-start justify-between gap-3 mb-4"><div><div className="flex items-center gap-2"><h2 className="font-display text-xl font-bold">{selected.no}</h2><span className={`text-[10px] border rounded-full px-2 py-1 ${statusClass(selected.status)}`}>{selected.status}</span></div><p className="text-xs text-[#8b93a1] mt-1">GBB {selected.warehouse} · dibuat {selected.createdBy}</p></div><div className="flex gap-2"><div className="rounded-lg bg-[#0b0f17] px-3 py-2 text-xs"><span className="text-[#8b93a1]">Baris diperiksa</span><div className="font-mono text-lg font-bold">{(selected.lines || []).length}</div></div><div className="rounded-lg bg-[#0b0f17] px-3 py-2 text-xs"><span className="text-[#8b93a1]">Baris selisih</span><div className={`font-mono text-lg font-bold ${differenceCount ? 'text-[#fbbf24]' : 'text-[#4ade80]'}`}>{differenceCount}</div></div></div></div>
 
             <div className="overflow-x-auto max-h-[560px]">
               <table className="w-full text-sm tbl"><thead className="sticky top-0 bg-[#0d121b]"><tr className="text-left border-b border-[#1a222e]">{['Tumpukan', 'Produk', 'Sistem', 'Fisik', 'Selisih', 'Saluran', 'Catatan'].map((h) => <th key={h} className="py-2.5 pr-3 whitespace-nowrap">{h}</th>)}</tr></thead><tbody>{(selected.lines || []).map((line) => {
                 const diff = Number(line.physicalQty || 0) - Number(line.systemQty || 0);
                 const editable = selected.status === 'DRAFT' && canEdit;
-                return <tr key={line.allocationId} className="border-b border-[#131a24]"><td className="py-2.5 pr-3 font-mono text-xs">{line.stackCode}</td><td className="py-2.5 pr-3"><div>{line.product}</div><div className="label-mono text-[9px]">{line.sku}</div></td><td className="py-2.5 pr-3 font-mono whitespace-nowrap">{formatNum(line.systemQty)} {line.unit}</td><td className="py-2.5 pr-3"><input disabled={!editable} type="number" min="0" step="any" value={line.physicalQty} onChange={(e) => patchLine(line.allocationId, { physicalQty: e.target.value })} className="w-28 bg-[#0b0f17] border border-[#242f3d] rounded px-2 py-1.5 font-mono disabled:opacity-70" /></td><td className={`py-2.5 pr-3 font-mono ${Math.abs(diff) > 0.000001 ? 'text-[#fbbf24]' : 'text-[#4ade80]'}`}>{diff > 0 ? '+' : ''}{formatNum(diff)}</td><td className="py-2.5 pr-3"><select disabled={!editable || Math.abs(diff) <= 0.000001} value={line.channel || 'KOM'} onChange={(e) => patchLine(line.allocationId, { channel: e.target.value })} className="bg-[#0b0f17] border border-[#242f3d] rounded px-2 py-1.5 text-xs disabled:opacity-60"><option value="PSO">PSO</option><option value="KOM">KOM</option></select></td><td className="py-2.5 pr-3"><input disabled={!editable} value={line.note || ''} onChange={(e) => patchLine(line.allocationId, { note: e.target.value })} className="min-w-[160px] bg-[#0b0f17] border border-[#242f3d] rounded px-2 py-1.5 text-xs disabled:opacity-60" placeholder="Opsional" /></td></tr>;
+                return <tr key={line.allocationId} className="border-b border-[#131a24]"><td className="py-2.5 pr-3 font-mono text-xs">{line.stackCode}</td><td className="py-2.5 pr-3"><div>{line.product}</div><div className="label-mono text-[9px]">{line.sku}</div></td><td className="py-2.5 pr-3 font-mono whitespace-nowrap">{formatNum(line.systemQty)} {line.unit}</td><td className="py-2.5 pr-3"><input disabled={!editable} type="number" min="0" step="any" value={line.physicalQty} onChange={(e) => patchLine(line.allocationId, { physicalQty: e.target.value })} className="w-28 bg-[#0b0f17] border border-[#242f3d] rounded px-2 py-1.5 font-mono disabled:opacity-70" /></td><td className={`py-2.5 pr-3 font-mono ${Math.abs(diff) > 0.000001 ? 'text-[#fbbf24]' : 'text-[#4ade80]'}`}>{diff > 0 ? '+' : ''}{formatNum(diff)} {line.unit}</td><td className="py-2.5 pr-3"><select disabled={!editable || Math.abs(diff) <= 0.000001} value={line.channel || 'KOM'} onChange={(e) => patchLine(line.allocationId, { channel: e.target.value })} className="bg-[#0b0f17] border border-[#242f3d] rounded px-2 py-1.5 text-xs disabled:opacity-60"><option value="PSO">PSO</option><option value="KOM">KOM</option></select></td><td className="py-2.5 pr-3"><input disabled={!editable} value={line.note || ''} onChange={(e) => patchLine(line.allocationId, { note: e.target.value })} className="min-w-[160px] bg-[#0b0f17] border border-[#242f3d] rounded px-2 py-1.5 text-xs disabled:opacity-60" placeholder="Opsional" /></td></tr>;
               })}</tbody></table>
             </div>
 
