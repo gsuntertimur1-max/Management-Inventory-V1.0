@@ -3,9 +3,9 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Iterable
+from typing import Awaitable, Callable, Iterable
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pymongo.errors import DuplicateKeyError, OperationFailure
 
 from backend.server import db, new_id, require_admin, require_master_write, require_write
@@ -38,6 +38,7 @@ from backend.outbound_flow import (
 router = APIRouter(prefix="/api")
 logger = logging.getLogger(__name__)
 _LOCK_TTL_MINUTES = 5
+_REQUEST_TTL_HOURS = 24
 
 
 def lock_keys(*groups: Iterable[str]) -> list[str]:
@@ -59,8 +60,9 @@ def document_lock_keys(document_numbers: Iterable[str]) -> list[str]:
 
 
 async def ensure_operational_guard_indexes() -> None:
-    """Indexes supporting cross-worker locks and document uniqueness."""
+    """Indexes supporting cross-worker locks, retry safety, and document uniqueness."""
     await db.operation_locks.create_index("expiresAt", expireAfterSeconds=0, name="operation_lock_ttl")
+    await db.operation_requests.create_index("expiresAt", expireAfterSeconds=0, name="operation_request_ttl")
     for collection, keys, name in (
         (db.supplier_returns, [("return_no", 1)], "supplier_return_no_unique"),
         (db.outbound_loads, [("bon_no", 1)], "bon_no_unique"),
@@ -102,6 +104,62 @@ async def operation_guard(keys: Iterable[str]):
     finally:
         if acquired:
             await db.operation_locks.delete_many({"_id": {"$in": acquired}, "token": token})
+
+
+def _request_key(request: Request) -> str:
+    return str(request.headers.get("X-Idempotency-Key") or "").strip()[:200]
+
+
+async def idempotent_operation(
+    request: Request,
+    user: dict,
+    scope: str,
+    keys: Iterable[str],
+    action: Callable[[], Awaitable[dict]],
+):
+    """Execute a write once. Network retries with the same client key reuse the stored result."""
+    key = _request_key(request)
+    if not key:
+        async with operation_guard(keys):
+            return await action()
+
+    user_id = str(user.get("id") or user.get("username") or user.get("name") or "anonymous")
+    document_id = f"{user_id}:{scope}:{key}"
+    existing = await db.operation_requests.find_one({"_id": document_id}, {"_id": 0})
+    if existing:
+        if existing.get("status") == "DONE" and "response" in existing:
+            return existing["response"]
+        raise HTTPException(status_code=409, detail="Permintaan yang sama sedang diproses. Coba ulang beberapa saat lagi.")
+
+    now = datetime.now(timezone.utc)
+    try:
+        await db.operation_requests.insert_one({
+            "_id": document_id,
+            "userId": user_id,
+            "scope": scope,
+            "key": key,
+            "status": "PROCESSING",
+            "createdAt": now,
+            "expiresAt": now + timedelta(hours=_REQUEST_TTL_HOURS),
+        })
+    except DuplicateKeyError:
+        existing = await db.operation_requests.find_one({"_id": document_id}, {"_id": 0}) or {}
+        if existing.get("status") == "DONE" and "response" in existing:
+            return existing["response"]
+        raise HTTPException(status_code=409, detail="Permintaan yang sama sedang diproses. Coba ulang beberapa saat lagi.")
+
+    try:
+        async with operation_guard(keys):
+            response = await action()
+        await db.operation_requests.update_one(
+            {"_id": document_id, "status": "PROCESSING"},
+            {"$set": {"status": "DONE", "response": response, "completedAt": datetime.now(timezone.utc)}},
+        )
+        return response
+    except Exception:
+        # Server-side validation or rollback completed: allow a corrected retry with the same payload.
+        await db.operation_requests.delete_one({"_id": document_id, "status": "PROCESSING"})
+        raise
 
 
 async def _load_product_ids(load_id: str) -> tuple[dict, list[str]]:
@@ -159,6 +217,24 @@ async def _bind_supplier_return(body: SupplierReturnInput) -> None:
     body.supplier = supplier
 
 
+async def _tag_load_transaction_product_ids(load_id: str, load: dict | None = None) -> None:
+    current = load or await db.outbound_loads.find_one({"id": load_id}, {"_id": 0}) or {}
+    for item in current.get("items", []):
+        product_id = str(item.get("productId") or "")
+        sku = str(item.get("sku") or "")
+        if not product_id or not sku:
+            continue
+        source = str(item.get("documentNo") or current.get("ref") or "")
+        query = {
+            "load_id": load_id,
+            "sku": sku,
+            "$or": [{"product_id": {"$exists": False}}, {"product_id": ""}, {"product_id": None}],
+        }
+        if source:
+            query["$and"] = [{"$or": [{"source_document": source}, {"ref": source}, {"parent_document": source}]}]
+        await db.transactions.update_many(query, {"$set": {"product_id": product_id}})
+
+
 def surat_jalan_with_exact_locations(load: dict, surat_jalan: dict | None) -> dict | None:
     if not surat_jalan:
         return surat_jalan
@@ -178,78 +254,98 @@ def surat_jalan_with_exact_locations(load: dict, surat_jalan: dict | None) -> di
 
 
 @router.post("/receipts")
-async def guarded_receive_stock(body: ReceiptInput, user: dict = Depends(require_write)):
+async def guarded_receive_stock(body: ReceiptInput, request: Request, user: dict = Depends(require_write)):
     keys = product_lock_keys(item.productId for item in body.items)
     if body.poId:
         keys.append(f"po:{body.poId}")
-    async with operation_guard(keys):
-        return await receive_stock(body, user)
+    return await idempotent_operation(request, user, "receipt", keys, lambda: receive_stock(body, user))
 
 
 @router.post("/purchase-orders-v2/{po_id}/cancel")
-async def guarded_cancel_purchase_order(po_id: str, body: PurchaseOrderCancelInput, user: dict = Depends(require_master_write)):
-    async with operation_guard([f"po:{po_id}"]):
-        return await cancel_purchase_order(po_id, body, user)
+async def guarded_cancel_purchase_order(po_id: str, body: PurchaseOrderCancelInput, request: Request, user: dict = Depends(require_master_write)):
+    return await idempotent_operation(request, user, f"po-cancel:{po_id}", [f"po:{po_id}"], lambda: cancel_purchase_order(po_id, body, user))
 
 
 @router.post("/stock-damage-discoveries")
-async def guarded_stock_damage(body: DamageDiscoveryInput, user: dict = Depends(require_write)):
-    async with operation_guard(product_lock_keys([body.productId])):
-        return await record_stock_damage_discovery(body, user)
+async def guarded_stock_damage(body: DamageDiscoveryInput, request: Request, user: dict = Depends(require_write)):
+    async def action():
+        result = await record_stock_damage_discovery(body, user)
+        transaction = result.get("transaction") or {}
+        if transaction.get("id"):
+            await db.transactions.update_one({"id": transaction["id"]}, {"$set": {"product_id": body.productId}})
+            transaction["product_id"] = body.productId
+        return result
+    return await idempotent_operation(request, user, "damage-discovery", product_lock_keys([body.productId]), action)
 
 
 @router.post("/supplier-returns")
-async def guarded_supplier_return(body: SupplierReturnInput, user: dict = Depends(require_write)):
-    async with operation_guard(product_lock_keys([body.productId])):
+async def guarded_supplier_return(body: SupplierReturnInput, request: Request, user: dict = Depends(require_write)):
+    async def action():
         await _bind_supplier_return(body)
-        return await create_supplier_return(body, user)
+        result = await create_supplier_return(body, user)
+        if result.get("id"):
+            await db.transactions.update_many({"operation_id": result["id"]}, {"$set": {"product_id": body.productId}})
+        return result
+    return await idempotent_operation(request, user, "supplier-return", product_lock_keys([body.productId]), action)
 
 
 @router.post("/supplier-returns/{return_id}/replacement")
-async def guarded_supplier_replacement(return_id: str, body: SupplierReplacementInput, user: dict = Depends(require_write)):
-    claim = await db.supplier_returns.find_one({"id": return_id}, {"_id": 0, "product_id": 1})
+async def guarded_supplier_replacement(return_id: str, body: SupplierReplacementInput, request: Request, user: dict = Depends(require_write)):
+    claim = await db.supplier_returns.find_one({"id": return_id}, {"_id": 0, "product_id": 1, "return_no": 1, "sku": 1})
     if not claim:
         raise HTTPException(status_code=404, detail="Retur pemasok tidak ditemukan")
-    async with operation_guard(product_lock_keys([claim.get("product_id", "")])):
-        return await receive_supplier_replacement(return_id, body, user)
+
+    async def action():
+        result = await receive_supplier_replacement(return_id, body, user)
+        await db.transactions.update_many(
+            {
+                "document_type": "PENGGANTIAN_PEMASOK",
+                "parent_document": claim.get("return_no", ""),
+                "sku": claim.get("sku", ""),
+                "$or": [{"product_id": {"$exists": False}}, {"product_id": ""}, {"product_id": None}],
+            },
+            {"$set": {"product_id": claim.get("product_id", "")}},
+        )
+        return result
+
+    return await idempotent_operation(request, user, f"supplier-replacement:{return_id}", product_lock_keys([claim.get("product_id", "")]), action)
 
 
 @router.post("/outbound-loads")
-async def guarded_create_outbound(body: OutboundCreateInput, user: dict = Depends(require_write)):
+async def guarded_create_outbound(body: OutboundCreateInput, request: Request, user: dict = Depends(require_write)):
     refs = [body.ref, *body.documents]
     keys = lock_keys(
         product_lock_keys(item.productId for item in body.items),
         document_lock_keys(refs),
     )
-    async with operation_guard(keys):
-        return await create_outbound_load(body, user)
+    return await idempotent_operation(request, user, "outbound-create", keys, lambda: create_outbound_load(body, user))
 
 
 @router.put("/outbound-loads/{load_id}/edit")
-async def guarded_edit_outbound(load_id: str, body: OutboundEditInput, user: dict = Depends(require_admin)):
+async def guarded_edit_outbound(load_id: str, body: OutboundEditInput, request: Request, user: dict = Depends(require_admin)):
     load, previous_products = await _load_product_ids(load_id)
     refs = [*load.get("documents", []), *body.documents]
     keys = lock_keys(
         product_lock_keys([*previous_products, *(item.productId for item in body.items)]),
         document_lock_keys(refs),
     )
-    async with operation_guard(keys):
-        return await edit_outbound_load(load_id, body, user)
+    return await idempotent_operation(request, user, f"outbound-edit:{load_id}", keys, lambda: edit_outbound_load(load_id, body, user))
 
 
 @router.post("/outbound-loads/{load_id}/cancel")
-async def guarded_cancel_outbound(load_id: str, body: DocumentCancelInput, user: dict = Depends(require_write)):
+async def guarded_cancel_outbound(load_id: str, body: DocumentCancelInput, request: Request, user: dict = Depends(require_write)):
     _, product_ids = await _load_product_ids(load_id)
-    async with operation_guard(product_lock_keys(product_ids)):
-        return await cancel_outbound_load(load_id, body, user)
+    return await idempotent_operation(request, user, f"outbound-cancel:{load_id}", product_lock_keys(product_ids), lambda: cancel_outbound_load(load_id, body, user))
 
 
 @router.post("/outbound-loads/{load_id}/complete")
-async def guarded_complete_outbound(load_id: str, user: dict = Depends(require_write)):
+async def guarded_complete_outbound(load_id: str, request: Request, user: dict = Depends(require_write)):
     _, product_ids = await _load_product_ids(load_id)
-    async with operation_guard(product_lock_keys(product_ids)):
+
+    async def action():
         result = await complete_outbound_load(load_id, user)
         load = result.get("load") or await db.outbound_loads.find_one({"id": load_id}, {"_id": 0}) or {}
+        await _tag_load_transaction_product_ids(load_id, load)
         sj = surat_jalan_with_exact_locations(load, result.get("suratJalan"))
         if sj and sj.get("id"):
             await db.surat_jalan.update_one(
@@ -259,14 +355,22 @@ async def guarded_complete_outbound(load_id: str, user: dict = Depends(require_w
             result["suratJalan"] = sj
         return result
 
+    return await idempotent_operation(request, user, f"outbound-complete:{load_id}", product_lock_keys(product_ids), action)
+
 
 @router.post("/outbound-loads/{load_id}/return")
-async def guarded_consignment_return(load_id: str, body: ConsignmentReturnInput, user: dict = Depends(require_write)):
-    async with operation_guard(product_lock_keys(item.productId for item in body.items)):
-        return await create_consignment_return(load_id, body, user)
+async def guarded_consignment_return(load_id: str, body: ConsignmentReturnInput, request: Request, user: dict = Depends(require_write)):
+    async def action():
+        result = await create_consignment_return(load_id, body, user)
+        await _tag_load_transaction_product_ids(load_id)
+        return result
+    return await idempotent_operation(request, user, f"outbound-return:{load_id}", product_lock_keys(item.productId for item in body.items), action)
 
 
 @router.post("/outbound-loads/{load_id}/sales-return")
-async def guarded_sales_return(load_id: str, body: SalesReturnInput, user: dict = Depends(require_write)):
-    async with operation_guard(product_lock_keys(item.productId for item in body.items)):
-        return await create_sales_return(load_id, body, user)
+async def guarded_sales_return(load_id: str, body: SalesReturnInput, request: Request, user: dict = Depends(require_write)):
+    async def action():
+        result = await create_sales_return(load_id, body, user)
+        await _tag_load_transaction_product_ids(load_id)
+        return result
+    return await idempotent_operation(request, user, f"sales-return:{load_id}", product_lock_keys(item.productId for item in body.items), action)
