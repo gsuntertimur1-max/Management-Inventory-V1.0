@@ -13,6 +13,7 @@ const NAV_GROUPS = [
     label: 'Inventori', icon: PackageSearch, items: [
       { to: '/produk', label: 'Daftar Produk', icon: Boxes },
       { to: '/tumpukan', label: 'Tumpukan Stok', icon: Layers },
+      { to: '/opname-gudang', label: 'Stock Opname GBB', icon: ClipboardCheck },
       { to: '/opname-konsinyasi', label: 'Opname Bazar/E-commerce', icon: ClipboardCheck },
     ],
   },
