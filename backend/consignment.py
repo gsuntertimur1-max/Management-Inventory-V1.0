@@ -39,9 +39,17 @@ class ConsignmentOpnameInput(BaseModel):
     note: str = ""
 
 
-def _settled_qty(load: dict, product_id: str) -> float:
+def _source_document(load: dict, item: dict) -> str:
+    return str(item.get("documentNo") or load.get("ref") or "").strip()
+
+
+def _settled_qty(load: dict, product_id: str, source_document_no: str = "") -> float:
+    target = str(source_document_no or load.get("ref") or "").strip()
     settled = 0.0
     for link in load.get("document_links", []):
+        link_source = str(link.get("sourceDocumentNo") or load.get("ref") or "").strip()
+        if target and link_source != target:
+            continue
         for item in link.get("items", []):
             if item.get("productId") != product_id:
                 continue
@@ -59,26 +67,34 @@ async def consignment_stock(destination: str = "") -> list[dict]:
             raise HTTPException(status_code=400, detail="Lokasi konsinyasi tidak valid")
         query["consignment_destination"] = destination
     loads = await db.outbound_loads.find(query, {"_id": 0}).to_list(5000)
-    result: dict[tuple[str, str], dict] = {}
+    result: dict[tuple[str, str, str], dict] = {}
     for load in loads:
+        source_rows: dict[tuple[str, str, str], dict] = {}
         for item in load.get("items", []):
             product_id = item.get("productId", "")
-            qty = max(float(item.get("qty", 0) or 0) - _settled_qty(load, product_id), 0)
+            if not product_id:
+                continue
+            source_document = _source_document(load, item)
+            channel = normalize_channel(item.get("channel"), "KOM")
+            source_key = (source_document, product_id, channel)
+            row = source_rows.setdefault(source_key, {**item, "qty": 0.0})
+            row["qty"] += float(item.get("qty", 0) or 0)
+        for (source_document, product_id, channel), item in source_rows.items():
+            qty = max(float(item.get("qty", 0) or 0) - _settled_qty(load, product_id, source_document), 0)
             if qty <= 0:
                 continue
-            channel = normalize_channel(item.get("channel"), "KOM")
             key = (load.get("consignment_destination", ""), product_id, channel)
             row = result.setdefault(key, {
                 "destination": key[0], "productId": product_id, "channel": channel, "sku": item.get("sku", ""),
-                "name": item.get("name", ""), "unit": item.get("unit", ""),
-                "weight": float(item.get("weight", 0) or 0),
-                "secondary": item.get("secondary", ""), "secondaryQty": float(item.get("secondaryQty", 0) or 0),
-                "qty": 0.0, "totalWeight": 0.0, "documents": [], "requestDocuments": [],
+                "name": item.get("name", ""), "unit": item.get("unit", ""), "weight": float(item.get("weight", 0) or 0),
+                "measureUnit": item.get("measureUnit", "kg") or "kg", "secondary": item.get("secondary", ""),
+                "secondaryQty": float(item.get("secondaryQty", 0) or 0), "qty": 0.0, "totalWeight": 0.0,
+                "documents": [], "requestDocuments": [],
             })
             row["qty"] += qty
             row["totalWeight"] += qty * float(item.get("weight", 0) or 0)
-            if load.get("ref") and load["ref"] not in row["documents"]:
-                row["documents"].append(load["ref"])
+            if source_document and source_document not in row["documents"]:
+                row["documents"].append(source_document)
             if load.get("request_document") and load["request_document"] not in row["requestDocuments"]:
                 row["requestDocuments"].append(load["request_document"])
     return sorted(result.values(), key=lambda row: (row["destination"] != "Gudang Bazar", row["name"].lower(), row["channel"], row["sku"]))
@@ -108,7 +124,7 @@ async def monitoring_stock() -> list[dict]:
                 "channel": channel, "location": product.get("location") or "Gudang Utama",
                 "locationType": "GUDANG", "productId": product.get("id", ""), "sku": product.get("sku", ""),
                 "name": product.get("name", ""), "unit": product.get("unit", ""), "qty": qty,
-                "damaged": damaged, "weight": weight, "totalWeight": qty * weight,
+                "damaged": damaged, "weight": weight, "measureUnit": product.get("measureUnit", "kg") or "kg", "totalWeight": qty * weight,
                 "secondary": product.get("secondary", ""), "secondaryQty": float(product.get("secondaryQty", 0) or 0),
                 "documents": [],
             })
@@ -117,7 +133,7 @@ async def monitoring_stock() -> list[dict]:
             "channel": normalize_channel(item.get("channel"), "KOM"), "location": item["destination"],
             "locationType": "KONSINYASI", "productId": item["productId"], "sku": item.get("sku", ""),
             "name": item.get("name", ""), "unit": item.get("unit", ""), "qty": float(item.get("qty", 0) or 0),
-            "damaged": 0.0, "weight": float(item.get("weight", 0) or 0), "totalWeight": float(item.get("totalWeight", 0) or 0),
+            "damaged": 0.0, "weight": float(item.get("weight", 0) or 0), "measureUnit": item.get("measureUnit", "kg") or "kg", "totalWeight": float(item.get("totalWeight", 0) or 0),
             "secondary": item.get("secondary", ""), "secondaryQty": float(item.get("secondaryQty", 0) or 0),
             "documents": item.get("documents", []),
         })
@@ -132,8 +148,8 @@ async def list_monitoring_stock(user: dict = Depends(get_current_user)):
 @router.get("/export/monitoring-stock.xlsx")
 async def export_monitoring_stock(user: dict = Depends(get_current_user)):
     rows = await monitoring_stock()
-    headers = ["Saluran", "Lokasi", "Jenis Lokasi", "SKU", "Nama Komoditi", "Kuantum Pack/PCS", "Satuan", "Kuantum Berat (kg)", "Stok Rusak", "Dokumen Memo/ND"]
-    values = [[row["channel"], row["location"], row["locationType"], row["sku"], row["name"], row["qty"], row["unit"], row["totalWeight"], row["damaged"], ", ".join(row.get("documents", []))] for row in rows]
+    headers = ["Saluran", "Lokasi", "Jenis Lokasi", "SKU", "Nama Komoditi", "Kuantum Pack/PCS", "Satuan", "Kuantum Fisik", "Stok Rusak", "Dokumen Memo/ND"]
+    values = [[row["channel"], row["location"], row["locationType"], row["sku"], row["name"], row["qty"], row["unit"], f"{row["totalWeight"]:g} {row.get("measureUnit", "kg")}", row["damaged"], ", ".join(row.get("documents", []))] for row in rows]
     output = build_xlsx(headers, values, "Monitoring Stok")
     filename = f"monitoring_stok_{operational_now().strftime('%Y%m%d_%H%M')}.xlsx"
     return StreamingResponse(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f'attachment; filename="{filename}"'})

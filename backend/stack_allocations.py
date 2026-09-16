@@ -1,4 +1,5 @@
 import re
+from datetime import datetime
 from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -83,6 +84,16 @@ class StackTreatmentBody(BaseModel):
     note: str = ""
 
 
+def _parse_treatment_date(value: str, label: str):
+    text = str(value or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail=f"{label} wajib diisi")
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"{label} harus berformat YYYY-MM-DD") from exc
+
+
 async def record_stack_history(action: str, allocation: dict, operator: str) -> None:
     await db.stack_history.insert_one({
         "id": new_id(), "time": now_iso(), "action": action, "operator": operator,
@@ -140,6 +151,7 @@ async def _build_allocation(body: StackAllocationBody, allocation_id: Optional[s
         "productName": product.get("name", ""),
         "unit": product.get("unit", ""),
         "weight": float(product.get("weight", 0) or 0),
+        "measureUnit": product.get("measureUnit", "kg") or "kg",
         "secondary": secondary,
         "secondaryQty": per_secondary,
         "stackCode": stack_code,
@@ -316,22 +328,34 @@ async def list_stack_treatments(user: dict = Depends(get_current_user)):
 async def create_stack_treatment(body: StackTreatmentBody, user: dict = Depends(require_write)):
     warehouse = body.warehouse.strip().upper()
     stack_code = body.stackCode.strip().upper()
-    if warehouse not in {code.split("/", 1)[0] for code in await valid_stack_codes()}:
+    valid_codes = await valid_stack_codes()
+    if warehouse not in {code.split("/", 1)[0] for code in valid_codes}:
         raise HTTPException(status_code=400, detail="GBB tidak valid")
-    if not body.startDate.strip():
-        raise HTTPException(status_code=400, detail="Tanggal pelaksanaan wajib diisi")
-    if body.type != "SPRAYING" and not body.endDate.strip():
-        raise HTTPException(status_code=400, detail="Tanggal buka sungkup wajib diisi")
+    start = _parse_treatment_date(body.startDate, "Tanggal pelaksanaan")
+    end = None
     products = []
+    standard_days = 0
     if body.type != "SPRAYING":
-        if stack_code not in await valid_stack_codes():
+        end = _parse_treatment_date(body.endDate, "Tanggal buka sungkup")
+        if end < start:
+            raise HTTPException(status_code=400, detail="Tanggal buka sungkup tidak boleh lebih awal dari tanggal mulai")
+        if stack_code not in valid_codes:
             raise HTTPException(status_code=400, detail="Pilih tumpukan untuk fumigasi")
+        if stack_code.split("/", 1)[0] != warehouse:
+            raise HTTPException(status_code=400, detail="Tumpukan fumigasi harus berada pada GBB yang dipilih")
         allocations = await db.stack_allocations.find({"stackCode": stack_code}, {"_id": 0}).to_list(1000)
         products = [{"productId": x.get("productId"), "name": x.get("productName"), "qty": x.get("primaryQty"), "unit": x.get("unit")} for x in allocations if "BERAS" in str(x.get("productName", "")).upper()]
         if not products:
             raise HTTPException(status_code=400, detail="Fumigasi hanya dapat dicatat pada tumpukan yang berisi beras")
+        standard_days = 3 if body.type == "FUMIGASI_SULFUR" else 10
+    else:
+        stack_code = ""
+    normalized_start = start.isoformat()
+    normalized_end = end.isoformat() if end else ""
+    if await db.stack_treatments.find_one({"type": body.type, "warehouse": warehouse, "stackCode": stack_code, "startDate": normalized_start}, {"_id": 1}):
+        raise HTTPException(status_code=409, detail="Catatan pengendalian hama pada tanggal dan lokasi tersebut sudah ada")
     doc = body.model_dump()
-    doc.update({"id": new_id(), "warehouse": warehouse, "stackCode": stack_code if body.type != "SPRAYING" else "", "products": products, "createdAt": now_iso(), "operator": user.get("name", "")})
+    doc.update({"id": new_id(), "warehouse": warehouse, "stackCode": stack_code, "startDate": normalized_start, "endDate": normalized_end, "durationDays": (end - start).days if end else 0, "standardDurationDays": standard_days, "products": products, "createdAt": now_iso(), "operator": user.get("name", "")})
     await db.stack_treatments.insert_one(dict(doc))
     return doc
 
@@ -343,7 +367,7 @@ async def export_stack_card(stackCode: str, user: dict = Depends(get_current_use
         raise HTTPException(status_code=400, detail="Kode tumpukan tidak valid")
     items = await db.stack_allocations.find({"stackCode": code}, {"_id": 0}).sort("productName", 1).to_list(1000)
     headers = ["KARTU TUMPUKAN", code, "", "", "", "", "", ""]
-    rows = [["No", "SKU", "Nama Komoditas", "Susunan P×L×T", "Kemasan Sekunder", "Jumlah Primer", "Satuan", "Berat (kg)"]]
+    rows = [["No", "SKU", "Nama Komoditas", "Susunan P×L×T", "Kemasan Sekunder", "Jumlah Primer", "Satuan", "Kuantum Fisik"]]
     for index, item in enumerate(items, 1):
         parts = [f"{x.get('hamparan', 0)}×{x.get('kaki', 0)}×{x.get('height', 0)}" for x in item.get("arrangements", [])]
         if not parts:
@@ -354,7 +378,7 @@ async def export_stack_card(stackCode: str, user: dict = Depends(get_current_use
         loose = f" + {item.get('extraPrimary')} {item.get('unit', '')} lepas" if item.get("extraPrimary", 0) else ""
         rows.append([index, item.get("sku", ""), item.get("productName", ""), arrangement,
                      f"{item.get('secondaryCount', 0)} {item.get('secondary', '')}{loose}", item.get("primaryQty", 0),
-                     item.get("unit", ""), float(item.get("primaryQty", 0) or 0) * float(item.get("weight", 0) or 0)])
+                     item.get("unit", ""), f"{float(item.get("primaryQty", 0) or 0) * float(item.get("weight", 0) or 0):g} {item.get("measureUnit", "kg")}"])
     rows.append([])
     rows.append(["RIWAYAT PERUBAHAN SUSUNAN"])
     rows.append(["Waktu", "Aksi", "Produk", "Perkalian", "Jumlah Primer", "Operator"])

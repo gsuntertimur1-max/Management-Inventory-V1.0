@@ -42,16 +42,22 @@ const Dashboard = () => {
   }, [products]);
 
   const filtered = (monitoringStock || []).filter((p) => p.name.toLowerCase().includes(q.toLowerCase()) || p.sku.toLowerCase().includes(q.toLowerCase()) || p.location.toLowerCase().includes(q.toLowerCase())).sort((a, b) => `${a.location}-${a.channel}-${a.name}`.localeCompare(`${b.location}-${b.channel}-${b.name}`));
-  const remainingDocumentItems = (load) => (load.items || []).map((source) => {
-    let settled = 0;
-    (load.document_links || []).forEach((link) => (link.items || []).forEach((item) => {
-      if (item.productId !== source.productId) return;
-      settled += ['CR', 'RETUR'].includes(link.type)
-        ? Number(item.goodQty || 0) + Number(item.damagedQty || 0)
-        : Number(item.qty || 0);
-    }));
-    return { ...source, remaining: Math.max(Number(source.qty || 0) - settled, 0) };
-  }).filter((item) => item.remaining > 0);
+  const sourceDocumentFor = (load, item) => item.documentNo || load.ref || '';
+  const linkedUsageFor = (load, sourceDocumentNo, productId) => (load.document_links || []).reduce((total, link) => {
+    const linkSource = link.sourceDocumentNo || load.ref || '';
+    if (linkSource !== sourceDocumentNo) return total;
+    return total + (link.items || []).filter((item) => item.productId === productId).reduce((sum, item) => sum + (['CR', 'RETUR'].includes(link.type) ? Number(item.goodQty || 0) + Number(item.damagedQty || 0) : Number(item.qty || 0)), 0);
+  }, 0);
+  const remainingDocumentItems = (load) => {
+    const grouped = {};
+    (load.items || []).forEach((source) => {
+      const sourceDocumentNo = sourceDocumentFor(load, source);
+      const key = `${sourceDocumentNo}|${source.productId}`;
+      grouped[key] = grouped[key] || { ...source, qty: 0, documentNo: sourceDocumentNo };
+      grouped[key].qty += Number(source.qty || 0);
+    });
+    return Object.values(grouped).map((source) => ({ ...source, remaining: Math.max(Number(source.qty || 0) - linkedUsageFor(load, source.documentNo, source.productId), 0) })).filter((item) => item.remaining > 0);
+  };
   const pendingDocuments = outboundLoads
     .filter((load) => ['CT', 'MEMO', 'ND'].includes(load.document_type) && load.status === 'Selesai')
     .map((load) => ({ ...load, pendingItems: remainingDocumentItems(load) }))
@@ -141,10 +147,10 @@ const Dashboard = () => {
 
       <div className="card-surface p-6 border border-[#1f3657]">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-          <div><div className="label-mono text-[10px] text-[#93c5fd]">Dokumen masih terbuka</div><h2 className="font-display text-xl font-bold mt-1">CT / Memo Belum Diselesaikan</h2></div>
+          <div><div className="label-mono text-[10px] text-[#93c5fd]">Dokumen masih terbuka</div><h2 className="font-display text-xl font-bold mt-1">CT / Memo / ND Belum Diselesaikan</h2></div>
           <button onClick={() => navigate('/pengeluaran')} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#2563eb] text-[#60a5fa]"><Link2 size={13} /> Buka Pengeluaran</button>
         </div>
-        {pendingDocuments.length === 0 ? <p className="text-sm text-[#8b93a1]">Tidak ada CT atau Memo terbuka. Semua dokumen sudah memiliki penyelesaian CR, SO, atau Retur.</p> : <div className="overflow-x-auto"><table className="w-full text-sm tbl"><thead><tr className="text-left border-b border-[#1a222e]"><th className="py-2.5 pr-4">Dokumen</th><th className="py-2.5 pr-4">Tujuan / Lokasi</th><th className="py-2.5 pr-4">Sisa Belum Diselesaikan</th><th className="py-2.5">Status</th></tr></thead><tbody>{pendingDocuments.map((load) => <tr key={load.id} className="border-b border-[#131a24]"><td className="py-3 pr-4"><div className="font-mono font-semibold text-[#93c5fd]">{load.document_type} · {load.ref}</div>{load.request_document && <div className="text-[11px] text-[#fbbf24] mt-1">Dasar: {load.request_document}</div>}<div className="text-[11px] text-[#6b7688] mt-1">Terbuka {documentAge(load.completed_at || load.created_at)}</div></td><td className="py-3 pr-4"><div>{load.consignment_destination || load.party || '—'}</div><div className="text-xs text-[#6b7688] mt-1">{load.consignment_zone || load.unit_loading || '—'}</div></td><td className="py-3 pr-4 text-xs">{load.pendingItems.map((item) => <div key={item.productId}>{item.name} · <span className="font-mono font-semibold">{formatNum(item.remaining)} {item.unit}</span></div>)}</td><td className="py-3 text-xs text-[#fbbf24]">{load.document_status || 'Menunggu CR/SO'}</td></tr>)}</tbody></table></div>}
+        {pendingDocuments.length === 0 ? <p className="text-sm text-[#8b93a1]">Tidak ada CT atau Memo terbuka. Semua dokumen sudah memiliki penyelesaian CR, SO, atau Retur.</p> : <div className="overflow-x-auto"><table className="w-full text-sm tbl"><thead><tr className="text-left border-b border-[#1a222e]"><th className="py-2.5 pr-4">Dokumen</th><th className="py-2.5 pr-4">Tujuan / Lokasi</th><th className="py-2.5 pr-4">Sisa Belum Diselesaikan</th><th className="py-2.5">Status</th></tr></thead><tbody>{pendingDocuments.map((load) => <tr key={load.id} className="border-b border-[#131a24]"><td className="py-3 pr-4"><div className="font-mono font-semibold text-[#93c5fd]">{load.document_type} · {load.ref}</div>{load.request_document && <div className="text-[11px] text-[#fbbf24] mt-1">Dasar: {load.request_document}</div>}<div className="text-[11px] text-[#6b7688] mt-1">Terbuka {documentAge(load.completed_at || load.created_at)}</div></td><td className="py-3 pr-4"><div>{load.consignment_destination || load.party || '—'}</div><div className="text-xs text-[#6b7688] mt-1">{load.consignment_zone || load.unit_loading || '—'}</div></td><td className="py-3 pr-4 text-xs">{load.pendingItems.map((item) => <div key={`${item.documentNo}-${item.productId}`}>{item.documentNo && <span className="text-[#6b7688]">{item.documentNo} · </span>}{item.name} · <span className="font-mono font-semibold">{formatNum(item.remaining)} {item.unit}</span></div>)}</td><td className="py-3 text-xs text-[#fbbf24]">{load.document_status || 'Menunggu CR/SO'}</td></tr>)}</tbody></table></div>}
       </div>
 
       <div className="card-surface p-6">
@@ -155,7 +161,7 @@ const Dashboard = () => {
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm tbl">
-            <thead><tr className="text-left border-b border-[#1a222e]">{['Saluran', 'Lokasi', 'SKU', 'Nama Komoditi', 'Kuantum Pack/PCS', 'Berat', 'Rusak'].map((h) => <th key={h} className="py-2.5 pr-4 font-semibold">{h}</th>)}</tr></thead>
+            <thead><tr className="text-left border-b border-[#1a222e]">{['Saluran', 'Lokasi', 'SKU', 'Nama Komoditi', 'Kuantum Pack/PCS', 'Kuantum Fisik', 'Rusak'].map((h) => <th key={h} className="py-2.5 pr-4 font-semibold">{h}</th>)}</tr></thead>
             <tbody>
               {filtered.length === 0 ? (
                 <tr><td colSpan={7} className="py-8 text-center text-[#6b7688]">Belum ada produk terdaftar. Tambah produk atau import data SKU.</td></tr>
@@ -166,7 +172,7 @@ const Dashboard = () => {
                   <td className="py-3 pr-4 font-mono text-xs text-[#93c5fd]">{p.sku || '—'}</td>
                   <td className="py-3 pr-4 font-medium">{p.name}</td>
                   <td className="py-3 pr-4 font-mono">{formatNum(p.qty)} {p.unit}</td>
-                  <td className="py-3 pr-4 font-mono">{p.weight > 0 ? `${formatNum(p.totalWeight)} kg` : '—'}</td>
+                  <td className="py-3 pr-4 font-mono">{p.weight > 0 ? `${formatNum(p.totalWeight)} ${p.measureUnit || 'kg'}` : '—'}</td>
                   <td className="py-3 pr-4 font-mono">{formatNum(p.damaged || 0)}</td>
                 </tr>
               ))}
@@ -180,7 +186,7 @@ const Dashboard = () => {
         { destination: 'Gudang E-commerce', title: 'Kartu Stok Gudang E-commerce', rows: ecommerceStock, color: '#0ea5e9' },
       ].map(({ destination, title, rows, color }) => <div key={destination} className="card-surface p-6 border border-[#1f3657]">
         <div className="flex flex-wrap items-start justify-between gap-3 mb-4"><div><div className="label-mono text-[10px]" style={{ color }}>Konsinyasi Unit 18</div><h2 className="font-display text-xl font-bold mt-1">{title}</h2><p className="text-sm text-[#8b93a1] mt-1">Saldo Memo/ND dikurangi SO serta Retur pengecualian.</p></div><button onClick={() => downloadApiFile(`/export/consignment-stock-card.pdf?destination=${encodeURIComponent(destination)}`, `kartu_stok_${destination.replaceAll(' ', '_')}.pdf`).catch((e) => toast.error(apiError(e)))} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#294263] text-xs text-[#93c5fd]"><Printer size={14} /> Download kartu</button></div>
-        {rows.length === 0 ? <p className="text-sm text-[#8b93a1]">Belum ada stok konsinyasi aktif.</p> : <div className="overflow-x-auto"><table className="w-full text-sm tbl"><thead><tr className="text-left border-b border-[#1a222e]"><th className="py-2.5 pr-3">Saluran</th><th className="py-2.5 pr-3">SKU</th><th className="py-2.5 pr-3">Nama Komoditi</th><th className="py-2.5 pr-3">Pack/pcs</th><th className="py-2.5 pr-3">Berat</th><th className="py-2.5">Dokumen ND/Memo</th></tr></thead><tbody>{rows.map((item) => <tr key={`${item.productId}-${item.channel}`} className="tbl-row border-b border-[#131a24]"><td className="py-3 pr-3"><span className={`text-[10px] px-2 py-0.5 rounded-full ${(item.channel || 'KOM') === 'PSO' ? 'bg-[#2563eb]/15 text-[#60a5fa]' : 'bg-[#a855f7]/15 text-[#c084fc]'}`}>{item.channel || 'KOM'}</span></td><td className="py-3 pr-3 font-mono text-xs text-[#93c5fd]">{item.sku || '—'}</td><td className="py-3 pr-3 font-medium">{item.name}</td><td className="py-3 pr-3 font-mono whitespace-nowrap">{formatNum(item.qty)} {item.unit}</td><td className="py-3 pr-3 font-mono whitespace-nowrap">{item.weight > 0 ? `${formatNum(item.totalWeight)} kg` : '—'}</td><td className="py-3 text-xs text-[#8b93a1]">{item.documents?.join(', ') || '—'}</td></tr>)}</tbody></table></div>}
+        {rows.length === 0 ? <p className="text-sm text-[#8b93a1]">Belum ada stok konsinyasi aktif.</p> : <div className="overflow-x-auto"><table className="w-full text-sm tbl"><thead><tr className="text-left border-b border-[#1a222e]"><th className="py-2.5 pr-3">Saluran</th><th className="py-2.5 pr-3">SKU</th><th className="py-2.5 pr-3">Nama Komoditi</th><th className="py-2.5 pr-3">Pack/pcs</th><th className="py-2.5 pr-3">Kuantum Fisik</th><th className="py-2.5">Dokumen ND/Memo</th></tr></thead><tbody>{rows.map((item) => <tr key={`${item.productId}-${item.channel}`} className="tbl-row border-b border-[#131a24]"><td className="py-3 pr-3"><span className={`text-[10px] px-2 py-0.5 rounded-full ${(item.channel || 'KOM') === 'PSO' ? 'bg-[#2563eb]/15 text-[#60a5fa]' : 'bg-[#a855f7]/15 text-[#c084fc]'}`}>{item.channel || 'KOM'}</span></td><td className="py-3 pr-3 font-mono text-xs text-[#93c5fd]">{item.sku || '—'}</td><td className="py-3 pr-3 font-medium">{item.name}</td><td className="py-3 pr-3 font-mono whitespace-nowrap">{formatNum(item.qty)} {item.unit}</td><td className="py-3 pr-3 font-mono whitespace-nowrap">{item.weight > 0 ? `${formatNum(item.totalWeight)} ${item.measureUnit || 'kg'}` : '—'}</td><td className="py-3 text-xs text-[#8b93a1]">{item.documents?.join(', ') || '—'}</td></tr>)}</tbody></table></div>}
       </div>)}</div>
 
       <div className="card-surface p-6">

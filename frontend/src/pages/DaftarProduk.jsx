@@ -139,7 +139,7 @@ const DaftarProduk = () => {
                   <td className="py-3 pr-4"><span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${(p.channel || "KOM") === "PSO" ? "bg-[#2563eb]/15 text-[#60a5fa]" : "bg-[#a855f7]/15 text-[#c084fc]"}`}>{p.channel || "KOM"}</span></td>
                   <td className="py-3 pr-4"><span className="text-xs px-2 py-0.5 rounded-full whitespace-nowrap" style={{ background: `${catColor(p.category, categories)}1f`, color: catColor(p.category, categories) }}>{p.category}</span></td>
                   <td className="py-3 pr-4 font-mono whitespace-nowrap">{formatNum(p.stock || 0)} {p.unit}</td>
-                  <td className="py-3 pr-4 text-xs min-w-[210px]"><div className="text-[#c7d0dc]">{packagingText(p.stock, p, formatNum) || 'Belum diatur'}</div>{Number(p.weight || 0) > 0 && <div className="text-[#6b7688] mt-1">{formatNum(totalWeight(p.stock, p))} kg</div>}</td>
+                  <td className="py-3 pr-4 text-xs min-w-[210px]"><div className="text-[#c7d0dc]">{packagingText(p.stock, p, formatNum) || 'Belum diatur'}</div>{Number(p.weight || 0) > 0 && <div className="text-[#6b7688] mt-1">{formatNum(totalWeight(p.stock, p))} {p.measureUnit || 'kg'}</div>}</td>
                   <td className="py-3 pr-4 font-mono">{formatNum(p.damaged || 0)}</td>
                   <td className="py-3 pr-4 font-mono whitespace-nowrap">{formatRp(p.cost)}</td>
                   <td className="py-3 pr-4 font-mono whitespace-nowrap">{formatRp((p.stock || 0) * (p.cost || 0))}</td>

@@ -16,7 +16,8 @@ os.environ.setdefault("JWT_SECRET", "test-only-jwt-secret")
 
 from backend import server
 from backend.inventory_flow import ReceiptItemInput, receipt_condition_quantities
-from backend.outbound_flow import loading_units_from_items
+from backend.outbound_flow import loading_units_from_items, _linked_totals, _source_product_totals, _all_source_documents_settled
+from backend.stack_allocations import _parse_treatment_date
 from fastapi import HTTPException
 
 
@@ -85,3 +86,17 @@ def test_mixed_loading_sources_get_distinct_queue_prefix():
     assert loading_units_from_items([{"stackCode": "18/A01"}, {"stackCode": "19/B02"}]) == ("Unit 18 / Unit 19", "M")
     assert loading_units_from_items([{"stackCode": "18/A01"}, {"stackCode": "18/B02"}]) == ("Unit 18", "18")
     assert loading_units_from_items([{"location": "Gudang 18"}, {"location": "Gudang 19"}]) == ("Unit 18 / Unit 19", "M")
+
+
+def test_linked_documents_are_scoped_to_source_document():
+    load = {"ref": "ND/001", "documents": ["ND/001", "ND/002"], "items": [{"productId": "p1", "documentNo": "ND/001", "qty": 10}, {"productId": "p1", "documentNo": "ND/002", "qty": 20}], "document_links": [{"type": "SO", "sourceDocumentNo": "ND/001", "items": [{"productId": "p1", "qty": 4}]}, {"type": "SO", "sourceDocumentNo": "ND/002", "items": [{"productId": "p1", "qty": 7}]}]}
+    assert _linked_totals(load, "p1", "ND/001") == (0.0, 4.0)
+    assert _linked_totals(load, "p1", "ND/002") == (0.0, 7.0)
+    assert _source_product_totals(load, "ND/001")["p1"]["qty"] == 10
+    assert _all_source_documents_settled(load) is False
+
+
+def test_treatment_date_parser_rejects_invalid_dates():
+    assert _parse_treatment_date("2026-09-16", "Tanggal").isoformat() == "2026-09-16"
+    with pytest.raises(HTTPException, match="YYYY-MM-DD"):
+        _parse_treatment_date("16/09/2026", "Tanggal")
