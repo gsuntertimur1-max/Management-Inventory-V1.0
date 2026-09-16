@@ -193,17 +193,25 @@ async def list_receipt_corrections(user: dict = Depends(require_admin)):
 
 
 async def recalculate_product_exp(product: dict) -> None:
+    # Penerimaan lama tidak selalu memiliki good_change. Ambil semua penerimaan
+    # aktif produk lalu gunakan txn_quantities agar data legacy tetap dihitung.
     query = {
         "type": "MASUK",
         "operation_id": {"$nin": ["", None]},
         "voided": {"$ne": True},
         "exp": {"$nin": ["", None]},
-        "good_change": {"$gt": 0},
         "$and": [
             {"$or": [{"document_type": {"$exists": False}}, {"document_type": ""}]},
             {"$or": [{"product_id": product.get("id", "")}, {"sku": product.get("sku", "")}]},
         ],
     }
-    rows = await db.transactions.find(query, {"_id": 0, "exp": 1}).to_list(10000)
-    expiries = sorted(str(row.get("exp") or "") for row in rows if row.get("exp"))
+    rows = await db.transactions.find(
+        query,
+        {"_id": 0, "exp": 1, "change": 1, "kondisi": 1, "good_change": 1, "damaged_change": 1},
+    ).to_list(10000)
+    expiries = sorted(
+        str(row.get("exp") or "")
+        for row in rows
+        if row.get("exp") and txn_quantities(row)[0] > 0
+    )
     await db.products.update_one({"id": product["id"]}, {"$set": {"exp": expiries[0] if expiries else ""}})
