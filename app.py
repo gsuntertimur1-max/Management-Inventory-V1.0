@@ -23,6 +23,7 @@ from backend.stack_lots import router as stack_lots_router, ensure_stack_lot_ind
 from backend.fefo_flow import router as fefo_flow_router
 from backend.lot_corrections import router as lot_corrections_router
 from backend.damaged_stock_area import router as damaged_stock_area_router
+from backend.damaged_outbound import router as damaged_outbound_router
 
 # Lot-aware wrappers must precede the generic correction/guard routes.
 app.include_router(lot_corrections_router)
@@ -33,6 +34,8 @@ app.include_router(operational_corrections_router)
 app.include_router(fefo_flow_router)
 # Stock opname approval is wrapped so lot coverage is reconciled conservatively.
 app.include_router(opname_lots_router)
+# Damaged outbound has a dedicated physical source and R-series queue; good stock delegates to normal guard.
+app.include_router(damaged_outbound_router)
 # Guard routes must be registered before the original operational routers so
 # the same public paths are serialized across Railway workers.
 app.include_router(operational_guards_router)

@@ -13,6 +13,7 @@ os.environ.setdefault("JWT_SECRET", "test-only-jwt-secret")
 from app import app
 from backend.integrity_lots import apply_lot_integrity
 from backend.damaged_stock_area import damaged_movement_qty
+from backend.damaged_outbound import DAMAGED_AREA, DAMAGED_QUEUE_PREFIX, damaged_loading_context
 
 
 def _first_endpoint(path: str, method: str):
@@ -33,6 +34,13 @@ def test_stock_opname_lot_wrapper_is_first_approval_route():
 
 def test_damaged_stock_area_route_is_registered():
     assert _first_endpoint("/api/damaged-stock-area", "GET").__name__ == "damaged_stock_area"
+
+
+def test_damaged_outbound_wrapper_is_first_create_route():
+    assert _first_endpoint("/api/outbound-loads", "POST").__name__ == "guarded_create_outbound"
+    assert damaged_loading_context() == (DAMAGED_AREA, DAMAGED_QUEUE_PREFIX)
+    assert DAMAGED_AREA == "AREA BARANG RUSAK"
+    assert DAMAGED_QUEUE_PREFIX == "R"
 
 
 def test_lot_integrity_marks_legacy_coverage_as_warning():
