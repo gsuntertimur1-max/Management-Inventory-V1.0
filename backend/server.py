@@ -482,8 +482,8 @@ class WarehouseSetting(BaseModel):
     active: bool = True
 
 
-def default_warehouses() -> list[dict]:
-    return [
+def default_warehouses() -> list[WarehouseSetting]:
+    return [WarehouseSetting(**item) for item in [
         *[
             {"code": str(unit), "name": f"GBB {unit}", "type": "GBB", "length": 50, "width": 30,
              "zones": [{"code": "A", "count": 4}, {"code": "B", "count": 4}, {"code": "C", "count": 4}], "active": True}
@@ -491,7 +491,7 @@ def default_warehouses() -> list[dict]:
         ],
         {"code": "MP1", "name": "MP1", "type": "MP", "length": 230, "width": 30,
          "zones": [{"code": "A", "count": 8}, {"code": "B", "count": 8}], "active": True},
-    ]
+    ]]
 
 
 class SettingsBody(BaseModel):

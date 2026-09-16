@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Printer, MonitorSmartphone, Play, CheckCircle2, RotateCcw, Link2, Search } from 'lucide-react';
 import { useData } from '../context/DataContext';
@@ -54,10 +54,10 @@ const Pengeluaran = () => {
   const isSuperadmin = user?.role === 'Administrator' || user?.role === 'Superadmin';
   const canOperateOutbound = hasPermission(user?.role, 'outbound');
 
-  const fetchCostReport = async (date = costDate) => {
+  const fetchCostReport = useCallback(async (date = costDate) => {
     try { const { data } = await api.get('/loading-costs', { params: { date } }); setCostReport(data); } catch (e) { toast.error(apiError(e)); }
-  };
-  useEffect(() => { fetchCostReport(); }, [costDate]);
+  }, [costDate]);
+  useEffect(() => { fetchCostReport(); }, [fetchCostReport]);
 
   const list = outboundLoads.filter((load) => {
     const needle = query.trim().toLowerCase();
