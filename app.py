@@ -13,7 +13,11 @@ from backend.stack_allocations import router as stack_allocations_router
 from backend.pdf_documents import router as pdf_documents_router
 from backend.queue_flow import router as queue_flow_router
 from backend.runtime_hardening import ensure_performance_indexes, hardening_middleware
+from backend.operational_guards import router as operational_guards_router, ensure_operational_guard_indexes
 
+# Guard routes must be registered before the original operational routers so
+# the same public paths are serialized across Railway workers.
+app.include_router(operational_guards_router)
 app.include_router(inventory_flow_router)
 app.include_router(master_products_router)
 app.include_router(outbound_flow_router)
@@ -29,6 +33,7 @@ _original_lifespan = app.router.lifespan_context
 async def hardened_lifespan(application):
     async with _original_lifespan(application):
         await ensure_performance_indexes()
+        await ensure_operational_guard_indexes()
         yield
 
 
