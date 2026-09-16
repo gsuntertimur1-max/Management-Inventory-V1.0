@@ -22,6 +22,7 @@ const NAV_GROUPS = [
       { to: '/temuan-kerusakan', label: 'Temuan Kerusakan', icon: TriangleAlert, permission: 'operations' },
       { to: '/retur-pemasok', label: 'Retur / Ganti Pemasok', icon: RefreshCcw, permission: 'operations' },
       { to: '/pengeluaran', label: 'Pengeluaran', icon: Send, permission: 'outboundPage' },
+      { to: '/koreksi-operasional', label: 'Koreksi Operasional', icon: ShieldCheck, permission: 'corrections' },
       { to: '/antrian', label: 'Layar Antrian', icon: MonitorSmartphone },
     ],
   },
@@ -130,23 +131,14 @@ const Layout = ({ children }) => {
               <SheetContent side="right" className="w-[min(88vw,360px)] h-[100dvh] p-0 border-[#242f3d] bg-[#090d14] text-[#e7ebf2] flex flex-col">
                 <SheetHeader className="text-left px-5 pt-6 pb-4 border-b border-[#1a222e]">
                   <SheetTitle className="font-display text-lg text-white">Menu Inventori</SheetTitle>
-                  <SheetDescription className="text-[#8b93a1]">
-                    {user?.name || 'Pengguna'} · {roleLabel(user?.role)}
-                  </SheetDescription>
+                  <SheetDescription className="text-[#8b93a1]">{user?.name || 'Pengguna'} · {roleLabel(user?.role)}</SheetDescription>
                 </SheetHeader>
 
                 <nav aria-label="Navigasi mobile" className="flex-1 overflow-y-auto px-3 py-4">
                   {visibleGroups.map((group) => group.to ? (
-                      <NavLink
-                        key={group.to}
-                        to={group.to}
-                        end={group.to === '/'}
-                        onClick={() => setMobileMenuOpen(false)}
-                        className={`mobile-nav-link mb-1 ${isGroupActive(group) ? 'active' : ''}`}
-                      >
-                        <group.icon size={19} />
-                        <span>{group.label}</span>
-                      </NavLink>
+                    <NavLink key={group.to} to={group.to} end={group.to === '/'} onClick={() => setMobileMenuOpen(false)} className={`mobile-nav-link mb-1 ${isGroupActive(group) ? 'active' : ''}`}>
+                      <group.icon size={19} /><span>{group.label}</span>
+                    </NavLink>
                   ) : (
                     <Accordion key={group.label} type="single" collapsible defaultValue={isGroupActive(group) ? group.label : undefined}>
                       <AccordionItem value={group.label} className="border-0">
@@ -155,14 +147,8 @@ const Layout = ({ children }) => {
                         </AccordionTrigger>
                         <AccordionContent className="pb-2 pl-4 space-y-1">
                           {group.items.map((item) => (
-                            <NavLink
-                              key={item.to}
-                              to={item.to}
-                              onClick={() => setMobileMenuOpen(false)}
-                              className={`mobile-nav-link ${isPathActive(item.to) ? 'active' : ''}`}
-                            >
-                              <item.icon size={18} />
-                              <span>{item.label}</span>
+                            <NavLink key={item.to} to={item.to} onClick={() => setMobileMenuOpen(false)} className={`mobile-nav-link ${isPathActive(item.to) ? 'active' : ''}`}>
+                              <item.icon size={18} /><span>{item.label}</span>
                             </NavLink>
                           ))}
                         </AccordionContent>
@@ -172,14 +158,8 @@ const Layout = ({ children }) => {
                 </nav>
 
                 <div className="p-4 border-t border-[#1a222e] space-y-2 pb-[max(1rem,env(safe-area-inset-bottom))]">
-                  {canWrite && (
-                    <button data-testid="mobile-catat-btn" onClick={goToTransaction} className="btn-primary w-full inline-flex items-center justify-center gap-2 text-sm font-semibold px-4 py-3 rounded-xl">
-                      <PlusCircle size={18} /> Catat Transaksi
-                    </button>
-                  )}
-                  <button data-testid="mobile-logout-btn" onClick={handleLogout} className="w-full inline-flex items-center justify-center gap-2 text-sm font-semibold px-4 py-3 rounded-xl border border-[#242f3d] text-[#c7d0dc] hover:text-white hover:bg-[#141a24] transition-colors">
-                    <LogOut size={18} /> Keluar
-                  </button>
+                  {canWrite && <button data-testid="mobile-catat-btn" onClick={goToTransaction} className="btn-primary w-full inline-flex items-center justify-center gap-2 text-sm font-semibold px-4 py-3 rounded-xl"><PlusCircle size={18} /> Catat Transaksi</button>}
+                  <button data-testid="mobile-logout-btn" onClick={handleLogout} className="w-full inline-flex items-center justify-center gap-2 text-sm font-semibold px-4 py-3 rounded-xl border border-[#242f3d] text-[#c7d0dc] hover:text-white hover:bg-[#141a24] transition-colors"><LogOut size={18} /> Keluar</button>
                 </div>
               </SheetContent>
             </Sheet>
