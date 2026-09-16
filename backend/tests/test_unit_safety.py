@@ -9,6 +9,8 @@ os.environ.setdefault("DB_NAME", "management_inventory_test")
 os.environ.setdefault("JWT_SECRET", "test-only-jwt-secret")
 
 import server
+from backend.inventory_flow import ReceiptItemInput, receipt_condition_quantities
+from fastapi import HTTPException
 
 
 def test_seed_file_contains_no_operational_rows():
@@ -61,3 +63,12 @@ def test_role_aliases_and_labels_preserve_legacy_values():
     assert server.canonical_role("Admin") == "Supervisor"
     assert server.role_label("Administrator") == "Superadmin"
     assert server.role_label("Supervisor") == "Admin"
+
+
+def test_receipt_quantities_preserve_legacy_condition_and_validate_split_total():
+    old_item = ReceiptItemInput(productId="minyak", qty=6)
+    assert receipt_condition_quantities(old_item, "RUSAK") == (0.0, 6.0)
+    split_item = ReceiptItemInput(productId="minyak", qty=1000, goodQty=994, damagedQty=6)
+    assert receipt_condition_quantities(split_item, "BAIK") == (994.0, 6.0)
+    with pytest.raises(HTTPException, match="Total penerimaan"):
+        receipt_condition_quantities(ReceiptItemInput(productId="minyak", qty=1000, goodQty=994, damagedQty=5), "BAIK")

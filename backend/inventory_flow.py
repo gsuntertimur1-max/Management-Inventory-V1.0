@@ -73,6 +73,19 @@ class ReceiptInput(BaseModel):
     unloadingFeeChargeMode: Literal["", "PENGIRIM", "TERMASUK"] = ""
 
 
+def receipt_condition_quantities(item: ReceiptItemInput, kondisi: str) -> tuple[float, float]:
+    good_qty = float(item.goodQty or 0)
+    damaged_qty = float(item.damagedQty or 0)
+    if good_qty <= 0 and damaged_qty <= 0:
+        if float(item.qty or 0) <= 0:
+            raise HTTPException(status_code=400, detail="Jumlah baik atau rusak harus diisi")
+        return (0.0, float(item.qty)) if kondisi == "RUSAK" else (float(item.qty), 0.0)
+    total_qty = good_qty + damaged_qty
+    if float(item.qty or 0) > 0 and abs(float(item.qty) - total_qty) > 1e-9:
+        raise HTTPException(status_code=400, detail="Total penerimaan harus sama dengan jumlah baik dan rusak")
+    return good_qty, damaged_qty
+
+
 class DamageDiscoveryInput(BaseModel):
     productId: str
     stackCode: str
@@ -353,14 +366,7 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
         product = await db.products.find_one({"id": item.productId}, {"_id": 0})
         if not product:
             raise HTTPException(status_code=404, detail="Produk penerimaan tidak ditemukan")
-        good_qty = float(item.goodQty or 0)
-        damaged_qty = float(item.damagedQty or 0)
-        # Backward compatibility for the former one-condition receipt form.
-        if good_qty <= 0 and damaged_qty <= 0:
-            if body.kondisi == "RUSAK":
-                damaged_qty = float(item.qty or 0)
-            else:
-                good_qty = float(item.qty or 0)
+        good_qty, damaged_qty = receipt_condition_quantities(item, body.kondisi)
         total_qty = good_qty + damaged_qty
         if total_qty <= 0:
             raise HTTPException(status_code=400, detail="Jumlah baik atau rusak harus diisi")
