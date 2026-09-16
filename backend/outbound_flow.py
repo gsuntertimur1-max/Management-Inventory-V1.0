@@ -691,7 +691,7 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
             product = await db.products.find_one({"id": item.get("productId")}, {"_id": 0})
             if not product:
                 raise HTTPException(status_code=404, detail=f"Produk {item.get('name', '')} tidak ditemukan")
-            if item.get("stackCode"):
+            if item.get("stackCode") and kondisi == "BAIK":
                 from_stack = await db.stack_allocations.find_one({"productId": product["id"], "stackCode": item["stackCode"]}, {"_id": 0, "primaryQty": 1})
                 if not from_stack or float(from_stack.get("primaryQty", 0) or 0) + 1e-9 < qty:
                     raise HTTPException(status_code=400, detail=f"Stok {product.get('name', '')} pada {item['stackCode']} tidak mencukupi")
@@ -708,7 +708,7 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
                     detail=f"Stok {product.get('name', '')} berubah atau tidak mencukupi. Periksa stok lalu coba lagi.",
                 )
             stock_changes.append((product["id"], qty))
-            if item.get("stackCode"):
+            if item.get("stackCode") and kondisi == "BAIK":
                 await decrease_stack_allocation(product["id"], item["stackCode"], qty, user.get("name", "Sistem (pengeluaran)"))
 
             transactions.append({
