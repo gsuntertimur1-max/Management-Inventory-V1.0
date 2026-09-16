@@ -18,7 +18,7 @@ from backend import server
 from backend.inventory_flow import ReceiptItemInput, receipt_condition_quantities
 from backend.outbound_flow import loading_units_from_items, _linked_totals, _source_product_totals, _all_source_documents_settled
 from backend.stack_allocations import _parse_treatment_date
-from backend.runtime_hardening import blocks_legacy_product_mutation, measure_unit
+from backend.runtime_hardening import blocks_legacy_product_mutation, blocks_legacy_direct_transaction, measure_unit
 from fastapi import HTTPException
 
 
@@ -109,6 +109,14 @@ def test_legacy_product_mutations_are_blocked_but_reads_remain_available():
     assert blocks_legacy_product_mutation("DELETE", "/api/products/p1") is True
     assert blocks_legacy_product_mutation("GET", "/api/products") is False
     assert blocks_legacy_product_mutation("POST", "/api/products-master") is False
+
+
+def test_legacy_direct_stock_transaction_is_blocked_but_history_read_is_allowed():
+    assert blocks_legacy_direct_transaction("POST", "/api/transactions") is True
+    assert blocks_legacy_direct_transaction("POST", "/api/transactions/") is True
+    assert blocks_legacy_direct_transaction("GET", "/api/transactions") is False
+    assert blocks_legacy_direct_transaction("POST", "/api/receipts") is False
+    assert blocks_legacy_direct_transaction("POST", "/api/outbound-loads") is False
 
 
 def test_measure_unit_normalization_never_labels_liter_or_pcs_as_kg():

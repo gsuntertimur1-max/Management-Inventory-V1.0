@@ -19,6 +19,11 @@ def blocks_legacy_product_mutation(method: str, path: str) -> bool:
     )
 
 
+def blocks_legacy_direct_transaction(method: str, path: str) -> bool:
+    """Prevent the old generic stock writer from bypassing stack/channel/queue flows."""
+    return str(method or "").upper() == "POST" and str(path or "").rstrip("/") == "/api/transactions"
+
+
 def measure_unit(value: str | None) -> str:
     candidate = str(value or "kg").strip().lower()
     return candidate if candidate in {"kg", "liter", "pcs"} else "kg"
@@ -84,6 +89,13 @@ async def hardening_middleware(request: Request, call_next: Callable[[Request], 
             status_code=409,
             content={
                 "detail": "Endpoint master produk lama dinonaktifkan untuk mencegah perubahan stok langsung. Gunakan /api/products-master dan transaksi stok.",
+            },
+        )
+    if blocks_legacy_direct_transaction(request.method, request.url.path):
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": "Transaksi stok langsung versi lama dinonaktifkan. Gunakan penerimaan /api/receipts atau proses pemuatan /api/outbound-loads agar tumpukan, saluran, Bon Muat, dan antrian tetap konsisten.",
             },
         )
     if request.method.upper() == "GET" and request.url.path.rstrip("/") == "/api/export/products.xlsx":
