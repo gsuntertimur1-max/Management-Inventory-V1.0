@@ -5,26 +5,11 @@ on:
     branches: [dev-testing]
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: dev-testing
-
-      - name: Apply stack reservation patch
-        run: |
-          python scripts/apply_stack_reservation_patch_v2.py
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add backend/stack_reservations.py backend/fefo_selection.py backend/outbound_flow.py backend/tests/test_subledgers.py frontend/src/pages/CatatStok.jsx
-          git diff --cached --quiet && exit 0
-          git commit -m "fix: reserve outbound stock per stack"
-          git push origin HEAD:dev-testing
 
       - uses: actions/setup-node@v4
         with:
