@@ -16,7 +16,9 @@ from app import app
 from backend.integrity_lots import apply_lot_integrity
 from backend.damaged_stock_area import damaged_movement_qty
 from backend.damaged_outbound import DAMAGED_AREA, DAMAGED_QUEUE_PREFIX, damaged_loading_context
+from backend.fefo_conservative import conservative_outbound_split
 from backend.opname_lots import LotReconcileInput
+from backend.opname_lots_conservative import conservative_shortage_split
 from backend.opname_reconcile_guard import aggregate_lot_reconcile_input
 
 
@@ -32,9 +34,31 @@ def test_lot_integrity_wrapper_is_first_route():
 
 
 def test_stock_opname_lot_wrapper_is_first_approval_route():
-    assert _first_endpoint("/api/stock-opnames/{opname_id}/approve", "POST").__name__ == "approve_stock_opname"
-    assert _first_endpoint("/api/stock-opnames/{opname_id}/sync-lots", "POST").__name__ == "repair_stock_opname_lots"
+    assert _first_endpoint("/api/stock-opnames/{opname_id}/approve", "POST").__name__ == "approve_stock_opname_conservative"
+    assert _first_endpoint("/api/stock-opnames/{opname_id}/sync-lots", "POST").__name__ == "repair_stock_opname_lots_conservative"
     assert _first_endpoint("/api/stock-opnames/{opname_id}/reconcile-lots", "POST").__name__ == "guarded_reconcile_stock_opname_lots"
+
+
+def test_conservative_outbound_uses_legacy_before_named_lot():
+    untracked, tracked = conservative_outbound_split(physical_before=100, tracked_before=60, requested=10)
+    assert untracked == 10
+    assert tracked == 0
+
+    untracked, tracked = conservative_outbound_split(physical_before=100, tracked_before=60, requested=50)
+    assert untracked == 40
+    assert tracked == 10
+
+
+def test_conservative_opname_shortage_protects_named_lot_until_required():
+    # Setelah opname: fisik 90, lot bernama 60. Selisih 10 masih sepenuhnya legacy.
+    untracked, tracked = conservative_shortage_split(current_stack_qty=90, tracked_qty=60, needed=10)
+    assert untracked == 10
+    assert tracked == 0
+
+    # Setelah opname: fisik 50, lot bernama masih 60. Hanya 10 yang wajib mengenai lot.
+    untracked, tracked = conservative_shortage_split(current_stack_qty=50, tracked_qty=60, needed=50)
+    assert untracked == 40
+    assert tracked == 10
 
 
 def test_lot_reconciliation_rejects_zero_quantity():
