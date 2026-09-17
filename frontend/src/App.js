@@ -7,7 +7,7 @@ import Layout from './components/Layout';
 import PengeluaranReservationPanel from './components/PengeluaranReservationPanel';
 import OutboundDocumentIntegrityPanel from './components/OutboundDocumentIntegrityPanel';
 import Login from './pages/Login';
-import Dashboard from './pages/Dashboard';
+import DashboardUnified from './pages/DashboardUnified';
 import DaftarProduk from './pages/DaftarProduk';
 import CatatStok from './pages/CatatStok';
 import Riwayat from './pages/Riwayat';
@@ -18,7 +18,7 @@ import LayarAntrianEnhanced from './pages/LayarAntrianEnhanced';
 import Pengguna from './pages/Pengguna';
 import Pengaturan from './pages/Pengaturan';
 import ImportData from './pages/ImportData';
-import TumpukanWithLotStatus from './pages/TumpukanWithLotStatus';
+import TumpukanUnified from './pages/TumpukanUnified';
 import OpnameKonsinyasi from './pages/OpnameKonsinyasi';
 import KoreksiOperasional from './pages/KoreksiOperasional';
 import KontrolIntegritas from './pages/KontrolIntegritas';
@@ -55,10 +55,10 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
-      <Route path="/" element={<Protected><Dashboard /></Protected>} />
+      <Route path="/" element={<Protected><DashboardUnified /></Protected>} />
       <Route path="/produk" element={<Protected><DaftarProduk /></Protected>} />
       <Route path="/import" element={<Protected permission="masterWrite"><ImportData /></Protected>} />
-      <Route path="/tumpukan" element={<Protected><TumpukanWithLotStatus /></Protected>} />
+      <Route path="/tumpukan" element={<Protected><TumpukanUnified /></Protected>} />
       <Route path="/fefo" element={<Protected><FefoLot /></Protected>} />
       <Route path="/area-barang-rusak" element={<Protected><AreaBarangRusak /></Protected>} />
       <Route path="/opname-gudang" element={<Protected><OpnameGudang /></Protected>} />
