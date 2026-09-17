@@ -8,6 +8,8 @@ from backend.server import app
 from backend.inventory_flow import router as inventory_flow_router
 from backend.master_products import router as master_products_router
 from backend.outbound_flow import router as outbound_flow_router
+from backend.outbound_reservation_view import router as outbound_reservation_view_router
+from backend.outbound_start_guard import router as outbound_start_guard_router
 from backend.consignment import router as consignment_router
 from backend.stack_allocations import router as stack_allocations_router
 from backend.pdf_documents import router as pdf_documents_router
@@ -43,6 +45,9 @@ app.include_router(opname_lots_conservative_router)
 app.include_router(opname_lots_router)
 # Damaged outbound has a dedicated physical source and R-series queue; good stock delegates to normal guard.
 app.include_router(damaged_outbound_router)
+# Revalidate stack/master reservations immediately before Menunggu -> Sedang Dimuat.
+# It must precede the generic outbound router because both expose the same public path.
+app.include_router(outbound_start_guard_router)
 # Guard routes must be registered before the original operational routers so
 # the same public paths are serialized across Railway workers. The core outbound flow
 # performs the per-stack reservation check while these guards serialize product writes.
@@ -54,6 +59,8 @@ app.include_router(consignment_router)
 app.include_router(stack_allocations_router)
 app.include_router(pdf_documents_router)
 app.include_router(queue_flow_router)
+# Authoritative outbound reservation view is available to authenticated operators.
+app.include_router(outbound_reservation_view_router)
 # Integrity wrapper adds FEFO/lot coverage before the base integrity endpoint.
 app.include_router(integrity_lots_router)
 app.include_router(integrity_control_router)
