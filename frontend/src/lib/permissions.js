@@ -1,41 +1,49 @@
-// Role values stored by the existing backend are kept for compatibility.
-// The labels below are the names used in the warehouse workflow.
+// Four-role warehouse access model.
+// Stored legacy values remain supported so old accounts can be migrated safely.
 export const ROLE_LABELS = {
   Administrator: 'Superadmin',
-  Supervisor: 'Admin Gudang',
-  Operator: 'Operator Gudang',
-  QC: 'QC',
-  'Kepala Gudang': 'Kepala Gudang',
-  Mandor: 'Mandor / Keuangan Operasional',
-  Pemantau: 'Viewer / Auditor',
   Superadmin: 'Superadmin',
-  Admin: 'Admin',
+  'Kepala Gudang': 'Kepala Gudang',
+  Supervisor: 'Admin Operasional',
+  Admin: 'Admin Operasional',
+  'Admin Operasional': 'Admin Operasional',
+  Operator: 'Admin Operasional',
+  QC: 'Admin Operasional',
+  Mandor: 'Admin Operasional',
+  Pemantau: 'Viewer',
+  Viewer: 'Viewer',
 };
 
 export const ROLE_COLORS = {
   Administrator: '#ef4444',
   Superadmin: '#ef4444',
-  Supervisor: '#a855f7',
-  Admin: '#a855f7',
-  Operator: '#3b82f6',
-  QC: '#22c55e',
   'Kepala Gudang': '#f59e0b',
-  Mandor: '#14b8a6',
+  Supervisor: '#3b82f6',
+  Admin: '#3b82f6',
+  'Admin Operasional': '#3b82f6',
+  Operator: '#3b82f6',
+  QC: '#3b82f6',
+  Mandor: '#3b82f6',
   Pemantau: '#8b93a1',
+  Viewer: '#8b93a1',
 };
+
+export const FOUR_ROLES = ['Administrator', 'Kepala Gudang', 'Supervisor', 'Pemantau'];
 
 export const canonicalRole = (role) => ({
   Superadmin: 'Administrator',
   Admin: 'Supervisor',
+  'Admin Operasional': 'Supervisor',
+  Operator: 'Supervisor',
+  QC: 'Supervisor',
+  Mandor: 'Supervisor',
+  Viewer: 'Pemantau',
 }[role] || role || 'Pemantau');
 
 const ROLE_PERMISSIONS = {
-  Administrator: new Set(['masterWrite', 'inbound', 'outbound', 'rebagging', 'qc', 'users', 'settings', 'costView', 'corrections']),
-  Supervisor: new Set(['masterWrite', 'inbound', 'outbound', 'costView']),
-  Operator: new Set(['rebagging']),
-  QC: new Set(['qc']),
-  'Kepala Gudang': new Set(['warehouseApprove']),
-  Mandor: new Set(['costView']),
+  Administrator: new Set(['masterWrite', 'inbound', 'outbound', 'rebagging', 'qc', 'users', 'settings', 'costView', 'corrections', 'warehouseApprove', 'currentWrite']),
+  'Kepala Gudang': new Set(['inbound', 'outbound', 'costView', 'corrections', 'warehouseApprove', 'currentWrite']),
+  Supervisor: new Set(['inbound', 'outbound', 'costView', 'currentWrite']),
   Pemantau: new Set(),
 };
 
@@ -48,14 +56,10 @@ export const hasPermission = (role, permission) => {
   if (permission === 'outboundPage') {
     return hasPermission(canonical, 'outbound') || hasPermission(canonical, 'costView');
   }
-  // Current Railway branch exposes only master, inbound, outbound, and loading
-  // write endpoints. Keep this separate from the future rebagging permission.
   if (permission === 'currentWrite') {
-    return hasPermission(canonical, 'masterWrite')
-      || hasPermission(canonical, 'inbound')
-      || hasPermission(canonical, 'outbound');
+    return ROLE_PERMISSIONS[canonical]?.has('currentWrite') || false;
   }
   return ROLE_PERMISSIONS[canonical]?.has(permission) || false;
 };
 
-export const roleLabel = (role) => ROLE_LABELS[role] || role || '—';
+export const roleLabel = (role) => ROLE_LABELS[role] || ROLE_LABELS[canonicalRole(role)] || role || '—';
