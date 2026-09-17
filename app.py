@@ -24,6 +24,7 @@ from backend.operational_corrections import router as operational_corrections_ro
 from backend.integrity_control import router as integrity_control_router
 from backend.integrity_lots import router as integrity_lots_router
 from backend.integrity_postcommit import router as integrity_postcommit_router
+from backend.integrity_documents import router as integrity_documents_router
 from backend.stock_opname import router as stock_opname_router
 from backend.opname_lots import router as opname_lots_router
 from backend.opname_lots_conservative import router as opname_lots_conservative_router
@@ -78,7 +79,9 @@ app.include_router(pdf_documents_router)
 app.include_router(queue_flow_router)
 # Authoritative outbound reservation view is available to authenticated operators.
 app.include_router(outbound_reservation_view_router)
-# Integrity wrapper adds post-commit repair issues on top of lot/document integrity.
+# Outbound document wrapper is the authoritative /integrity-control route: it layers
+# Bon Muat/SJ/transaction cross-checks over post-commit + lot/document checks.
+app.include_router(integrity_documents_router)
 app.include_router(integrity_postcommit_router)
 app.include_router(integrity_lots_router)
 app.include_router(integrity_control_router)
