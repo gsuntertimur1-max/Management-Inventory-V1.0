@@ -11,6 +11,7 @@ from backend.outbound_flow import router as outbound_flow_router
 from backend.outbound_reservation_view import router as outbound_reservation_view_router
 from backend.outbound_start_guard import router as outbound_start_guard_router
 from backend.reservation_mutation_guards import router as reservation_mutation_guards_router
+from backend.supplier_lifecycle_guards import router as supplier_lifecycle_guards_router
 from backend.document_settlement_guards import router as document_settlement_guards_router
 from backend.return_lot_reconciliation import router as return_lot_reconciliation_router
 from backend.outbound_completion_hardening import router as outbound_completion_hardening_router
@@ -62,6 +63,8 @@ app.include_router(outbound_start_guard_router)
 # Any mutation that can reduce stock while an outbound queue is active must validate reservations
 # inside the same product lock before delegating to the core inventory operation.
 app.include_router(reservation_mutation_guards_router)
+# Supplier replacement must be serialized per return + product and retry-safe before the raw inventory route.
+app.include_router(supplier_lifecycle_guards_router)
 # Return/CR/SO settlement mutations are serialized per source load and document number.
 # This must precede generic operational guards and outbound routes exposing the same paths.
 app.include_router(document_settlement_guards_router)
