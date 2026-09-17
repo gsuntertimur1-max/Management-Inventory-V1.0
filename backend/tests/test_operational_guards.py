@@ -28,8 +28,8 @@ def _first_endpoint(path: str, method: str):
 
 def test_guard_routes_precede_original_mutating_routes():
     assert _first_endpoint("/api/receipts", "POST").__name__ == "guarded_receive_stock_with_metadata"
-    assert _first_endpoint("/api/stock-damage-discoveries", "POST").__name__ == "guarded_stock_damage"
-    assert _first_endpoint("/api/supplier-returns", "POST").__name__ == "guarded_supplier_return"
+    assert _first_endpoint("/api/stock-damage-discoveries", "POST").__name__ == "guarded_stock_damage_with_reservations"
+    assert _first_endpoint("/api/supplier-returns", "POST").__name__ == "guarded_supplier_return_with_reservations"
     assert _first_endpoint("/api/outbound-loads", "POST").__name__ == "guarded_create_outbound"
     assert _first_endpoint("/api/outbound-loads/{load_id}/complete", "POST").__name__ == "guarded_complete_outbound"
 
@@ -64,3 +64,4 @@ def test_surat_jalan_uses_exact_stack_locations_in_item_order():
     assert updated["items"][0]["location"] == "18/A01"
     assert updated["items"][0]["stackCode"] == "18/A01"
     assert updated["items"][1]["location"] == "19/B02"
+    assert updated["items"][1]["stackCode"] == "19/B02"
