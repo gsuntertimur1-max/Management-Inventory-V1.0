@@ -17,6 +17,20 @@ const statusLabel = (status) => ({
   AMAN: 'AMAN', TANPA_EXPIRED: 'TANPA EXP', TANGGAL_INVALID: 'INVALID',
 }[status] || status || '—');
 
+const coverageClass = (status) => ({
+  VERIFIED: 'border-[#14532d] bg-[#14532d]/20 text-[#86efac]',
+  MIXED: 'border-[#78350f] bg-[#78350f]/20 text-[#fcd34d]',
+  LEGACY: 'border-[#7c2d12] bg-[#7c2d12]/20 text-[#fdba74]',
+  PENDING_RETURN_RECONCILIATION: 'border-[#7f1d1d] bg-[#7f1d1d]/20 text-[#fca5a5]',
+}[status] || 'border-[#334155] bg-[#1e293b] text-[#cbd5e1]');
+
+const coverageLabel = (status) => ({
+  VERIFIED: 'LOT TERVERIFIKASI',
+  MIXED: 'MIXED',
+  LEGACY: 'LEGACY',
+  PENDING_RETURN_RECONCILIATION: 'RETUR BELUM DIREKONSILIASI',
+}[status] || status || '—');
+
 const FefoLot = () => {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -38,7 +52,8 @@ const FefoLot = () => {
     const query = q.trim().toLowerCase();
     const nextStatus = row.nextLot?.expiryStatus || '';
     const mixedLegacy = Number(row.untrackedQty || 0) > 0.000001 && Number(row.trackedQty || 0) > 0.000001;
-    const attention = mixedLegacy || Number(row.coveragePct || 0) < 99.999 || ['EXPIRED', 'LE_30_HARI', 'LE_90_HARI'].includes(nextStatus);
+    const pendingReturn = Number(row.pendingReturnQty || 0) > 0.000001;
+    const attention = pendingReturn || mixedLegacy || Number(row.coveragePct || 0) < 99.999 || ['EXPIRED', 'LE_30_HARI', 'LE_90_HARI'].includes(nextStatus);
     return (!query || String(row.product || '').toLowerCase().includes(query) || String(row.sku || '').toLowerCase().includes(query))
       && (!onlyAttention || attention);
   }), [rows, q, onlyAttention]);
@@ -46,17 +61,19 @@ const FefoLot = () => {
   const trackedProducts = rows.filter((row) => Number(row.trackedQty || 0) > 0).length;
   const untrackedProducts = rows.filter((row) => Number(row.untrackedQty || 0) > 0.000001).length;
   const urgentLots = rows.reduce((count, row) => count + (row.lots || []).filter((lot) => ['EXPIRED', 'LE_30_HARI'].includes(lot.expiryStatus)).length, 0);
+  const pendingReturnQty = rows.reduce((sum, row) => sum + Number(row.pendingReturnQty || 0), 0);
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div><div className="label-mono mb-2">First Expired First Out</div><h1 className="font-display text-4xl font-bold">Lot & FEFO</h1><p className="text-[#8b93a1] mt-2 max-w-3xl">Penerimaan baru otomatis menjadi lot per tumpukan. Stok historis yang belum mempunyai lot ditampilkan sebagai legacy/untracked. Pada tumpukan campuran, sistem memakai kebijakan konservatif: saldo legacy dilindungi dari tebakan batch dan lot bernama baru dikurangi saat benar-benar diperlukan.</p></div>
+        <div><div className="label-mono mb-2">First Expired First Out</div><h1 className="font-display text-4xl font-bold">Lot & FEFO</h1><p className="text-[#8b93a1] mt-2 max-w-3xl">Penerimaan baru otomatis menjadi lot per tumpukan. Stok historis dan retur yang belum memiliki identitas batch/expired tetap diperlakukan sebagai legacy/untracked agar sistem tidak mengarang tanggal. Coverage sekarang ditampilkan sampai level tumpukan.</p></div>
         <button type="button" onClick={load} disabled={loading} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-[#242f3d] text-sm disabled:opacity-50"><RefreshCcw size={16} className={loading ? 'animate-spin' : ''} /> Periksa FEFO</button>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
         <div className="card-surface p-4"><div className="label-mono text-[9px]">Produk Punya Lot</div><div className="font-mono text-2xl font-bold mt-1">{trackedProducts}</div></div>
         <div className="card-surface p-4 border border-[#78350f]"><div className="label-mono text-[9px] text-[#fcd34d]">Produk Legacy / Untracked</div><div className="font-mono text-2xl font-bold text-[#fbbf24] mt-1">{untrackedProducts}</div></div>
+        <div className="card-surface p-4 border border-[#7f1d1d]"><div className="label-mono text-[9px] text-[#fca5a5]">Retur Pending Rekonsiliasi</div><div className="font-mono text-2xl font-bold text-[#f87171] mt-1">{formatNum(pendingReturnQty)}</div></div>
         <div className="card-surface p-4 border border-[#7f1d1d]"><div className="label-mono text-[9px] text-[#fca5a5]">Lot Expired / ≤30 Hari</div><div className="font-mono text-2xl font-bold text-[#ef4444] mt-1">{urgentLots}</div></div>
       </div>
 
@@ -72,19 +89,23 @@ const FefoLot = () => {
             const coverage = Number(row.coveragePct || 0);
             const tracked = Number(row.trackedQty || 0);
             const untracked = Number(row.untrackedQty || 0);
+            const pendingReturn = Number(row.pendingReturnQty || 0);
             const mixedLegacy = untracked > 0.000001 && tracked > 0.000001;
             const isOpen = expanded === row.productId;
             return <div key={row.productId} className="rounded-xl border border-[#1a222e] bg-[#0b0f17] overflow-hidden">
               <button type="button" onClick={() => setExpanded(isOpen ? '' : row.productId)} className="w-full p-4 text-left grid grid-cols-1 lg:grid-cols-[1.5fr_.8fr_.9fr_.9fr_1fr] gap-3 items-center hover:bg-[#111722]">
-                <div><div className="font-semibold">{row.product}</div><div className="label-mono text-[10px] mt-1">{row.sku}</div></div>
+                <div><div className="font-semibold">{row.product}</div><div className="label-mono text-[10px] mt-1">{row.sku}</div>{pendingReturn > 0.000001 && <div className="text-[10px] text-[#fca5a5] mt-1">Retur belum direkonsiliasi: {formatNum(pendingReturn)} {row.unit}</div>}</div>
                 <div><div className="label-mono text-[9px]">Stok Tumpukan</div><div className="font-mono font-semibold mt-1">{formatNum(row.stackQty)} {row.unit}</div></div>
                 <div><div className="label-mono text-[9px]">Coverage Lot</div><div className={`font-mono font-semibold mt-1 ${coverage >= 99.999 ? 'text-[#4ade80]' : 'text-[#fbbf24]'}`}>{coverage.toFixed(1)}%</div><div className="text-[10px] text-[#6b7688]">Untracked {formatNum(row.untrackedQty)} {row.unit}</div></div>
-                <div><div className="label-mono text-[9px]">FEFO Berikutnya</div>{mixedLegacy ? <><div className="text-xs font-semibold text-[#fbbf24] mt-1">Tertunda · Legacy belum teridentifikasi</div>{next && <div className="text-[10px] text-[#8b93a1]">Lot terlacak terdekat: {next.stackCode} · {next.exp || 'tanpa expired'}</div>}</> : next ? <><div className="font-mono text-xs font-semibold mt-1">{next.stackCode}</div><div className="text-[10px] text-[#8b93a1]">{next.exp || 'Tanpa expired'}</div></> : <div className="text-xs text-[#8b93a1] mt-1">Belum ada lot</div>}</div>
-                <div className="flex justify-start lg:justify-end">{mixedLegacy ? <span className="inline-flex items-center gap-1.5 border border-[#78350f] bg-[#78350f]/20 text-[#fcd34d] rounded-full px-2.5 py-1 text-[10px]"><AlertTriangle size={12} /> LEGACY MIXED</span> : next ? <span className={`inline-flex items-center gap-1.5 border rounded-full px-2.5 py-1 text-[10px] font-mono ${statusClass(next.expiryStatus)}`}><CalendarClock size={12} />{statusLabel(next.expiryStatus)}</span> : <span className="inline-flex items-center gap-1.5 border border-[#78350f] bg-[#78350f]/20 text-[#fcd34d] rounded-full px-2.5 py-1 text-[10px]"><AlertTriangle size={12} /> LEGACY</span>}</div>
+                <div><div className="label-mono text-[9px]">FEFO Berikutnya</div>{row.fefoBlockedByLegacy ? <><div className="text-xs font-semibold text-[#fbbf24] mt-1">Legacy-first aktif</div>{next && <div className="text-[10px] text-[#8b93a1]">Lot terlacak terdekat: {next.stackCode} · {next.exp || 'tanpa expired'}</div>}</> : next ? <><div className="font-mono text-xs font-semibold mt-1">{next.stackCode}</div><div className="text-[10px] text-[#8b93a1]">{next.exp || 'Tanpa expired'}</div></> : <div className="text-xs text-[#8b93a1] mt-1">Belum ada lot</div>}</div>
+                <div className="flex justify-start lg:justify-end">{pendingReturn > 0.000001 ? <span className="inline-flex items-center gap-1.5 border border-[#7f1d1d] bg-[#7f1d1d]/20 text-[#fca5a5] rounded-full px-2.5 py-1 text-[10px]"><AlertTriangle size={12} /> RETUR PENDING</span> : mixedLegacy ? <span className="inline-flex items-center gap-1.5 border border-[#78350f] bg-[#78350f]/20 text-[#fcd34d] rounded-full px-2.5 py-1 text-[10px]"><AlertTriangle size={12} /> LEGACY MIXED</span> : next ? <span className={`inline-flex items-center gap-1.5 border rounded-full px-2.5 py-1 text-[10px] font-mono ${statusClass(next.expiryStatus)}`}><CalendarClock size={12} />{statusLabel(next.expiryStatus)}</span> : <span className="inline-flex items-center gap-1.5 border border-[#78350f] bg-[#78350f]/20 text-[#fcd34d] rounded-full px-2.5 py-1 text-[10px]"><AlertTriangle size={12} /> LEGACY</span>}</div>
               </button>
 
-              {isOpen && <div className="border-t border-[#1a222e] p-4">
-                {mixedLegacy && <div className="mb-4 rounded-lg border border-[#78350f] bg-[#78350f]/15 p-3 text-xs text-[#fcd34d]"><b>Kebijakan konservatif aktif.</b> Tumpukan ini berisi {formatNum(untracked)} {row.unit} legacy/untracked dan {formatNum(tracked)} {row.unit} lot terlacak. Pengeluaran tidak otomatis diklaim berasal dari lot bernama selama saldo legacy masih dapat menjelaskan kuantum keluar. Verifikasi batch/expired melalui opname untuk meningkatkan coverage.</div>}
+              {isOpen && <div className="border-t border-[#1a222e] p-4 space-y-4">
+                {row.fefoBlockedByLegacy && <div className="rounded-lg border border-[#78350f] bg-[#78350f]/15 p-3 text-xs text-[#fcd34d]"><b>Kebijakan legacy-first aktif.</b> Selama ada saldo untracked pada tumpukan produk ini, sistem tidak mengklaim stok berasal dari lot bernama tertentu. Rekonsiliasi batch/expired meningkatkan coverage tanpa mengubah stok fisik.</div>}
+
+                {(row.stackCoverage || []).length > 0 && <div className="overflow-x-auto"><table className="w-full text-sm tbl"><thead><tr className="text-left border-b border-[#1a222e]">{['Tumpukan', 'Fisik', 'Lot terlacak', 'Untracked', 'Retur pending', 'Coverage', 'Status'].map((h) => <th key={h} className="py-2 pr-4 whitespace-nowrap">{h}</th>)}</tr></thead><tbody>{row.stackCoverage.map((stack) => <tr key={stack.stackCode} className="border-b border-[#131a24]"><td className="py-2.5 pr-4 font-mono font-semibold">{stack.stackCode}</td><td className="py-2.5 pr-4 font-mono">{formatNum(stack.physicalQty)} {row.unit}</td><td className="py-2.5 pr-4 font-mono">{formatNum(stack.trackedQty)} {row.unit}</td><td className="py-2.5 pr-4 font-mono">{formatNum(stack.untrackedQty)} {row.unit}</td><td className={`py-2.5 pr-4 font-mono ${Number(stack.pendingReturnQty || 0) > 0 ? 'text-[#fca5a5]' : ''}`}>{formatNum(stack.pendingReturnQty)} {row.unit}</td><td className={`py-2.5 pr-4 font-mono ${Number(stack.coveragePct || 0) >= 99.999 ? 'text-[#4ade80]' : 'text-[#fbbf24]'}`}>{Number(stack.coveragePct || 0).toFixed(1)}%</td><td className="py-2.5 pr-4"><span className={`inline-flex border rounded-full px-2 py-0.5 text-[9px] ${coverageClass(stack.coverageStatus)}`}>{coverageLabel(stack.coverageStatus)}</span></td></tr>)}</tbody></table></div>}
+
                 {(row.lots || []).length === 0 ? <div className="text-sm text-[#8b93a1]">Stok ini berasal dari data historis sebelum subledger lot diaktifkan. Jangan mengarang expired; lot dapat dilengkapi saat verifikasi fisik berikutnya.</div> : <div className="overflow-x-auto"><table className="w-full text-sm tbl"><thead><tr className="text-left border-b border-[#1a222e]">{['Urutan', 'Lot', 'Tumpukan', 'Referensi', 'Expired', 'Sisa', 'Status'].map((h) => <th key={h} className="py-2 pr-4 whitespace-nowrap">{h}</th>)}</tr></thead><tbody>{row.lots.map((lot, index) => <tr key={lot.id} className="border-b border-[#131a24]"><td className="py-2.5 pr-4 font-mono text-xs">#{index + 1}</td><td className="py-2.5 pr-4 font-mono text-xs">{lot.lotCode}</td><td className="py-2.5 pr-4 font-mono text-xs">{lot.stackCode}</td><td className="py-2.5 pr-4"><div className="font-mono text-xs">{lot.sourceRef || '—'}</div><div className="text-[10px] text-[#6b7688]">{lot.poNo || ''}</div></td><td className="py-2.5 pr-4 font-mono text-xs">{lot.exp || '—'}</td><td className="py-2.5 pr-4 font-mono">{formatNum(lot.remainingQty)} {lot.unit}</td><td className="py-2.5 pr-4"><span className={`inline-flex items-center gap-1 border rounded-full px-2 py-0.5 text-[9px] ${statusClass(lot.expiryStatus)}`}>{lot.expiryStatus === 'AMAN' ? <CheckCircle2 size={11} /> : <AlertTriangle size={11} />}{statusLabel(lot.expiryStatus)}</span></td></tr>)}</tbody></table></div>}
               </div>}
             </div>;
