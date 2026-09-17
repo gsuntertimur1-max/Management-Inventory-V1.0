@@ -2,7 +2,14 @@ from fastapi import APIRouter, Depends, Request
 
 from backend.server import db, require_write
 from backend.operational_guards import guarded_complete_outbound as base_guarded_complete_outbound
-from backend.fefo_conservative import consume_stack_lots_conservative
+import backend.fefo_conservative as fefo_conservative
+from backend.fefo_atomic import consume_tracked_fefo_atomic
+
+# Replace the tracked-lot mutation used by the conservative FEFO engine with the
+# compensated variant. This keeps the existing legacy-first calculation while
+# preventing a failed movement insert from leaving a lot silently decremented.
+fefo_conservative._consume_tracked_fefo = consume_tracked_fefo_atomic
+consume_stack_lots_conservative = fefo_conservative.consume_stack_lots_conservative
 
 router = APIRouter(prefix="/api")
 
