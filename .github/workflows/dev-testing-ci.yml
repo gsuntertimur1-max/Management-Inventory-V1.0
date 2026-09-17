@@ -5,11 +5,24 @@ on:
     branches: [dev-testing]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Apply FEFO pick-control patch
+        if: contains(github.event.head_commit.message, 'apply FEFO pick-control patch')
+        run: |
+          python tools/apply_fefo_pick_control.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/src/pages/CatatStok.jsx backend/outbound_flow.py backend/fefo_selection.py backend/tests/test_subledgers.py app.py
+          git commit -m "feat: guide outbound stack selection with FEFO"
+          git push origin HEAD:dev-testing
 
       - uses: actions/setup-node@v4
         with:
@@ -31,7 +44,7 @@ jobs:
           pip install -r requirements.txt pytest
 
       - name: Validate Python syntax
-        run: python -m py_compile backend/server.py backend/inventory_flow.py backend/master_products.py backend/outbound_flow.py backend/consignment.py backend/stack_allocations.py backend/pdf_documents.py backend/operational_guards.py backend/correction_receipts.py backend/correction_reversal.py backend/correction_outbound.py backend/operational_corrections.py backend/integrity_control.py backend/integrity_lots.py backend/stock_opname.py backend/opname_lots.py backend/opname_lots_conservative.py backend/opname_reconcile_guard.py backend/stack_lots.py backend/fefo_conservative.py backend/fefo_flow.py backend/lot_corrections.py backend/damaged_stock_area.py backend/damaged_outbound.py app.py
+        run: python -m py_compile backend/server.py backend/inventory_flow.py backend/master_products.py backend/outbound_flow.py backend/consignment.py backend/stack_allocations.py backend/pdf_documents.py backend/operational_guards.py backend/correction_receipts.py backend/correction_reversal.py backend/correction_outbound.py backend/operational_corrections.py backend/integrity_control.py backend/integrity_lots.py backend/stock_opname.py backend/opname_lots.py backend/opname_lots_conservative.py backend/opname_reconcile_guard.py backend/stack_lots.py backend/fefo_conservative.py backend/fefo_selection.py backend/fefo_flow.py backend/lot_corrections.py backend/damaged_stock_area.py backend/damaged_outbound.py app.py
 
       - name: Run backend safety tests
         run: pytest -q backend/tests/test_unit_safety.py backend/tests/test_operational_guards.py backend/tests/test_corrections.py backend/tests/test_operational_corrections_routes.py backend/tests/test_integrity_control.py backend/tests/test_stock_opname.py backend/tests/test_stack_lots.py backend/tests/test_subledgers.py
