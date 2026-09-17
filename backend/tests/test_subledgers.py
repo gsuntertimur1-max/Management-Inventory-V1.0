@@ -14,6 +14,7 @@ from app import app
 from backend.integrity_lots import apply_lot_integrity
 from backend.damaged_stock_area import damaged_movement_qty
 from backend.damaged_outbound import DAMAGED_AREA, DAMAGED_QUEUE_PREFIX, damaged_loading_context
+from backend.opname_lots import LotReconcileInput
 
 
 def _first_endpoint(path: str, method: str):
@@ -30,6 +31,15 @@ def test_lot_integrity_wrapper_is_first_route():
 def test_stock_opname_lot_wrapper_is_first_approval_route():
     assert _first_endpoint("/api/stock-opnames/{opname_id}/approve", "POST").__name__ == "approve_stock_opname"
     assert _first_endpoint("/api/stock-opnames/{opname_id}/sync-lots", "POST").__name__ == "repair_stock_opname_lots"
+    assert _first_endpoint("/api/stock-opnames/{opname_id}/reconcile-lots", "POST").__name__ == "reconcile_stock_opname_lots"
+
+
+def test_lot_reconciliation_rejects_zero_quantity():
+    try:
+        LotReconcileInput(items=[{"productId": "p1", "stackCode": "18/A01", "lotId": "lot1", "qty": 0}])
+    except Exception:
+        return
+    raise AssertionError("Kuantum rekonsiliasi lot nol harus ditolak")
 
 
 def test_damaged_stock_area_route_is_registered():
