@@ -10,8 +10,11 @@ from backend.inventory_flow import _po_status
 from backend.stack_allocations import decrease_stack_allocation, reconcile_product_allocations
 from backend.operational_guards import lock_keys, operation_guard, product_lock_keys
 from backend.correction_receipts import product_maps, receipt_rows, recalculate_product_exp, txn_quantities
+from backend.outbound_flow import _reserved_qty
+from backend.stack_reservations import reserved_stack_qty
 
 router = APIRouter(prefix="/api")
+EPS = 1e-9
 
 
 class CorrectionReasonInput(BaseModel):
@@ -75,23 +78,65 @@ async def void_receipt_operation(operation_id: str, body: CorrectionReasonInput,
             await ensure_channel_stock(product)
             product = await db.products.find_one({"id": product_id}, {"_id": 0}) or product
             latest_products[product_id] = product
-            if float(product.get("stock", 0) or 0) + 1e-9 < totals["good"]:
-                raise HTTPException(status_code=400, detail=f"Stok Baik {product.get('name', '')} sudah terpakai dan tidak cukup untuk pembatalan")
-            if float(product.get("damaged", 0) or 0) + 1e-9 < totals["damaged"]:
-                raise HTTPException(status_code=400, detail=f"Stok Rusak {product.get('name', '')} sudah terpakai dan tidak cukup untuk pembatalan")
+
+            physical_good = float(product.get("stock", 0) or 0)
+            reserved_good = await _reserved_qty(product_id, "BAIK")
+            available_good = max(physical_good - reserved_good, 0.0)
+            if totals["good"] > available_good + EPS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Penerimaan {product.get('name', '')} tidak dapat dibatalkan karena stok Baik sudah terikat antrean outbound. "
+                        f"Fisik {physical_good:g}, reservasi {reserved_good:g}, tersedia untuk koreksi {available_good:g}, akan dikurangi {totals['good']:g}."
+                    ),
+                )
+
+            physical_damaged = float(product.get("damaged", 0) or 0)
+            reserved_damaged = await _reserved_qty(product_id, "RUSAK")
+            available_damaged = max(physical_damaged - reserved_damaged, 0.0)
+            if totals["damaged"] > available_damaged + EPS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Penerimaan {product.get('name', '')} tidak dapat dibatalkan karena stok Rusak sudah terikat antrean R-xxx. "
+                        f"Fisik {physical_damaged:g}, reservasi {reserved_damaged:g}, tersedia untuk koreksi {available_damaged:g}, akan dikurangi {totals['damaged']:g}."
+                    ),
+                )
 
         for (product_id, channel), totals in channel_totals.items():
             bucket = (latest_products[product_id].get("channelStock") or {}).get(channel, {})
-            if float(bucket.get("stock", 0) or 0) + 1e-9 < totals["good"]:
-                raise HTTPException(status_code=400, detail=f"Stok Baik saluran {channel} tidak cukup untuk pembatalan")
-            if float(bucket.get("damaged", 0) or 0) + 1e-9 < totals["damaged"]:
-                raise HTTPException(status_code=400, detail=f"Stok Rusak saluran {channel} tidak cukup untuk pembatalan")
+            good_balance = float(bucket.get("stock", 0) or 0)
+            good_reserved = await _reserved_qty(product_id, "BAIK", channel=channel)
+            good_available = max(good_balance - good_reserved, 0.0)
+            if totals["good"] > good_available + EPS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Stok Baik saluran {channel} sudah terikat reservasi outbound. Tersedia untuk koreksi hanya {good_available:g}.",
+                )
+
+            damaged_balance = float(bucket.get("damaged", 0) or 0)
+            damaged_reserved = await _reserved_qty(product_id, "RUSAK", channel=channel)
+            damaged_available = max(damaged_balance - damaged_reserved, 0.0)
+            if totals["damaged"] > damaged_available + EPS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Stok Rusak saluran {channel} sudah terikat antrean R-xxx. Tersedia untuk koreksi hanya {damaged_available:g}.",
+                )
 
         stack_snapshots: dict[tuple[str, str], dict] = {}
         for (product_id, stack_code), qty in stack_totals.items():
             allocation = await db.stack_allocations.find_one({"productId": product_id, "stackCode": stack_code}, {"_id": 0})
-            if not allocation or float(allocation.get("primaryQty", 0) or 0) + 1e-9 < qty:
-                raise HTTPException(status_code=400, detail=f"Stok pada tumpukan {stack_code} sudah berubah dan tidak cukup untuk membatalkan penerimaan")
+            physical_stack = float((allocation or {}).get("primaryQty", 0) or 0)
+            reserved_stack = await reserved_stack_qty(product_id, stack_code)
+            available_stack = max(physical_stack - reserved_stack, 0.0)
+            if not allocation or qty > available_stack + EPS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Penerimaan tidak dapat dibatalkan dari tumpukan {stack_code} karena stok sudah berubah/direservasi outbound. "
+                        f"Fisik {physical_stack:g}, reservasi {reserved_stack:g}, tersedia untuk koreksi {available_stack:g}, akan dikurangi {qty:g}."
+                    ),
+                )
             stack_snapshots[(product_id, stack_code)] = allocation
 
         po = None
@@ -111,7 +156,7 @@ async def void_receipt_operation(operation_id: str, body: CorrectionReasonInput,
                 delta = po_totals.get(product_id, 0.0)
                 if delta:
                     received = float(revised.get("receivedQty", revised.get("received_qty", 0)) or 0)
-                    if received + 1e-9 < delta:
+                    if received + EPS < delta:
                         raise HTTPException(status_code=409, detail="Jumlah penerimaan PO sudah berubah. Muat ulang lalu periksa dokumen.")
                     revised["receivedQty"] = max(received - delta, 0.0)
                 updated_po_items.append(revised)
