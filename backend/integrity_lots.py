@@ -43,6 +43,63 @@ def apply_lot_integrity(row: dict, tracked_qty: float) -> dict:
     return result
 
 
+async def _document_integrity() -> tuple[list[dict], list[dict]]:
+    completed = await db.outbound_loads.find(
+        {"status": "Selesai"},
+        {"_id": 0, "id": 1, "bon_no": 1, "antrian": 1, "ref": 1, "surat_jalan_id": 1, "surat_jalan_no": 1},
+    ).to_list(20000)
+    surat_jalan = await db.surat_jalan.find(
+        {},
+        {"_id": 0, "id": 1, "load_id": 1, "no": 1, "bon_no": 1, "antrian": 1},
+    ).to_list(20000)
+
+    sj_by_id = {str(row.get("id") or ""): row for row in surat_jalan if row.get("id")}
+    sj_by_load = defaultdict(list)
+    for row in surat_jalan:
+        load_id = str(row.get("load_id") or "")
+        if load_id:
+            sj_by_load[load_id].append(row)
+
+    completed_ids = {str(row.get("id") or "") for row in completed if row.get("id")}
+    missing = []
+    for load in completed:
+        load_id = str(load.get("id") or "")
+        sj_id = str(load.get("surat_jalan_id") or "")
+        linked = sj_by_id.get(sj_id) if sj_id else None
+        if not linked and load_id:
+            linked_rows = sj_by_load.get(load_id, [])
+            linked = linked_rows[0] if linked_rows else None
+        if linked:
+            continue
+        missing.append({
+            "loadId": load_id,
+            "bonNo": load.get("bon_no", ""),
+            "queue": load.get("antrian", ""),
+            "ref": load.get("ref", ""),
+            "suratJalanId": sj_id,
+            "suratJalanNo": load.get("surat_jalan_no", ""),
+            "issue": "Pengeluaran Selesai belum memiliki Surat Jalan yang dapat ditemukan",
+        })
+
+    orphan = []
+    for sj in surat_jalan:
+        load_id = str(sj.get("load_id") or "")
+        if not load_id or load_id in completed_ids:
+            continue
+        load = await db.outbound_loads.find_one({"id": load_id}, {"_id": 0, "status": 1})
+        if load:
+            continue
+        orphan.append({
+            "suratJalanId": sj.get("id", ""),
+            "suratJalanNo": sj.get("no", ""),
+            "loadId": load_id,
+            "bonNo": sj.get("bon_no", ""),
+            "queue": sj.get("antrian", ""),
+            "issue": "Surat Jalan tidak memiliki data pemuatan sumber",
+        })
+    return missing, orphan
+
+
 @router.get("/integrity-control")
 async def integrity_control(user: dict = Depends(require_master_write)):
     data = await base_integrity_control(user)
@@ -62,6 +119,8 @@ async def integrity_control(user: dict = Depends(require_master_write)):
 
     overtracked = [row for row in rows if _n(row.get("lotTracked")) - _n(row.get("stackGood")) > EPS]
     legacy = [row for row in rows if _n(row.get("stackGood")) - _n(row.get("lotTracked")) > EPS]
+    missing_sj, orphan_sj = await _document_integrity()
+
     issues = list(data.get("systemIssues") or [])
     if overtracked:
         issues.append({
@@ -75,11 +134,27 @@ async def integrity_control(user: dict = Depends(require_master_write)):
             "code": "LOT_LEGACY_UNTRACKED",
             "message": f"Ada {len(legacy)} produk yang belum 100% tercakup subledger lot/FEFO. Stok legacy tetap dipertahankan tanpa mengarang tanggal expired.",
         })
+    if missing_sj:
+        issues.append({
+            "severity": "ERROR",
+            "code": "COMPLETED_OUTBOUND_MISSING_SJ",
+            "message": f"Ada {len(missing_sj)} pengeluaran Selesai tanpa Surat Jalan yang dapat ditemukan.",
+        })
+    if orphan_sj:
+        issues.append({
+            "severity": "WARNING",
+            "code": "ORPHAN_SURAT_JALAN",
+            "message": f"Ada {len(orphan_sj)} Surat Jalan tanpa data pemuatan sumber.",
+        })
     data["systemIssues"] = issues
+    data["completedOutboundMissingSuratJalan"] = missing_sj[:500]
+    data["orphanSuratJalan"] = orphan_sj[:500]
 
     summary = dict(data.get("summary") or {})
     summary["lotOvertrackedProducts"] = len(overtracked)
     summary["lotLegacyProducts"] = len(legacy)
+    summary["completedOutboundMissingSuratJalan"] = len(missing_sj)
+    summary["orphanSuratJalan"] = len(orphan_sj)
     summary["ok"] = sum(1 for row in rows if row.get("severity") == "OK")
     summary["warnings"] = sum(1 for row in rows if row.get("severity") == "WARNING")
     summary["errors"] = sum(1 for row in rows if row.get("severity") == "ERROR")
