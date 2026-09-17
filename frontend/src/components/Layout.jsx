@@ -11,12 +11,12 @@ const NAV_GROUPS = [
   { label: 'Dashboard', icon: LayoutGrid, to: '/' },
   {
     label: 'Inventori', icon: PackageSearch, items: [
-      { to: '/produk', label: 'Daftar Produk', icon: Boxes },
+      { to: '/produk', label: 'Daftar Produk', icon: Boxes, permission: 'mainInventory' },
       { to: '/tumpukan', label: 'Tumpukan Stok', icon: Layers },
-      { to: '/fefo', label: 'Lot & FEFO', icon: CalendarClock },
-      { to: '/area-barang-rusak', label: 'Area Barang Rusak', icon: PackageX },
-      { to: '/opname-gudang', label: 'Stock Opname GBB', icon: ClipboardCheck },
-      { to: '/opname-konsinyasi', label: 'Opname Bazar/E-commerce', icon: ClipboardCheck },
+      { to: '/fefo', label: 'Lot & FEFO', icon: CalendarClock, permission: 'mainInventory' },
+      { to: '/area-barang-rusak', label: 'Area Barang Rusak', icon: PackageX, permission: 'mainInventory' },
+      { to: '/opname-gudang', label: 'Stock Opname GBB', icon: ClipboardCheck, permission: 'mainInventory' },
+      { to: '/opname-konsinyasi', label: 'Opname Bazar/E-commerce', icon: ClipboardCheck, permission: 'consignmentView' },
     ],
   },
   {
@@ -26,16 +26,16 @@ const NAV_GROUPS = [
       { to: '/retur-pemasok', label: 'Retur / Ganti Pemasok', icon: RefreshCcw, permission: 'operations' },
       { to: '/pengeluaran', label: 'Pengeluaran', icon: Send, permission: 'outboundPage' },
       { to: '/koreksi-operasional', label: 'Koreksi Operasional', icon: ShieldCheck, permission: 'corrections' },
-      { to: '/antrian', label: 'Layar Antrian', icon: MonitorSmartphone },
+      { to: '/antrian', label: 'Layar Antrian', icon: MonitorSmartphone, permission: 'mainInventory' },
     ],
   },
   {
     label: 'Pengadaan', icon: ShoppingCart, items: [
-      { to: '/po', label: 'Purchase Order', icon: ClipboardList },
-      { to: '/supplier', label: 'Supplier', icon: Truck },
+      { to: '/po', label: 'Purchase Order', icon: ClipboardList, permission: 'mainInventory' },
+      { to: '/supplier', label: 'Supplier', icon: Truck, permission: 'mainInventory' },
     ],
   },
-  { label: 'Riwayat', icon: History, to: '/riwayat' },
+  { label: 'Riwayat', icon: History, to: '/riwayat', permission: 'mainInventory' },
   {
     label: 'Administrasi', icon: ShieldCheck, items: [
       { to: '/kontrol-integritas', label: 'Kontrol Integritas', icon: Activity, permission: 'masterWrite' },
@@ -52,6 +52,7 @@ const Layout = ({ children }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const canSeeItem = (item) => !item.permission || hasPermission(user?.role, item.permission);
   const visibleGroups = NAV_GROUPS
+    .filter((group) => !group.permission || hasPermission(user?.role, group.permission))
     .map((group) => group.items ? { ...group, items: group.items.filter(canSeeItem) } : group)
     .filter((group) => group.to || group.items.length > 0);
   const isPathActive = (to) => to === '/' ? location.pathname === '/' : location.pathname.startsWith(to);
