@@ -31,7 +31,7 @@ def test_guard_routes_precede_original_mutating_routes():
     assert _first_endpoint("/api/stock-damage-discoveries", "POST").__name__ == "guarded_stock_damage_with_reservations"
     assert _first_endpoint("/api/supplier-returns", "POST").__name__ == "guarded_supplier_return_with_reservations"
     assert _first_endpoint("/api/outbound-loads", "POST").__name__ == "guarded_create_outbound"
-    assert _first_endpoint("/api/outbound-loads/{load_id}/complete", "POST").__name__ == "guarded_complete_outbound"
+    assert _first_endpoint("/api/outbound-loads/{load_id}/complete", "POST").__name__ == "hardened_complete_outbound"
     assert _first_endpoint("/api/outbound-loads/{load_id}/return", "POST").__name__ == "guarded_consignment_return_document"
     assert _first_endpoint("/api/outbound-loads/{load_id}/sales-return", "POST").__name__ == "guarded_sales_return_document"
     assert _first_endpoint("/api/outbound-loads/{load_id}/settle", "POST").__name__ == "guarded_settle_outbound_document"
