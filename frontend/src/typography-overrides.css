@@ -1,0 +1,114 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+:root {
+  --font-ui: 'Manrope', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-display: 'Space Grotesk', 'Manrope', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+html,
+body,
+button,
+input,
+select,
+textarea {
+  font-family: var(--font-ui) !important;
+}
+
+body {
+  font-size: 14px;
+  line-height: 1.55;
+  letter-spacing: -0.005em;
+}
+
+.font-display,
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-display) !important;
+  letter-spacing: -0.025em;
+}
+
+h1 {
+  line-height: 1.08;
+}
+
+h2,
+h3 {
+  line-height: 1.2;
+}
+
+.font-mono,
+code,
+kbd,
+pre,
+.label-mono {
+  font-family: var(--font-mono) !important;
+  font-variant-numeric: tabular-nums;
+}
+
+.label-mono {
+  letter-spacing: 0.11em;
+  font-weight: 600;
+}
+
+button,
+.btn-primary,
+.nav-link,
+.mobile-nav-link {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+input,
+select,
+textarea {
+  line-height: 1.45;
+}
+
+.tbl th {
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.tbl td {
+  line-height: 1.45;
+}
+
+.stat-card .text-3xl,
+.stat-card .text-2xl,
+.app-main .text-3xl.font-bold,
+.app-main .text-2xl.font-bold {
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+}
+
+/* Technical identifiers should remain compact and easy to scan. */
+[data-testid*='sku'],
+[data-testid*='queue'],
+[data-testid*='document'],
+[data-testid*='bon'],
+[data-testid*='stack'] {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 639px) {
+  body {
+    font-size: 13.5px;
+    line-height: 1.5;
+  }
+
+  .app-main h1 {
+    letter-spacing: -0.035em;
+  }
+
+  .nav-link,
+  .mobile-nav-link,
+  button {
+    letter-spacing: -0.005em;
+  }
+}
