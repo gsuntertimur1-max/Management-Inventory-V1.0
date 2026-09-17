@@ -23,6 +23,7 @@ from backend.server import (
     channel_balance,
 )
 from backend.stack_allocations import valid_stack_codes, allocate_stock_to_stack, decrease_stack_allocation, reconcile_product_allocations
+from backend.fefo_selection import get_fefo_pick_guide, selection_requires_reason
 
 router = APIRouter(prefix="/api")
 
@@ -41,6 +42,7 @@ class OutboundItemInput(BaseModel):
     documentNo: str = ""
     stackCode: str = ""
     channel: str = ""
+    fefoExceptionReason: str = Field(default="", max_length=500)
 
 
 class OutboundCreateInput(BaseModel):
@@ -320,6 +322,7 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
 
     multi_source = len(refs) > 1 or len(body.items) > 1
     load_items = []
+    fefo_guides = {}
     for item in body.items:
         product = products[item.productId]
         item_ref = item.documentNo.strip() or refs[0]
@@ -328,13 +331,25 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         qty = float(item.qty)
         weight = float(product.get("weight", 0) or 0)
         stack_code = item.stackCode.strip().upper()
-        if multi_source and not stack_code:
-            raise HTTPException(status_code=400, detail=f"Pilih tumpukan asal untuk setiap barang pada pemuatan multi-SO/multi-produk ({product.get('name', '')})")
+        if body.kondisi == "BAIK" and not stack_code:
+            raise HTTPException(status_code=400, detail=f"Pilih tumpukan asal untuk {product.get('name', '')} agar kontrol FEFO dan lokasi pemuatan tercatat")
         channel = normalize_channel(item.channel, normalize_channel(product.get("channel")))
         if stack_code and stack_code not in await valid_stack_codes():
             raise HTTPException(status_code=400, detail="Tumpukan asal tidak valid")
+        guide = {}
+        selection_status = "NOT_APPLICABLE"
+        exception_reason = item.fefoExceptionReason.strip()
+        if body.kondisi == "BAIK":
+            if item.productId not in fefo_guides:
+                fefo_guides[item.productId] = await get_fefo_pick_guide(item.productId)
+            guide = fefo_guides[item.productId]
+            is_exception = selection_requires_reason(guide, stack_code)
+            if is_exception and not exception_reason:
+                priorities = ", ".join(guide.get("recommendedStacks", [])) or "-"
+                raise HTTPException(status_code=400, detail=f"Tumpukan {stack_code} bukan prioritas {guide.get('mode', 'FEFO')} untuk {product.get('name', '')}. Prioritas: {priorities}. Isi alasan pengecualian.")
+            selection_status = "EXCEPTION" if is_exception else ("PRIORITY" if stack_code in guide.get("recommendedStacks", []) else "NO_GUIDE")
         actual_location = stack_code or product.get("location", "")
-        load_items.append({"productId": item.productId, "documentNo": item_ref, "sku": product.get("sku", ""), "name": product.get("name", ""), "channel": channel, "qty": qty, "unit": product.get("unit", ""), "weight": weight, "measureUnit": product.get("measureUnit", "kg") or "kg", "berat": weight * qty, "secondary": product.get("secondary", ""), "secondaryQty": float(product.get("secondaryQty", 0) or 0), "location": product.get("location", ""), "stackCode": stack_code, "crewGroup": _crew_group(actual_location), "loadingFee": _loading_fee(product, qty, charge_mode_override=body.loadingFeeChargeMode)})
+        load_items.append({"productId": item.productId, "documentNo": item_ref, "sku": product.get("sku", ""), "name": product.get("name", ""), "channel": channel, "qty": qty, "unit": product.get("unit", ""), "weight": weight, "measureUnit": product.get("measureUnit", "kg") or "kg", "berat": weight * qty, "secondary": product.get("secondary", ""), "secondaryQty": float(product.get("secondaryQty", 0) or 0), "location": product.get("location", ""), "stackCode": stack_code, "crewGroup": _crew_group(actual_location), "loadingFee": _loading_fee(product, qty, charge_mode_override=body.loadingFeeChargeMode), "fefoPolicy": guide.get("policy", "") if guide else "", "fefoMode": guide.get("mode", "") if guide else "", "fefoRecommendedStacks": guide.get("recommendedStacks", []) if guide else [], "fefoSelectionStatus": selection_status, "fefoExceptionReason": exception_reason if selection_status == "EXCEPTION" else ""})
 
     if multi_source and body.kondisi == "BAIK":
         quantities_by_stack = defaultdict(float)
@@ -567,18 +582,32 @@ async def edit_outbound_load(load_id: str, body: OutboundEditInput, user: dict =
             raise HTTPException(status_code=400, detail=f"Stok {channel} untuk {product.get('name', 'produk')} tidak mencukupi")
 
     revised_items = []
+    edit_fefo_guides = {}
     for index, submitted in enumerate(body.items):
         previous = dict(original_items[index])
         product = products[submitted.productId]
         qty = float(submitted.qty)
         document_no = str(submitted.documentNo or "").strip() or documents[0]
         stack_code = str(submitted.stackCode or previous.get("stackCode") or "").strip().upper()
+        if load.get("kondisi", "BAIK") == "BAIK" and not stack_code:
+            raise HTTPException(status_code=400, detail=f"Pilih tumpukan asal untuk {product.get('name', '')} agar kontrol FEFO tetap tercatat")
         if stack_code:
             allocation = await db.stack_allocations.find_one({"productId": submitted.productId, "stackCode": stack_code}, {"_id": 0, "primaryQty": 1})
             if not allocation or float(allocation.get("primaryQty", 0) or 0) + 1e-9 < qty:
                 raise HTTPException(status_code=400, detail=f"Stok {product.get('name', '')} pada {stack_code} tidak mencukupi")
+        exception_reason = submitted.fefoExceptionReason.strip() or str(previous.get("fefoExceptionReason") or "").strip()
+        guide = {}
+        selection_status = previous.get("fefoSelectionStatus", "NOT_APPLICABLE")
+        if load.get("kondisi", "BAIK") == "BAIK":
+            if submitted.productId not in edit_fefo_guides:
+                edit_fefo_guides[submitted.productId] = await get_fefo_pick_guide(submitted.productId)
+            guide = edit_fefo_guides[submitted.productId]
+            is_exception = selection_requires_reason(guide, stack_code)
+            if is_exception and not exception_reason:
+                raise HTTPException(status_code=400, detail=f"Tumpukan {stack_code} bukan prioritas FEFO. Isi alasan pengecualian sebelum menyimpan edit.")
+            selection_status = "EXCEPTION" if is_exception else ("PRIORITY" if stack_code in guide.get("recommendedStacks", []) else "NO_GUIDE")
         channel = normalize_channel(submitted.channel, normalize_channel(product.get("channel")))
-        revised_items.append({**previous, "documentNo": document_no, "qty": qty, "channel": channel, "berat": float(product.get("weight", 0) or 0) * qty, "loadingFee": _loading_fee(product, qty, charge_mode_override=(previous.get("loadingFee") or {}).get("mode", "")), "stackCode": stack_code, "crewGroup": _crew_group(stack_code or product.get("location", ""))})
+        revised_items.append({**previous, "documentNo": document_no, "qty": qty, "channel": channel, "berat": float(product.get("weight", 0) or 0) * qty, "loadingFee": _loading_fee(product, qty, charge_mode_override=(previous.get("loadingFee") or {}).get("mode", "")), "stackCode": stack_code, "crewGroup": _crew_group(stack_code or product.get("location", "")), "fefoPolicy": guide.get("policy", previous.get("fefoPolicy", "")) if guide else previous.get("fefoPolicy", ""), "fefoMode": guide.get("mode", previous.get("fefoMode", "")) if guide else previous.get("fefoMode", ""), "fefoRecommendedStacks": guide.get("recommendedStacks", previous.get("fefoRecommendedStacks", [])) if guide else previous.get("fefoRecommendedStacks", []), "fefoSelectionStatus": selection_status, "fefoExceptionReason": exception_reason if selection_status == "EXCEPTION" else ""})
 
     now = now_iso()
     old_snapshot = {"documents": load.get("documents", []), "polisi": load.get("polisi", ""), "pengambil": load.get("pengambil", ""), "items": original_items}
@@ -747,6 +776,10 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
                 "request_document": load.get("request_document", ""),
                 "consignment_destination": load.get("consignment_destination", ""),
                 "consignment_zone": load.get("consignment_zone", ""),
+                "fefo_policy": item.get("fefoPolicy", ""),
+                "fefo_mode": item.get("fefoMode", ""),
+                "fefo_selection_status": item.get("fefoSelectionStatus", ""),
+                "fefo_exception_reason": item.get("fefoExceptionReason", ""),
             })
 
         op_now = operational_now()

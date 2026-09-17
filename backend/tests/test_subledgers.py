@@ -20,6 +20,7 @@ from backend.fefo_conservative import conservative_outbound_split
 from backend.opname_lots import LotReconcileInput
 from backend.opname_lots_conservative import conservative_shortage_split
 from backend.opname_reconcile_guard import aggregate_lot_reconcile_input
+from backend.fefo_selection import build_fefo_pick_guide, selection_requires_reason
 
 
 def _first_endpoint(path: str, method: str):
@@ -126,3 +127,37 @@ def test_damaged_movement_prefers_damaged_change_and_falls_back_to_condition():
     assert damaged_movement_qty({"damaged_change": 5, "change": 99, "kondisi": "BAIK"}) == 5
     assert damaged_movement_qty({"change": -3, "kondisi": "RUSAK"}) == -3
     assert damaged_movement_qty({"change": 8, "kondisi": "BAIK"}) == 0
+
+
+def test_fefo_pick_guide_prefers_legacy_stacks_before_named_lots():
+    allocations = [
+        {"stackCode": "18/A01", "primaryQty": 40, "unit": "Pack"},
+        {"stackCode": "18/A02", "primaryQty": 60, "unit": "Pack"},
+    ]
+    lots = [
+        {"id": "lot1", "stackCode": "18/A02", "remainingQty": 60, "exp": "2026-10-01", "receivedAt": "2026-09-01"},
+    ]
+    guide = build_fefo_pick_guide("p1", allocations, lots)
+    assert guide["mode"] == "LEGACY_FIRST"
+    assert guide["recommendedStacks"] == ["18/A01"]
+    assert selection_requires_reason(guide, "18/A02") is True
+    assert selection_requires_reason(guide, "18/A01") is False
+
+
+def test_fefo_pick_guide_uses_earliest_expiry_when_coverage_complete():
+    allocations = [
+        {"stackCode": "18/A01", "primaryQty": 20, "unit": "Pack"},
+        {"stackCode": "18/A02", "primaryQty": 20, "unit": "Pack"},
+    ]
+    lots = [
+        {"id": "later", "stackCode": "18/A01", "remainingQty": 20, "exp": "2026-12-01", "receivedAt": "2026-09-01"},
+        {"id": "early", "stackCode": "18/A02", "remainingQty": 20, "exp": "2026-10-01", "receivedAt": "2026-09-02"},
+    ]
+    guide = build_fefo_pick_guide("p1", allocations, lots)
+    assert guide["mode"] == "FEFO_TRACKED"
+    assert guide["recommendedStacks"] == ["18/A02"]
+    assert selection_requires_reason(guide, "18/A01") is True
+
+
+def test_fefo_pick_guide_route_registered():
+    assert _first_endpoint("/api/fefo-pick-guide/{product_id}", "GET").__name__ == "fefo_pick_guide"

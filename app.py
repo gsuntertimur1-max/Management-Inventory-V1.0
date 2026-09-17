@@ -23,6 +23,7 @@ from backend.opname_lots_conservative import router as opname_lots_conservative_
 from backend.opname_reconcile_guard import router as opname_reconcile_guard_router
 from backend.stack_lots import router as stack_lots_router, ensure_stack_lot_indexes
 from backend.fefo_flow import router as fefo_flow_router
+from backend.fefo_selection import router as fefo_selection_router
 from backend.lot_corrections import router as lot_corrections_router
 from backend.damaged_stock_area import router as damaged_stock_area_router
 from backend.damaged_outbound import router as damaged_outbound_router
@@ -57,6 +58,7 @@ app.include_router(integrity_lots_router)
 app.include_router(integrity_control_router)
 app.include_router(stock_opname_router)
 app.include_router(stack_lots_router)
+app.include_router(fefo_selection_router)
 app.include_router(damaged_stock_area_router)
 
 _original_lifespan = app.router.lifespan_context
