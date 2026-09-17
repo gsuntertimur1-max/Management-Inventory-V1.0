@@ -196,6 +196,47 @@ async def _settlement_integrity() -> tuple[list[dict], list[dict]]:
     return duplicates, settlement_issues
 
 
+async def _pending_return_lot_reconciliations() -> list[dict]:
+    sources = await db.stack_lot_movements.find(
+        {"movementType": "RETURN_UNTRACKED", "qty": {"$gt": EPS}},
+        {"_id": 0},
+    ).to_list(20000)
+    source_ids = [str(row.get("id") or "") for row in sources if row.get("id")]
+    resolved: dict[str, float] = defaultdict(float)
+    if source_ids:
+        rows = await db.stack_lot_movements.find(
+            {"movementType": "RETURN_RECONCILED", "sourceReturnMovementId": {"$in": source_ids}},
+            {"_id": 0, "sourceReturnMovementId": 1, "qty": 1},
+        ).to_list(50000)
+        for row in rows:
+            resolved[str(row.get("sourceReturnMovementId") or "")] += abs(_n(row.get("qty")))
+
+    pending = []
+    for source in sources:
+        source_id = str(source.get("id") or "")
+        original = _n(source.get("qty"))
+        reconciled = resolved.get(source_id, 0.0)
+        remaining = max(original - reconciled, 0.0)
+        if remaining <= EPS:
+            continue
+        pending.append({
+            "movementId": source_id,
+            "loadId": source.get("loadId", ""),
+            "returnDocument": source.get("returnDocument", ""),
+            "sourceDocument": source.get("sourceDocument", ""),
+            "productId": source.get("productId", ""),
+            "sku": source.get("sku", ""),
+            "product": source.get("product", ""),
+            "stackCode": source.get("stackCode", ""),
+            "unit": source.get("unit", ""),
+            "originalQty": original,
+            "reconciledQty": reconciled,
+            "remainingQty": remaining,
+            "issue": "Retur Baik masih legacy/untracked dan belum seluruhnya direkonsiliasi ke lot/batch terverifikasi",
+        })
+    return pending
+
+
 @router.get("/integrity-control")
 async def integrity_control(user: dict = Depends(require_master_write)):
     data = await base_integrity_control(user)
@@ -217,6 +258,7 @@ async def integrity_control(user: dict = Depends(require_master_write)):
     legacy = [row for row in rows if _n(row.get("stackGood")) - _n(row.get("lotTracked")) > EPS]
     missing_sj, orphan_sj = await _document_integrity()
     duplicate_documents, settlement_issues = await _settlement_integrity()
+    pending_return_lots = await _pending_return_lot_reconciliations()
 
     issues = list(data.get("systemIssues") or [])
     if overtracked:
@@ -230,6 +272,13 @@ async def integrity_control(user: dict = Depends(require_master_write)):
             "severity": "WARNING",
             "code": "LOT_LEGACY_UNTRACKED",
             "message": f"Ada {len(legacy)} produk yang belum 100% tercakup subledger lot/FEFO. Stok legacy tetap dipertahankan tanpa mengarang tanggal expired.",
+        })
+    if pending_return_lots:
+        total_pending = sum(_n(row.get("remainingQty")) for row in pending_return_lots)
+        issues.append({
+            "severity": "WARNING",
+            "code": "RETURN_LOT_RECONCILIATION_PENDING",
+            "message": f"Ada {len(pending_return_lots)} retur Baik dengan total {total_pending:g} unit yang masih menunggu rekonsiliasi batch/expired.",
         })
     if missing_sj:
         issues.append({
@@ -261,10 +310,13 @@ async def integrity_control(user: dict = Depends(require_master_write)):
     data["orphanSuratJalan"] = orphan_sj[:500]
     data["duplicateOutboundDocuments"] = duplicate_documents[:500]
     data["documentSettlementIssues"] = settlement_issues[:500]
+    data["pendingReturnLotReconciliations"] = pending_return_lots[:500]
 
     summary = dict(data.get("summary") or {})
     summary["lotOvertrackedProducts"] = len(overtracked)
     summary["lotLegacyProducts"] = len(legacy)
+    summary["pendingReturnLotReconciliations"] = len(pending_return_lots)
+    summary["pendingReturnLotQty"] = sum(_n(row.get("remainingQty")) for row in pending_return_lots)
     summary["completedOutboundMissingSuratJalan"] = len(missing_sj)
     summary["orphanSuratJalan"] = len(orphan_sj)
     summary["duplicateOutboundDocuments"] = len(duplicate_documents)
