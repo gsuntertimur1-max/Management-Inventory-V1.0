@@ -14,7 +14,6 @@ from backend.pdf_documents import router as pdf_documents_router
 from backend.queue_flow import router as queue_flow_router
 from backend.runtime_hardening import ensure_performance_indexes, hardening_middleware
 from backend.operational_guards import router as operational_guards_router, ensure_operational_guard_indexes
-from backend.stack_reservation_guard import router as stack_reservation_guard_router
 from backend.operational_corrections import router as operational_corrections_router
 from backend.integrity_control import router as integrity_control_router
 from backend.integrity_lots import router as integrity_lots_router
@@ -44,10 +43,9 @@ app.include_router(opname_lots_conservative_router)
 app.include_router(opname_lots_router)
 # Damaged outbound has a dedicated physical source and R-series queue; good stock delegates to normal guard.
 app.include_router(damaged_outbound_router)
-# Every good outbound reserves its explicit stack before the serialized operational guard runs.
-app.include_router(stack_reservation_guard_router)
 # Guard routes must be registered before the original operational routers so
-# the same public paths are serialized across Railway workers.
+# the same public paths are serialized across Railway workers. The core outbound flow
+# performs the per-stack reservation check while these guards serialize product writes.
 app.include_router(operational_guards_router)
 app.include_router(inventory_flow_router)
 app.include_router(master_products_router)
