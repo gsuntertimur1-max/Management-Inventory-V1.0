@@ -32,6 +32,7 @@ def test_guard_routes_precede_original_mutating_routes():
     assert _first_endpoint("/api/supplier-returns", "POST").__name__ == "guarded_supplier_return_with_reservations"
     assert _first_endpoint("/api/outbound-loads", "POST").__name__ == "guarded_create_outbound"
     assert _first_endpoint("/api/outbound-loads/{load_id}/complete", "POST").__name__ == "hardened_complete_outbound"
+    assert _first_endpoint("/api/outbound-loads/{load_id}/repair-completion", "POST").__name__ == "repair_completed_outbound"
     assert _first_endpoint("/api/outbound-loads/{load_id}/return", "POST").__name__ == "guarded_consignment_return_document"
     assert _first_endpoint("/api/outbound-loads/{load_id}/sales-return", "POST").__name__ == "guarded_sales_return_document"
     assert _first_endpoint("/api/outbound-loads/{load_id}/settle", "POST").__name__ == "guarded_settle_outbound_document"
@@ -40,6 +41,10 @@ def test_guard_routes_precede_original_mutating_routes():
 def test_return_lot_reconciliation_routes_are_registered():
     assert _first_endpoint("/api/return-lot-reconciliations/pending", "GET").__name__ == "list_pending_return_lot_reconciliations"
     assert _first_endpoint("/api/return-lot-reconciliations/{movement_id}", "POST").__name__ == "reconcile_return_lot"
+
+
+def test_integrity_route_includes_postcommit_wrapper():
+    assert _first_endpoint("/api/integrity-control", "GET").__module__ == "backend.integrity_postcommit"
 
 
 def test_correction_routes_are_superadmin_operational_endpoints():
