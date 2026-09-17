@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Car, CheckCircle2, History, Plus, RefreshCcw } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Car, CheckCircle2, History, Plus, RefreshCcw, Trash2 } from 'lucide-react';
 import api, { apiError } from '../lib/api';
 import { toast } from 'sonner';
 
@@ -10,7 +10,9 @@ const BazarOperasional = () => {
   const [trips, setTrips] = useState([]);
   const [history, setHistory] = useState([]);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ eventDate: new Date().toISOString().slice(0, 10), location: '', vehicleNo: '', driver: '', productId: '', qty: '', note: '' });
+  const [form, setForm] = useState({ eventDate: new Date().toISOString().slice(0, 10), location: '', vehicleNo: '', driver: '', note: '' });
+  const [draft, setDraft] = useState({ productId: '', qty: '' });
+  const [items, setItems] = useState([]);
   const [closing, setClosing] = useState(null);
   const [closeRows, setCloseRows] = useState({});
 
@@ -23,15 +25,27 @@ const BazarOperasional = () => {
 
   useEffect(() => { load().catch(() => {}); }, []);
 
-  const availableSelected = useMemo(() => availability.find((x) => x.productId === form.productId), [availability, form.productId]);
+  const addItem = () => {
+    const product = availability.find((x) => x.productId === draft.productId);
+    const qty = Number(draft.qty || 0);
+    if (!product || qty <= 0) return toast.error('Pilih komoditi dan isi jumlah muat');
+    const existingQty = items.filter((x) => x.productId === product.productId).reduce((sum, x) => sum + Number(x.qty || 0), 0);
+    if (existingQty + qty > Number(product.availableQty || 0)) return toast.error(`Stok tersedia ${product.name} hanya ${product.availableQty} ${product.unit}`);
+    setItems((prev) => {
+      const existing = prev.find((x) => x.productId === product.productId);
+      if (existing) return prev.map((x) => x.productId === product.productId ? { ...x, qty: Number(x.qty) + qty } : x);
+      return [...prev, { productId: product.productId, name: product.name, unit: product.unit, qty }];
+    });
+    setDraft({ productId: '', qty: '' });
+  };
 
   const createTrip = async () => {
-    if (!form.location.trim() || !form.vehicleNo.trim() || !form.productId || Number(form.qty) <= 0) return toast.error('Lokasi bazar, kendaraan, produk dan jumlah muat wajib diisi');
+    if (!form.location.trim() || !form.vehicleNo.trim() || items.length === 0) return toast.error('Lokasi bazar, kendaraan dan minimal satu komoditi wajib diisi');
     setSaving(true);
     try {
-      await api.post('/bazar/trips', { eventDate: form.eventDate, location: form.location, vehicleNo: form.vehicleNo, driver: form.driver, note: form.note, items: [{ productId: form.productId, qty: Number(form.qty) }] });
-      toast.success('Perjalanan Bazar dibuat dan stok dimasukkan ke reservasi mobil');
-      setForm((p) => ({ ...p, productId: '', qty: '', note: '' }));
+      await api.post('/bazar/trips', { ...form, items: items.map(({ productId, qty }) => ({ productId, qty: Number(qty) })) });
+      toast.success('Perjalanan Bazar dibuat dan seluruh muatan direservasi');
+      setItems([]); setForm((p) => ({ ...p, note: '' }));
       await load();
     } catch (e) { toast.error(apiError(e)); } finally { setSaving(false); }
   };
@@ -44,21 +58,21 @@ const BazarOperasional = () => {
 
   const closeTrip = async () => {
     try {
-      const items = (closing.items || []).map((item) => {
+      const resultItems = (closing.items || []).map((item) => {
         const sold = Number(closeRows[item.productId]?.soldQty || 0);
         const damaged = Number(closeRows[item.productId]?.returnedDamagedQty || 0);
         const returnedGood = Number(item.loadedQty || 0) - sold - damaged;
         if (returnedGood < 0) throw new Error(`${item.name}: terjual + retur rusak melebihi jumlah muat`);
         return { productId: item.productId, soldQty: sold, returnedDamagedQty: damaged, returnedGoodQty: returnedGood };
       });
-      await api.post(`/bazar/trips/${closing.id}/close`, { items, note: 'Rekonsiliasi penutupan bazar' });
-      toast.success('Perjalanan Bazar selesai dan stok telah direkonsiliasi');
+      await api.post(`/bazar/trips/${closing.id}/close`, { items: resultItems, note: 'Rekonsiliasi penutupan bazar' });
+      toast.success('Perjalanan Bazar selesai dan stok direkonsiliasi');
       setClosing(null); await load();
     } catch (e) { toast.error(e?.response ? apiError(e) : e.message); }
   };
 
   return <div className="space-y-6">
-    <div><div className="label-mono mb-2">Operasional Bazar</div><h1 className="font-display text-3xl sm:text-4xl font-bold">Perjalanan & Penjualan Bazar</h1><p className="text-[#8b93a1] mt-2 text-sm">Muat barang ke mobil → jual di lokasi → rekonsiliasi terjual dan retur. Barang di mobil hanya menjadi reservasi, bukan stok baru.</p></div>
+    <div><div className="label-mono mb-2">Operasional Bazar</div><h1 className="font-display text-3xl sm:text-4xl font-bold">Perjalanan & Penjualan Bazar</h1><p className="text-[#8b93a1] mt-2 text-sm">Satu mobil dapat membawa beberapa komoditi. Muatan menjadi reservasi Bazar sampai perjalanan ditutup dan direkonsiliasi.</p></div>
 
     <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
       <div className="card-surface p-5 xl:col-span-1 space-y-3">
@@ -67,11 +81,14 @@ const BazarOperasional = () => {
         <input className={inputCls} placeholder="Lokasi bazar" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
         <input className={inputCls} placeholder="No. kendaraan" value={form.vehicleNo} onChange={(e) => setForm({ ...form, vehicleNo: e.target.value })} />
         <input className={inputCls} placeholder="Pengemudi (opsional)" value={form.driver} onChange={(e) => setForm({ ...form, driver: e.target.value })} />
-        <select className={inputCls} value={form.productId} onChange={(e) => setForm({ ...form, productId: e.target.value })}><option value="">Pilih komoditi</option>{availability.map((x) => <option key={x.productId} value={x.productId}>{x.name} · tersedia {x.availableQty} {x.unit}</option>)}</select>
-        <input type="number" min="0" className={inputCls} placeholder="Jumlah muat" value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })} />
-        {availableSelected && <div className="text-xs text-[#94a3b8]">Fisik {availableSelected.physicalQty} · Reservasi {availableSelected.reservedQty} · Tersedia {availableSelected.availableQty} {availableSelected.unit}</div>}
+        <div className="rounded-xl border border-[#243044] p-3 space-y-2">
+          <div className="text-xs font-semibold">Tambah Komoditi Muatan</div>
+          <select className={inputCls} value={draft.productId} onChange={(e) => setDraft({ ...draft, productId: e.target.value })}><option value="">Pilih komoditi</option>{availability.map((x) => <option key={x.productId} value={x.productId}>{x.name} · tersedia {x.availableQty} {x.unit}</option>)}</select>
+          <div className="flex gap-2"><input type="number" min="0" className={inputCls} placeholder="Jumlah muat" value={draft.qty} onChange={(e) => setDraft({ ...draft, qty: e.target.value })} /><button type="button" onClick={addItem} className="px-4 rounded-lg border border-[#3b82f6] text-[#93c5fd]">Tambah</button></div>
+          <div className="space-y-1">{items.map((item) => <div key={item.productId} className="flex items-center justify-between gap-2 text-xs bg-[#111827] rounded-lg px-3 py-2"><span>{item.name}</span><span className="flex items-center gap-2"><b>{item.qty} {item.unit}</b><button onClick={() => setItems((p) => p.filter((x) => x.productId !== item.productId))} className="text-[#f87171]"><Trash2 size={13}/></button></span></div>)}</div>
+        </div>
         <textarea className={inputCls} placeholder="Catatan" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} />
-        <button disabled={saving} onClick={createTrip} className="btn-primary w-full py-2.5 rounded-lg font-semibold">{saving ? 'Menyimpan…' : 'Muat ke Mobil Bazar'}</button>
+        <button disabled={saving} onClick={createTrip} className="btn-primary w-full py-2.5 rounded-lg font-semibold">{saving ? 'Menyimpan…' : `Muat ${items.length || ''} Komoditi ke Mobil`}</button>
       </div>
 
       <div className="card-surface p-5 xl:col-span-2">
