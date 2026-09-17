@@ -24,6 +24,7 @@ from backend.server import (
 )
 from backend.stack_allocations import valid_stack_codes, allocate_stock_to_stack, decrease_stack_allocation, reconcile_product_allocations
 from backend.fefo_selection import get_fefo_pick_guide, selection_requires_reason
+from backend.stack_reservations import available_stack_qty
 
 router = APIRouter(prefix="/api")
 
@@ -351,17 +352,16 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         actual_location = stack_code or product.get("location", "")
         load_items.append({"productId": item.productId, "documentNo": item_ref, "sku": product.get("sku", ""), "name": product.get("name", ""), "channel": channel, "qty": qty, "unit": product.get("unit", ""), "weight": weight, "measureUnit": product.get("measureUnit", "kg") or "kg", "berat": weight * qty, "secondary": product.get("secondary", ""), "secondaryQty": float(product.get("secondaryQty", 0) or 0), "location": product.get("location", ""), "stackCode": stack_code, "crewGroup": _crew_group(actual_location), "loadingFee": _loading_fee(product, qty, charge_mode_override=body.loadingFeeChargeMode), "fefoPolicy": guide.get("policy", "") if guide else "", "fefoMode": guide.get("mode", "") if guide else "", "fefoRecommendedStacks": guide.get("recommendedStacks", []) if guide else [], "fefoSelectionStatus": selection_status, "fefoExceptionReason": exception_reason if selection_status == "EXCEPTION" else ""})
 
-    if multi_source and body.kondisi == "BAIK":
+    if body.kondisi == "BAIK":
         quantities_by_stack = defaultdict(float)
         for item in load_items:
             quantities_by_stack[(item["productId"], item["stackCode"])] += item["qty"]
-        active_loads = await db.outbound_loads.find({"status": {"$in": ["Menunggu", "Sedang Dimuat"]}, "kondisi": "BAIK"}, {"_id": 0, "items": 1}).to_list(5000)
         for (product_id, stack_code), qty in quantities_by_stack.items():
             allocation = await db.stack_allocations.find_one({"productId": product_id, "stackCode": stack_code}, {"_id": 0, "primaryQty": 1})
-            reserved = sum(float(line.get("qty", 0) or 0) for load in active_loads for line in load.get("items", []) if line.get("productId") == product_id and line.get("stackCode") == stack_code)
-            available = float((allocation or {}).get("primaryQty", 0) or 0) - reserved
+            physical = float((allocation or {}).get("primaryQty", 0) or 0)
+            reserved, available = await available_stack_qty(product_id, stack_code, physical)
             if qty > available + 1e-9:
-                raise HTTPException(status_code=400, detail=f"Stok tumpukan {stack_code} untuk {products[product_id].get('name', '')} tidak cukup (tersedia {max(available, 0):g})")
+                raise HTTPException(status_code=400, detail=f"Stok tumpukan {stack_code} untuk {products[product_id].get('name', '')} tidak cukup. Fisik {physical:g}, direservasi antrean lain {reserved:g}, tersedia {available:g}")
 
     unit_loading, queue_prefix = loading_units_from_items(load_items)
 
@@ -593,8 +593,10 @@ async def edit_outbound_load(load_id: str, body: OutboundEditInput, user: dict =
             raise HTTPException(status_code=400, detail=f"Pilih tumpukan asal untuk {product.get('name', '')} agar kontrol FEFO tetap tercatat")
         if stack_code:
             allocation = await db.stack_allocations.find_one({"productId": submitted.productId, "stackCode": stack_code}, {"_id": 0, "primaryQty": 1})
-            if not allocation or float(allocation.get("primaryQty", 0) or 0) + 1e-9 < qty:
-                raise HTTPException(status_code=400, detail=f"Stok {product.get('name', '')} pada {stack_code} tidak mencukupi")
+            physical = float((allocation or {}).get("primaryQty", 0) or 0)
+            reserved, available = await available_stack_qty(submitted.productId, stack_code, physical, exclude_load_id=load_id)
+            if not allocation or qty > available + 1e-9:
+                raise HTTPException(status_code=400, detail=f"Stok {product.get('name', '')} pada {stack_code} tidak mencukupi. Fisik {physical:g}, reservasi antrean lain {reserved:g}, tersedia {available:g}")
         exception_reason = submitted.fefoExceptionReason.strip() or str(previous.get("fefoExceptionReason") or "").strip()
         guide = {}
         selection_status = previous.get("fefoSelectionStatus", "NOT_APPLICABLE")
@@ -608,6 +610,17 @@ async def edit_outbound_load(load_id: str, body: OutboundEditInput, user: dict =
             selection_status = "EXCEPTION" if is_exception else ("PRIORITY" if stack_code in guide.get("recommendedStacks", []) else "NO_GUIDE")
         channel = normalize_channel(submitted.channel, normalize_channel(product.get("channel")))
         revised_items.append({**previous, "documentNo": document_no, "qty": qty, "channel": channel, "berat": float(product.get("weight", 0) or 0) * qty, "loadingFee": _loading_fee(product, qty, charge_mode_override=(previous.get("loadingFee") or {}).get("mode", "")), "stackCode": stack_code, "crewGroup": _crew_group(stack_code or product.get("location", "")), "fefoPolicy": guide.get("policy", previous.get("fefoPolicy", "")) if guide else previous.get("fefoPolicy", ""), "fefoMode": guide.get("mode", previous.get("fefoMode", "")) if guide else previous.get("fefoMode", ""), "fefoRecommendedStacks": guide.get("recommendedStacks", previous.get("fefoRecommendedStacks", [])) if guide else previous.get("fefoRecommendedStacks", []), "fefoSelectionStatus": selection_status, "fefoExceptionReason": exception_reason if selection_status == "EXCEPTION" else ""})
+
+    if load.get("kondisi", "BAIK") == "BAIK":
+        edit_by_stack = defaultdict(float)
+        for item in revised_items:
+            edit_by_stack[(item["productId"], item["stackCode"])] += float(item.get("qty", 0) or 0)
+        for (product_id, stack_code), qty in edit_by_stack.items():
+            allocation = await db.stack_allocations.find_one({"productId": product_id, "stackCode": stack_code}, {"_id": 0, "primaryQty": 1})
+            physical = float((allocation or {}).get("primaryQty", 0) or 0)
+            reserved, available = await available_stack_qty(product_id, stack_code, physical, exclude_load_id=load_id)
+            if qty > available + 1e-9:
+                raise HTTPException(status_code=400, detail=f"Total edit pada {stack_code} melebihi stok tersedia setelah reservasi antrean lain ({available:g})")
 
     now = now_iso()
     old_snapshot = {"documents": load.get("documents", []), "polisi": load.get("polisi", ""), "pengambil": load.get("pengambil", ""), "items": original_items}

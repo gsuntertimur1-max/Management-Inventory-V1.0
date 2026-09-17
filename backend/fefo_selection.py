@@ -6,11 +6,13 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from backend.server import db, get_current_user
 from backend.stack_lots import EPS, _n, expiry_status, lot_sort_key
+from backend.stack_reservations import reserved_stack_qty
 
 router = APIRouter(prefix="/api")
 
 
-def build_fefo_pick_guide(product_id: str, allocations: list[dict], lots: list[dict]) -> dict:
+def build_fefo_pick_guide(product_id: str, allocations: list[dict], lots: list[dict], reserved_by_stack: dict[str, float] | None = None) -> dict:
+    reserved_by_stack = reserved_by_stack or {}
     stack_qty = defaultdict(float)
     stack_meta = {}
     for allocation in allocations:
@@ -47,6 +49,8 @@ def build_fefo_pick_guide(product_id: str, allocations: list[dict], lots: list[d
             **stack_meta.get(code, {}),
             "stackCode": code,
             "stackQty": physical,
+            "reservedQty": max(_n(reserved_by_stack.get(code)), 0.0),
+            "availableQty": max(physical - max(_n(reserved_by_stack.get(code)), 0.0), 0.0),
             "trackedQty": tracked,
             "untrackedQty": max(physical - tracked, 0.0),
             "overtrackedQty": max(tracked - physical, 0.0),
@@ -57,8 +61,9 @@ def build_fefo_pick_guide(product_id: str, allocations: list[dict], lots: list[d
         rows.append(row)
 
     integrity_error = any(row["overtrackedQty"] > EPS for row in rows)
-    legacy_rows = [row for row in rows if row["untrackedQty"] > EPS]
-    tracked_rows = [row for row in rows if row.get("nextLot")]
+    selectable_rows = [row for row in rows if row["availableQty"] > EPS]
+    legacy_rows = [row for row in selectable_rows if row["untrackedQty"] > EPS]
+    tracked_rows = [row for row in selectable_rows if row.get("nextLot")]
 
     if integrity_error:
         recommended = []
@@ -74,9 +79,9 @@ def build_fefo_pick_guide(product_id: str, allocations: list[dict], lots: list[d
         mode = "FEFO_TRACKED"
         reason = "Semua stok telah terlacak lot; pilih tumpukan dengan lot kedaluwarsa terdekat."
     else:
-        recommended = [row["stackCode"] for row in rows]
-        mode = "LEGACY_ONLY" if rows else "NO_STOCK"
-        reason = "Belum ada lot terlacak; pilih tumpukan stok fisik yang tersedia."
+        recommended = [row["stackCode"] for row in selectable_rows]
+        mode = "LEGACY_ONLY" if selectable_rows else ("FULLY_RESERVED" if rows else "NO_STOCK")
+        reason = "Belum ada lot terlacak; pilih tumpukan stok fisik yang tersedia." if selectable_rows else "Seluruh stok tumpukan sedang direservasi antrean pemuatan aktif."
 
     priority = {code: index for index, code in enumerate(recommended)}
     rows.sort(key=lambda row: (
@@ -114,7 +119,12 @@ async def get_fefo_pick_guide(product_id: str) -> dict:
         {"productId": product_id, "remainingQty": {"$gt": EPS}, "status": {"$ne": "DIBATALKAN"}},
         {"_id": 0},
     ).to_list(10000)
-    return build_fefo_pick_guide(product_id, allocations, lots)
+    reserved_by_stack = {}
+    for allocation in allocations:
+        code = str(allocation.get("stackCode") or "").strip().upper()
+        if code and code not in reserved_by_stack:
+            reserved_by_stack[code] = await reserved_stack_qty(product_id, code)
+    return build_fefo_pick_guide(product_id, allocations, lots, reserved_by_stack)
 
 
 @router.get("/fefo-pick-guide/{product_id}")
