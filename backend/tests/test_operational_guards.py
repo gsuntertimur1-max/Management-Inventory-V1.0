@@ -37,6 +37,11 @@ def test_guard_routes_precede_original_mutating_routes():
     assert _first_endpoint("/api/outbound-loads/{load_id}/settle", "POST").__name__ == "guarded_settle_outbound_document"
 
 
+def test_return_lot_reconciliation_routes_are_registered():
+    assert _first_endpoint("/api/return-lot-reconciliations/pending", "GET").__name__ == "list_pending_return_lot_reconciliations"
+    assert _first_endpoint("/api/return-lot-reconciliations/{movement_id}", "POST").__name__ == "reconcile_return_lot"
+
+
 def test_correction_routes_are_superadmin_operational_endpoints():
     assert _first_endpoint("/api/operational-corrections/receipts", "GET").__name__ == "list_receipt_corrections"
     assert _first_endpoint("/api/operational-corrections/receipts/{operation_id}/void", "POST").__name__ == "void_receipt_operation"
