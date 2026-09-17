@@ -3,6 +3,7 @@ import { AlertTriangle, CalendarClock, CheckCircle2, RefreshCcw, Search } from '
 import { toast } from 'sonner';
 import api, { apiError } from '../lib/api';
 import { formatNum } from '../mock';
+import ReturnLotReconciliationPanel from '../components/ReturnLotReconciliationPanel';
 
 const statusClass = (status) => ({
   EXPIRED: 'bg-[#7f1d1d]/35 text-[#fca5a5] border-[#7f1d1d]',
@@ -76,6 +77,8 @@ const FefoLot = () => {
         <div className="card-surface p-4 border border-[#7f1d1d]"><div className="label-mono text-[9px] text-[#fca5a5]">Retur Pending Rekonsiliasi</div><div className="font-mono text-2xl font-bold text-[#f87171] mt-1">{formatNum(pendingReturnQty)}</div></div>
         <div className="card-surface p-4 border border-[#7f1d1d]"><div className="label-mono text-[9px] text-[#fca5a5]">Lot Expired / ≤30 Hari</div><div className="font-mono text-2xl font-bold text-[#ef4444] mt-1">{urgentLots}</div></div>
       </div>
+
+      <ReturnLotReconciliationPanel onChanged={load} />
 
       <div className="card-surface p-5">
         <div className="flex flex-wrap gap-3 mb-4">
