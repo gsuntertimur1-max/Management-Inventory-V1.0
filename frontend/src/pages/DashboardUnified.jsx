@@ -27,7 +27,7 @@ const SummaryCard = ({ icon: Icon, label, value, note, accent }) => <div classNa
 </div>;
 
 const DashboardUnified = () => {
-  const { user, products, consignmentStock } = useData();
+  const { user, products, consignmentStock, monitoringStock } = useData();
   const scopedDestination = roleDestination(user?.role);
 
   const totals = useMemo(() => {
@@ -45,6 +45,7 @@ const DashboardUnified = () => {
   if (scopedDestination) {
     const isBazar = scopedDestination === 'Gudang Bazar';
     const own = isBazar ? totals.bazar : totals.ecommerce;
+    const rows = (monitoringStock || []).filter((item) => item.location === scopedDestination);
     return <div className="dashboard-unified space-y-6">
       <section>
         <div className="label-mono mb-2">Area Kerja</div>
@@ -53,7 +54,10 @@ const DashboardUnified = () => {
           <SummaryCard icon={Layers3} label="Ruang Lingkup Akses" value={isBazar ? 'BAZAR' : 'E-COM'} note="Akun ini tidak memiliki hak mengubah stok GBB/MP1 atau lokasi konsinyasi lain." accent="#22c55e" />
         </div>
       </section>
-      <Dashboard />
+      <section className="card-surface p-6">
+        <div className="flex items-center justify-between gap-3 mb-4"><div><div className="label-mono text-[10px]">Monitoring Lokasi</div><h2 className="font-display text-xl font-bold mt-1">{scopedDestination}</h2></div><span className="text-xs px-2.5 py-1 rounded-full bg-[#2563eb]/15 text-[#60a5fa]">{rows.length} baris</span></div>
+        {rows.length === 0 ? <p className="text-sm text-[#8b93a1]">Belum ada stok aktif pada lokasi ini.</p> : <div className="overflow-x-auto"><table className="w-full text-sm tbl"><thead><tr className="text-left border-b border-[#1a222e]"><th className="py-2.5 pr-3">SKU</th><th className="py-2.5 pr-3">Komoditi</th><th className="py-2.5 pr-3">Saluran</th><th className="py-2.5">Saldo</th></tr></thead><tbody>{rows.map((item) => <tr key={`${item.productId}-${item.channel}`} className="border-b border-[#131a24]"><td className="py-3 pr-3 font-mono text-xs text-[#93c5fd]">{item.sku || '—'}</td><td className="py-3 pr-3 font-medium">{item.name}</td><td className="py-3 pr-3">{item.channel}</td><td className="py-3 font-mono">{formatNum(item.qty)} {item.unit}</td></tr>)}</tbody></table></div>}
+      </section>
     </div>;
   }
 
