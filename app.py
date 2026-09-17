@@ -12,6 +12,7 @@ from backend.outbound_reservation_view import router as outbound_reservation_vie
 from backend.outbound_start_guard import router as outbound_start_guard_router
 from backend.reservation_mutation_guards import router as reservation_mutation_guards_router
 from backend.document_settlement_guards import router as document_settlement_guards_router
+from backend.return_lot_reconciliation import router as return_lot_reconciliation_router
 from backend.consignment import router as consignment_router
 from backend.stack_allocations import router as stack_allocations_router
 from backend.pdf_documents import router as pdf_documents_router
@@ -56,6 +57,8 @@ app.include_router(reservation_mutation_guards_router)
 # Return/CR/SO settlement mutations are serialized per source load and document number.
 # This must precede generic operational guards and outbound routes exposing the same paths.
 app.include_router(document_settlement_guards_router)
+# Return stock with later-verified batch/expiry can be reconciled into FEFO lots without touching physical stock.
+app.include_router(return_lot_reconciliation_router)
 # Guard routes must be registered before the original operational routers so
 # the same public paths are serialized across Railway workers. The core outbound flow
 # performs the per-stack reservation check while these guards serialize product writes.
