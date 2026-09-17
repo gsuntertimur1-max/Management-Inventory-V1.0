@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 
 from backend.server import db, new_id, now_iso
 from backend.operational_guards import operation_guard, product_lock_keys
@@ -17,13 +19,29 @@ router = APIRouter(prefix="/api")
 logger = logging.getLogger(__name__)
 
 
+class LotReconcileItem(BaseModel):
+    productId: str = Field(min_length=1, max_length=100)
+    stackCode: str = Field(min_length=1, max_length=50)
+    lotId: str = Field(min_length=1, max_length=100)
+    qty: float = Field(gt=0)
+
+
+class LotReconcileInput(BaseModel):
+    items: list[LotReconcileItem] = Field(min_length=1, max_length=200)
+    note: str = Field(default="", max_length=1000)
+
+
 async def _movement_total(opname_id: str, product_id: str, stack_code: str, positive: bool) -> float:
     rows = await db.stack_lot_movements.find(
         {
             "opnameId": opname_id,
             "productId": product_id,
             "stackCode": stack_code,
-            "movementType": {"$in": ["OPNAME_LOT_ADJUSTMENT", "OPNAME_UNTRACKED_ADJUSTMENT"]},
+            "movementType": {"$in": [
+                "OPNAME_LOT_ADJUSTMENT",
+                "OPNAME_UNTRACKED_ADJUSTMENT",
+                "OPNAME_LOT_MANUAL_RECONCILIATION",
+            ]},
         },
         {"_id": 0, "qty": 1},
     ).to_list(10000)
@@ -179,3 +197,106 @@ async def repair_stock_opname_lots(opname_id: str, user: dict = Depends(require_
     if not opname:
         raise HTTPException(status_code=404, detail="Stock opname tidak ditemukan")
     return await sync_opname_lots(opname)
+
+
+@router.post("/stock-opnames/{opname_id}/reconcile-lots")
+async def reconcile_stock_opname_lots(opname_id: str, body: LotReconcileInput, user: dict = Depends(require_opname_approval)):
+    opname = await db.stock_opnames.find_one({"id": opname_id}, {"_id": 0})
+    if not opname:
+        raise HTTPException(status_code=404, detail="Stock opname tidak ditemukan")
+    if opname.get("status") != "APPROVED":
+        raise HTTPException(status_code=400, detail="Rekonsiliasi lot hanya dapat dilakukan setelah stock opname disetujui")
+    if opname.get("lotSyncStatus") != "RECONCILIATION_REQUIRED":
+        raise HTTPException(status_code=400, detail="Stock opname ini tidak sedang membutuhkan rekonsiliasi lot")
+
+    required = {
+        (str(row.get("productId") or ""), str(row.get("stackCode") or "").strip().upper()): _n(row.get("qty"))
+        for row in opname.get("lotReconciliation", [])
+    }
+    if not required:
+        return await sync_opname_lots(opname)
+
+    requested_by_stack: dict[tuple[str, str], float] = defaultdict(float)
+    requested_by_lot: dict[str, float] = defaultdict(float)
+    normalized_items = []
+    for item in body.items:
+        product_id = item.productId.strip()
+        stack_code = item.stackCode.strip().upper()
+        lot_id = item.lotId.strip()
+        key = (product_id, stack_code)
+        if key not in required:
+            raise HTTPException(status_code=400, detail=f"{stack_code} tidak tercantum sebagai rekonsiliasi lot yang dibutuhkan")
+        qty = float(item.qty)
+        requested_by_stack[key] += qty
+        requested_by_lot[lot_id] += qty
+        normalized_items.append((product_id, stack_code, lot_id, qty))
+
+    for key, qty in requested_by_stack.items():
+        if qty > required[key] + EPS:
+            raise HTTPException(status_code=400, detail=f"Jumlah rekonsiliasi {key[1]} melebihi selisih yang belum teralokasi ({required[key]:g})")
+
+    product_ids = sorted({product_id for product_id, _, _, _ in normalized_items})
+    reconcile_operation_id = new_id()
+    lot_snapshots: dict[str, dict] = {}
+    movement_ids: list[str] = []
+
+    async with operation_guard(product_lock_keys(product_ids)):
+        try:
+            for lot_id, total in requested_by_lot.items():
+                lot = await db.stack_lots.find_one({"id": lot_id}, {"_id": 0})
+                if not lot:
+                    raise HTTPException(status_code=404, detail="Lot yang dipilih tidak ditemukan")
+                matching = [row for row in normalized_items if row[2] == lot_id]
+                if any(row[0] != str(lot.get("productId") or "") or row[1] != str(lot.get("stackCode") or "").strip().upper() for row in matching):
+                    raise HTTPException(status_code=400, detail=f"Lot {lot.get('lotCode', lot_id)} tidak sesuai produk/tumpukan rekonsiliasi")
+                available = _n(lot.get("remainingQty"))
+                if total > available + EPS:
+                    raise HTTPException(status_code=400, detail=f"Kuantum lot {lot.get('lotCode', lot_id)} tidak mencukupi. Tersedia {available:g}")
+                lot_snapshots[lot_id] = lot
+
+            for product_id, stack_code, lot_id, qty in normalized_items:
+                lot = lot_snapshots[lot_id]
+                result = await db.stack_lots.update_one(
+                    {"id": lot_id, "remainingQty": {"$gte": qty - EPS}},
+                    {"$inc": {"remainingQty": -qty}, "$set": {"updatedAt": now_iso()}},
+                )
+                if result.matched_count == 0:
+                    raise HTTPException(status_code=409, detail=f"Saldo lot {lot.get('lotCode', lot_id)} berubah. Muat ulang rekonsiliasi.")
+                lot["remainingQty"] = max(_n(lot.get("remainingQty")) - qty, 0.0)
+                if lot["remainingQty"] <= EPS:
+                    await db.stack_lots.update_one(
+                        {"id": lot_id},
+                        {"$set": {"remainingQty": 0.0, "status": "HABIS", "updatedAt": now_iso()}},
+                    )
+                movement_id = new_id()
+                movement_ids.append(movement_id)
+                await db.stack_lot_movements.insert_one({
+                    "id": movement_id, "time": now_iso(), "loadId": "", "opnameId": opname_id,
+                    "reconcileOperationId": reconcile_operation_id,
+                    "lotId": lot_id, "lotCode": lot.get("lotCode", ""),
+                    "movementType": "OPNAME_LOT_MANUAL_RECONCILIATION",
+                    "productId": product_id, "sku": lot.get("sku", ""), "product": lot.get("product", ""),
+                    "stackCode": stack_code, "sourceDocument": opname.get("no", ""),
+                    "qty": -qty, "unit": lot.get("unit", ""), "exp": lot.get("exp", ""),
+                    "note": body.note.strip() or "Rekonsiliasi manual selisih lot stock opname",
+                    "operator": user.get("name", ""),
+                })
+        except Exception:
+            if movement_ids:
+                await db.stack_lot_movements.delete_many({"id": {"$in": movement_ids}})
+            for lot_id, snapshot in lot_snapshots.items():
+                await db.stack_lots.replace_one({"id": lot_id}, dict(snapshot), upsert=True)
+            raise
+
+    refreshed = await db.stock_opnames.find_one({"id": opname_id}, {"_id": 0}) or opname
+    synced = await sync_opname_lots(refreshed)
+    reconciled_at = now_iso()
+    await db.stock_opnames.update_one(
+        {"id": opname_id},
+        {"$set": {
+            "lotReconciledAt": reconciled_at,
+            "lotReconciledBy": user.get("name", ""),
+            "lastLotReconcileOperationId": reconcile_operation_id,
+        }},
+    )
+    return await db.stock_opnames.find_one({"id": opname_id}, {"_id": 0}) or synced
