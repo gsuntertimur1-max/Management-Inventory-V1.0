@@ -43,8 +43,8 @@ def test_return_lot_reconciliation_routes_are_registered():
     assert _first_endpoint("/api/return-lot-reconciliations/{movement_id}", "POST").__name__ == "reconcile_return_lot"
 
 
-def test_integrity_route_includes_postcommit_wrapper():
-    assert _first_endpoint("/api/integrity-control", "GET").__module__ == "backend.integrity_postcommit"
+def test_integrity_route_includes_all_wrappers():
+    assert _first_endpoint("/api/integrity-control", "GET").__module__ == "backend.integrity_documents"
 
 
 def test_correction_routes_are_superadmin_operational_endpoints():
