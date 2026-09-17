@@ -98,6 +98,104 @@ async def _document_integrity() -> tuple[list[dict], list[dict]]:
     return missing, orphan
 
 
+async def _settlement_integrity() -> tuple[list[dict], list[dict]]:
+    loads = await db.outbound_loads.find(
+        {},
+        {"_id": 0, "id": 1, "ref": 1, "documents": 1, "document_type": 1, "items": 1, "document_links": 1, "bon_no": 1, "antrian": 1},
+    ).to_list(30000)
+
+    document_owners: dict[str, set[tuple[str, str]]] = defaultdict(set)
+    settlement_issues: list[dict] = []
+
+    for load in loads:
+        load_id = str(load.get("id") or "")
+        for number in load.get("documents") or [load.get("ref", "")]:
+            doc_no = str(number or "").strip().upper()
+            if doc_no:
+                document_owners[doc_no].add((load_id, "SOURCE"))
+        for link in load.get("document_links") or []:
+            doc_no = str(link.get("no") or "").strip().upper()
+            if doc_no:
+                document_owners[doc_no].add((load_id, "LINK"))
+
+        if str(load.get("document_type") or "") not in {"CT", "MEMO", "ND"}:
+            continue
+
+        original: dict[tuple[str, str], float] = defaultdict(float)
+        for item in load.get("items") or []:
+            source = str(item.get("documentNo") or load.get("ref") or "").strip()
+            product_id = str(item.get("productId") or "")
+            if source and product_id:
+                original[(source, product_id)] += _n(item.get("qty"))
+
+        settled: dict[tuple[str, str], float] = defaultdict(float)
+        for link in load.get("document_links") or []:
+            link_type = str(link.get("type") or "")
+            if link_type not in {"CR", "RETUR", "SO"}:
+                continue
+            source = str(link.get("sourceDocumentNo") or load.get("ref") or "").strip()
+            for item in link.get("items") or []:
+                product_id = str(item.get("productId") or "")
+                if not source or not product_id:
+                    settlement_issues.append({
+                        "severity": "ERROR",
+                        "code": "SETTLEMENT_LINK_INCOMPLETE",
+                        "loadId": load_id,
+                        "bonNo": load.get("bon_no", ""),
+                        "queue": load.get("antrian", ""),
+                        "documentNo": link.get("no", ""),
+                        "sourceDocumentNo": source,
+                        "issue": "Dokumen turunan tidak memiliki dokumen sumber atau productId yang lengkap",
+                    })
+                    continue
+                qty = _n(item.get("qty")) if link_type == "SO" else _n(item.get("goodQty")) + _n(item.get("damagedQty"))
+                key = (source, product_id)
+                settled[key] += qty
+                if key not in original:
+                    settlement_issues.append({
+                        "severity": "ERROR",
+                        "code": "SETTLEMENT_ORPHAN_PRODUCT",
+                        "loadId": load_id,
+                        "bonNo": load.get("bon_no", ""),
+                        "queue": load.get("antrian", ""),
+                        "documentNo": link.get("no", ""),
+                        "sourceDocumentNo": source,
+                        "productId": product_id,
+                        "qty": qty,
+                        "issue": "Dokumen turunan menunjuk produk/dokumen sumber yang tidak terdapat pada pengeluaran asal",
+                    })
+
+        for key, qty in settled.items():
+            source, product_id = key
+            source_qty = original.get(key, 0.0)
+            if source_qty > 0 and qty - source_qty > EPS:
+                settlement_issues.append({
+                    "severity": "ERROR",
+                    "code": "SETTLEMENT_OVER_QTY",
+                    "loadId": load_id,
+                    "bonNo": load.get("bon_no", ""),
+                    "queue": load.get("antrian", ""),
+                    "sourceDocumentNo": source,
+                    "productId": product_id,
+                    "sourceQty": source_qty,
+                    "settledQty": qty,
+                    "overBy": qty - source_qty,
+                    "issue": "Total SO/CR/Retur melebihi kuantum dokumen sumber",
+                })
+
+    duplicates = []
+    for document_no, owners in document_owners.items():
+        if len(owners) <= 1:
+            continue
+        duplicates.append({
+            "documentNo": document_no,
+            "occurrences": [{"loadId": load_id, "role": role} for load_id, role in sorted(owners)],
+            "issue": "Nomor dokumen digunakan lebih dari satu kali pada pengeluaran/dokumen turunan",
+        })
+
+    return duplicates, settlement_issues
+
+
 @router.get("/integrity-control")
 async def integrity_control(user: dict = Depends(require_master_write)):
     data = await base_integrity_control(user)
@@ -118,6 +216,7 @@ async def integrity_control(user: dict = Depends(require_master_write)):
     overtracked = [row for row in rows if _n(row.get("lotTracked")) - _n(row.get("stackGood")) > EPS]
     legacy = [row for row in rows if _n(row.get("stackGood")) - _n(row.get("lotTracked")) > EPS]
     missing_sj, orphan_sj = await _document_integrity()
+    duplicate_documents, settlement_issues = await _settlement_integrity()
 
     issues = list(data.get("systemIssues") or [])
     if overtracked:
@@ -144,15 +243,32 @@ async def integrity_control(user: dict = Depends(require_master_write)):
             "code": "ORPHAN_SURAT_JALAN",
             "message": f"Ada {len(orphan_sj)} Surat Jalan tanpa data pemuatan sumber.",
         })
+    if duplicate_documents:
+        issues.append({
+            "severity": "ERROR",
+            "code": "DUPLICATE_OUTBOUND_DOCUMENT",
+            "message": f"Ada {len(duplicate_documents)} nomor dokumen yang digunakan lebih dari satu kali.",
+        })
+    if settlement_issues:
+        issues.append({
+            "severity": "ERROR",
+            "code": "SETTLEMENT_INTEGRITY",
+            "message": f"Ada {len(settlement_issues)} masalah kuantum/relasi pada SO, CR, atau Retur lanjutan.",
+        })
+
     data["systemIssues"] = issues
     data["completedOutboundMissingSuratJalan"] = missing_sj[:500]
     data["orphanSuratJalan"] = orphan_sj[:500]
+    data["duplicateOutboundDocuments"] = duplicate_documents[:500]
+    data["documentSettlementIssues"] = settlement_issues[:500]
 
     summary = dict(data.get("summary") or {})
     summary["lotOvertrackedProducts"] = len(overtracked)
     summary["lotLegacyProducts"] = len(legacy)
     summary["completedOutboundMissingSuratJalan"] = len(missing_sj)
     summary["orphanSuratJalan"] = len(orphan_sj)
+    summary["duplicateOutboundDocuments"] = len(duplicate_documents)
+    summary["documentSettlementIssues"] = len(settlement_issues)
     summary["ok"] = sum(1 for row in rows if row.get("severity") == "OK")
     summary["warnings"] = sum(1 for row in rows if row.get("severity") == "WARNING")
     summary["errors"] = sum(1 for row in rows if row.get("severity") == "ERROR")
