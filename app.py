@@ -13,6 +13,7 @@ from backend.outbound_start_guard import router as outbound_start_guard_router
 from backend.reservation_mutation_guards import router as reservation_mutation_guards_router
 from backend.document_settlement_guards import router as document_settlement_guards_router
 from backend.return_lot_reconciliation import router as return_lot_reconciliation_router
+from backend.outbound_completion_hardening import router as outbound_completion_hardening_router
 from backend.consignment import router as consignment_router
 from backend.stack_allocations import router as stack_allocations_router
 from backend.pdf_documents import router as pdf_documents_router
@@ -38,7 +39,10 @@ app.include_router(lot_corrections_router)
 # Koreksi penerimaan mendaftarkan pembungkus /api/receipts lebih dulu agar
 # metadata tumpukan/area rusak dan lot penerimaan tersimpan.
 app.include_router(operational_corrections_router)
-# FEFO completion wraps the serialized outbound completion route.
+# Hardened completion owns the public completion path. Core stock completion stays authoritative;
+# post-commit metadata/SJ/FEFO enrichment is repairable and cannot create a false failure response.
+app.include_router(outbound_completion_hardening_router)
+# Legacy FEFO wrapper remains behind the hardened route for compatibility only.
 app.include_router(fefo_flow_router)
 # Manual lot reconciliation is normalized first so one lot is mutated only once per request.
 app.include_router(opname_reconcile_guard_router)
