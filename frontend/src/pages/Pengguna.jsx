@@ -4,9 +4,9 @@ import { Plus, X, ShieldCheck, User as UserIcon, KeyRound, Trash2, Power } from 
 import { useData } from '../context/DataContext';
 import { apiError } from '../lib/api';
 import { toast } from 'sonner';
-import { ROLE_COLORS, ROLE_LABELS, canonicalRole, roleLabel } from '../lib/permissions';
+import { ROLE_COLORS, ROLE_LABELS, FOUR_ROLES, canonicalRole, roleLabel } from '../lib/permissions';
 
-const ROLES = ['Administrator', 'Kepala Gudang', 'Supervisor', 'Operator', 'QC', 'Mandor', 'Pemantau'];
+const ROLES = FOUR_ROLES;
 
 const inputCls = 'w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]';
 
@@ -38,7 +38,7 @@ const Pengguna = () => {
   const isAdmin = canManageUsers;
   const [modal, setModal] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ name: '', username: '', email: '', role: 'Operator', password: '' });
+  const [form, setForm] = useState({ name: '', username: '', email: '', role: 'Supervisor', password: '' });
   const [pwdModal, setPwdModal] = useState(null);
   const [newPwd, setNewPwd] = useState('');
   const [delModal, setDelModal] = useState(null);
@@ -55,7 +55,7 @@ const Pengguna = () => {
       await addUser({ ...form, name: form.name.trim(), username: form.username.trim() });
       toast.success('Pengguna ditambahkan');
       setModal(false);
-      setForm({ name: '', username: '', email: '', role: 'Operator', password: '' });
+      setForm({ name: '', username: '', email: '', role: 'Supervisor', password: '' });
     } catch (e) {
       toast.error(apiError(e));
     } finally {
@@ -108,7 +108,7 @@ const Pengguna = () => {
       </div>
 
       <div className="card-surface p-4 text-xs text-[#aab4c4]">
-        <span className="font-semibold text-white">Aturan akses:</span> Superadmin seluruh proses · Kepala Gudang meninjau seluruh data · Admin Gudang mengelola master dan transaksi · Operator Gudang mencatat stok masuk/keluar · QC khusus QC · Mandor/Keuangan melihat rekap biaya · Viewer/Auditor hanya lihat dan unduh. Modul rebagging belum tersedia.
+        <span className="font-semibold text-white">Aturan akses:</span> Superadmin memiliki akses penuh termasuk pengguna, master, pengaturan, koreksi, dan operasional · Kepala Gudang mengelola seluruh proses operasional, monitoring, biaya, koreksi, dan persetujuan · Admin Operasional menjalankan inbound, mutasi, outbound, temuan kerusakan, retur/ganti pemasok, serta monitoring · Viewer hanya melihat dashboard, stok, inventory, riwayat, dan laporan.
       </div>
 
       <div className="card-surface p-6">
@@ -123,11 +123,11 @@ const Pengguna = () => {
                   <td className="py-3 pr-4 text-[#aab4c4]">{u.email || '—'}</td>
                   <td className="py-3 pr-4">
                     {isAdmin && u.id !== user?.id ? (
-                      <select data-testid={`role-select-${u.username}`} value={canonicalRole(u.role)} onChange={(e) => changeRole(u, e.target.value)} className="bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-1.5 text-xs outline-none focus:border-[#2563eb]" style={{ color: ROLE_COLORS[u.role] || '#8b93a1' }}>
+                      <select data-testid={`role-select-${u.username}`} value={canonicalRole(u.role)} onChange={(e) => changeRole(u, e.target.value)} className="bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-1.5 text-xs outline-none focus:border-[#2563eb]" style={{ color: ROLE_COLORS[canonicalRole(u.role)] || '#8b93a1' }}>
                         {ROLES.map((r) => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
                       </select>
                     ) : (
-                      <span className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium" style={{ background: `${ROLE_COLORS[u.role] || '#8b93a1'}22`, color: ROLE_COLORS[u.role] || '#8b93a1' }}><ShieldCheck size={12} /> {roleLabel(u.role)}</span>
+                      <span className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium" style={{ background: `${ROLE_COLORS[canonicalRole(u.role)] || '#8b93a1'}22`, color: ROLE_COLORS[canonicalRole(u.role)] || '#8b93a1' }}><ShieldCheck size={12} /> {roleLabel(u.role)}</span>
                     )}
                   </td>
                   <td className="py-3 pr-4"><span className={`text-xs px-2.5 py-1 rounded-full ${u.active ? 'bg-[#22c55e]/15 text-[#22c55e]' : 'bg-[#6b7688]/15 text-[#8b93a1]'}`}>{u.active ? 'Aktif' : 'Nonaktif'}</span></td>
