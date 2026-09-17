@@ -17,7 +17,7 @@ import LayarAntrian from './pages/LayarAntrian';
 import Pengguna from './pages/Pengguna';
 import Pengaturan from './pages/Pengaturan';
 import ImportData from './pages/ImportData';
-import TumpukanStok from './pages/TumpukanStok';
+import TumpukanWithLotStatus from './pages/TumpukanWithLotStatus';
 import OpnameKonsinyasi from './pages/OpnameKonsinyasi';
 import KoreksiOperasional from './pages/KoreksiOperasional';
 import KontrolIntegritas from './pages/KontrolIntegritas';
@@ -57,7 +57,7 @@ function AppRoutes() {
       <Route path="/" element={<Protected><Dashboard /></Protected>} />
       <Route path="/produk" element={<Protected><DaftarProduk /></Protected>} />
       <Route path="/import" element={<Protected permission="masterWrite"><ImportData /></Protected>} />
-      <Route path="/tumpukan" element={<Protected><TumpukanStok /></Protected>} />
+      <Route path="/tumpukan" element={<Protected><TumpukanWithLotStatus /></Protected>} />
       <Route path="/fefo" element={<Protected><FefoLot /></Protected>} />
       <Route path="/area-barang-rusak" element={<Protected><AreaBarangRusak /></Protected>} />
       <Route path="/opname-gudang" element={<Protected><OpnameGudang /></Protected>} />
