@@ -1,5 +1,5 @@
-// Four-role warehouse access model.
-// Stored legacy values remain supported so old accounts can be migrated safely.
+// Six-role warehouse access model.
+// Operator and QC remain internal storage codes for the scoped Bazar/E-commerce roles.
 export const ROLE_LABELS = {
   Administrator: 'Superadmin',
   Superadmin: 'Superadmin',
@@ -7,8 +7,11 @@ export const ROLE_LABELS = {
   Supervisor: 'Admin Operasional',
   Admin: 'Admin Operasional',
   'Admin Operasional': 'Admin Operasional',
-  Operator: 'Admin Operasional',
-  QC: 'Admin Operasional',
+  Operator: 'Petugas Bazar',
+  'Petugas Bazar': 'Petugas Bazar',
+  QC: 'Petugas E-commerce',
+  'Petugas E-commerce': 'Petugas E-commerce',
+  'Petugas Ecom': 'Petugas E-commerce',
   Mandor: 'Admin Operasional',
   Pemantau: 'Viewer',
   Viewer: 'Viewer',
@@ -21,30 +24,37 @@ export const ROLE_COLORS = {
   Supervisor: '#3b82f6',
   Admin: '#3b82f6',
   'Admin Operasional': '#3b82f6',
-  Operator: '#3b82f6',
-  QC: '#3b82f6',
+  Operator: '#f59e0b',
+  'Petugas Bazar': '#f59e0b',
+  QC: '#0ea5e9',
+  'Petugas E-commerce': '#0ea5e9',
+  'Petugas Ecom': '#0ea5e9',
   Mandor: '#3b82f6',
   Pemantau: '#8b93a1',
   Viewer: '#8b93a1',
 };
 
-export const FOUR_ROLES = ['Administrator', 'Kepala Gudang', 'Supervisor', 'Pemantau'];
+export const FOUR_ROLES = ['Administrator', 'Kepala Gudang', 'Supervisor', 'Operator', 'QC', 'Pemantau'];
+export const USER_ROLES = FOUR_ROLES;
 
 export const canonicalRole = (role) => ({
   Superadmin: 'Administrator',
   Admin: 'Supervisor',
   'Admin Operasional': 'Supervisor',
-  Operator: 'Supervisor',
-  QC: 'Supervisor',
+  'Petugas Bazar': 'Operator',
+  'Petugas E-commerce': 'QC',
+  'Petugas Ecom': 'QC',
   Mandor: 'Supervisor',
   Viewer: 'Pemantau',
 }[role] || role || 'Pemantau');
 
 const ROLE_PERMISSIONS = {
-  Administrator: new Set(['masterWrite', 'inbound', 'outbound', 'rebagging', 'qc', 'users', 'settings', 'costView', 'corrections', 'warehouseApprove', 'currentWrite']),
-  'Kepala Gudang': new Set(['inbound', 'outbound', 'costView', 'corrections', 'warehouseApprove', 'currentWrite']),
-  Supervisor: new Set(['inbound', 'outbound', 'costView', 'currentWrite']),
-  Pemantau: new Set(),
+  Administrator: new Set(['masterWrite', 'inbound', 'outbound', 'rebagging', 'qc', 'users', 'settings', 'costView', 'corrections', 'warehouseApprove', 'currentWrite', 'bazarView', 'bazarOps', 'ecomView', 'ecomOps', 'consignmentView']),
+  'Kepala Gudang': new Set(['inbound', 'outbound', 'costView', 'corrections', 'warehouseApprove', 'currentWrite', 'bazarView', 'bazarOps', 'ecomView', 'ecomOps', 'consignmentView']),
+  Supervisor: new Set(['inbound', 'outbound', 'costView', 'currentWrite', 'bazarView', 'bazarOps', 'ecomView', 'ecomOps', 'consignmentView']),
+  Operator: new Set(['bazarView', 'bazarOps', 'consignmentView']),
+  QC: new Set(['ecomView', 'ecomOps', 'consignmentView']),
+  Pemantau: new Set(['bazarView', 'ecomView', 'consignmentView']),
 };
 
 export const hasPermission = (role, permission) => {
@@ -56,10 +66,14 @@ export const hasPermission = (role, permission) => {
   if (permission === 'outboundPage') {
     return hasPermission(canonical, 'outbound') || hasPermission(canonical, 'costView');
   }
-  if (permission === 'currentWrite') {
-    return ROLE_PERMISSIONS[canonical]?.has('currentWrite') || false;
-  }
   return ROLE_PERMISSIONS[canonical]?.has(permission) || false;
+};
+
+export const roleDestination = (role) => {
+  const canonical = canonicalRole(role);
+  if (canonical === 'Operator') return 'Gudang Bazar';
+  if (canonical === 'QC') return 'Gudang E-commerce';
+  return '';
 };
 
 export const roleLabel = (role) => ROLE_LABELS[role] || ROLE_LABELS[canonicalRole(role)] || role || '—';
