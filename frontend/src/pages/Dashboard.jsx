@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Layers, AlertTriangle, Search, ClipboardList, ArrowUpRight, ArrowDownRight, Link2, Printer } from 'lucide-react';
+import { Layers, AlertTriangle, Search, ClipboardList, ArrowUpRight, ArrowDownRight, Link2, Printer, ChevronDown } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { formatNum, formatDate } from '../mock';
 import { apiError, downloadApiFile } from '../lib/api';
@@ -15,10 +15,26 @@ const StatCard = ({ icon: Icon, label, value, sub, color }) => (
   </div>
 );
 
+const AlertSection = ({ title, count, colorClass, iconClass, open, onToggle, children }) => (
+  <div className="card-surface overflow-hidden">
+    <button type="button" onClick={onToggle} aria-expanded={open} className="w-full flex items-center justify-between gap-4 p-5 sm:p-6 text-left hover:bg-white/[0.02] transition-colors">
+      <div className="flex min-w-0 items-center gap-3">
+        <AlertTriangle size={20} className={iconClass} />
+        <h2 className="font-display text-lg sm:text-xl font-bold truncate">{title}</h2>
+        <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${colorClass}`}>{count} barang</span>
+      </div>
+      <ChevronDown size={19} className={`shrink-0 text-[#8b93a1] transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
+    </button>
+    {open && <div className="px-5 sm:px-6 pb-5 sm:pb-6 border-t border-[#1a222e] pt-4">{children}</div>}
+  </div>
+);
+
 const Dashboard = () => {
   const { products, transactions, outboundLoads, consignmentStock, monitoringStock, settings } = useData();
   const navigate = useNavigate();
   const [q, setQ] = useState('');
+  const [lowAlertOpen, setLowAlertOpen] = useState(false);
+  const [expiryAlertOpen, setExpiryAlertOpen] = useState(false);
 
   const totalUnits = products.reduce((a, p) => a + p.stock, 0);
   const totalDamaged = products.reduce((a, p) => a + (p.damaged || 0), 0);
@@ -87,12 +103,7 @@ const Dashboard = () => {
       </div>
 
       {(settings?.lowAlert ?? true) && (
-        <div className="card-surface p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <AlertTriangle size={20} className="text-[#eab308]" />
-            <h2 className="font-display text-xl font-bold">Peringatan Stok Minimum</h2>
-            <span className="text-xs px-2.5 py-1 rounded-full bg-[#eab308]/15 text-[#eab308] font-medium">{lowStock.length} barang</span>
-          </div>
+        <AlertSection title="Peringatan Stok Minimum" count={lowStock.length} colorClass="bg-[#eab308]/15 text-[#eab308]" iconClass="text-[#eab308]" open={lowAlertOpen} onToggle={() => setLowAlertOpen((value) => !value)}>
           {lowStock.length === 0 ? (
             <p className="text-sm text-[#8b93a1]">Semua stok masih di atas batas minimum. Tidak ada yang perlu direstock.</p>
           ) : (
@@ -107,16 +118,11 @@ const Dashboard = () => {
               ))}
             </div>
           )}
-        </div>
+        </AlertSection>
       )}
 
       {(settings?.expAlert ?? true) && (
-        <div className="card-surface p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <AlertTriangle size={20} className="text-[#ef4444]" />
-            <h2 className="font-display text-xl font-bold">Peringatan Kedaluwarsa</h2>
-            <span className="text-xs px-2.5 py-1 rounded-full bg-[#ef4444]/15 text-[#ef4444] font-medium">{expiringProducts.length} barang</span>
-          </div>
+        <AlertSection title="Peringatan Kedaluwarsa" count={expiringProducts.length} colorClass="bg-[#ef4444]/15 text-[#ef4444]" iconClass="text-[#ef4444]" open={expiryAlertOpen} onToggle={() => setExpiryAlertOpen((value) => !value)}>
           {expiringProducts.length === 0 ? (
             <p className="text-sm text-[#8b93a1]">Tidak ada barang yang kedaluwarsa atau jatuh tempo dalam 30 hari.</p>
           ) : (
@@ -130,11 +136,7 @@ const Dashboard = () => {
                   <div className="text-sm">
                     <div className="font-mono">{p.exp}</div>
                     <div className={`text-xs ${p.daysToExpiry < 0 ? 'text-[#ef4444]' : p.daysToExpiry <= 7 ? 'text-[#f97316]' : 'text-[#eab308]'}`}>
-                      {p.daysToExpiry < 0
-                        ? `Lewat ${Math.abs(p.daysToExpiry)} hari`
-                        : p.daysToExpiry === 0
-                          ? 'Kedaluwarsa hari ini'
-                          : `${p.daysToExpiry} hari lagi`}
+                      {p.daysToExpiry < 0 ? `Lewat ${Math.abs(p.daysToExpiry)} hari` : p.daysToExpiry === 0 ? 'Kedaluwarsa hari ini' : `${p.daysToExpiry} hari lagi`}
                     </div>
                   </div>
                   <div className="font-mono text-sm">{formatNum(p.stock)} {p.unit}</div>
@@ -142,7 +144,7 @@ const Dashboard = () => {
               ))}
             </div>
           )}
-        </div>
+        </AlertSection>
       )}
 
       <div className="card-surface p-6 border border-[#1f3657]">
@@ -162,21 +164,7 @@ const Dashboard = () => {
         <div className="overflow-x-auto">
           <table className="w-full text-sm tbl">
             <thead><tr className="text-left border-b border-[#1a222e]">{['Saluran', 'Lokasi', 'SKU', 'Nama Komoditi', 'Kuantum Pack/PCS', 'Kuantum Fisik', 'Rusak'].map((h) => <th key={h} className="py-2.5 pr-4 font-semibold">{h}</th>)}</tr></thead>
-            <tbody>
-              {filtered.length === 0 ? (
-                <tr><td colSpan={7} className="py-8 text-center text-[#6b7688]">Belum ada produk terdaftar. Tambah produk atau import data SKU.</td></tr>
-              ) : filtered.map((p) => (
-                <tr key={`${p.location}-${p.productId}-${p.channel}`} className="tbl-row border-b border-[#131a24]">
-                  <td className="py-3 pr-4"><span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${p.channel === 'PSO' ? 'bg-[#2563eb]/15 text-[#60a5fa]' : 'bg-[#a855f7]/15 text-[#c084fc]'}`}>{p.channel}</span></td>
-                  <td className="py-3 pr-4 text-[#8b93a1]">{p.location}</td>
-                  <td className="py-3 pr-4 font-mono text-xs text-[#93c5fd]">{p.sku || '—'}</td>
-                  <td className="py-3 pr-4 font-medium">{p.name}</td>
-                  <td className="py-3 pr-4 font-mono">{formatNum(p.qty)} {p.unit}</td>
-                  <td className="py-3 pr-4 font-mono">{p.weight > 0 ? `${formatNum(p.totalWeight)} ${p.measureUnit || 'kg'}` : '—'}</td>
-                  <td className="py-3 pr-4 font-mono">{formatNum(p.damaged || 0)}</td>
-                </tr>
-              ))}
-            </tbody>
+            <tbody>{filtered.length === 0 ? <tr><td colSpan={7} className="py-8 text-center text-[#6b7688]">Belum ada produk terdaftar. Tambah produk atau import data SKU.</td></tr> : filtered.map((p) => <tr key={`${p.location}-${p.productId}-${p.channel}`} className="tbl-row border-b border-[#131a24]"><td className="py-3 pr-4"><span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${p.channel === 'PSO' ? 'bg-[#2563eb]/15 text-[#60a5fa]' : 'bg-[#a855f7]/15 text-[#c084fc]'}`}>{p.channel}</span></td><td className="py-3 pr-4 text-[#8b93a1]">{p.location}</td><td className="py-3 pr-4 font-mono text-xs text-[#93c5fd]">{p.sku || '—'}</td><td className="py-3 pr-4 font-medium">{p.name}</td><td className="py-3 pr-4 font-mono">{formatNum(p.qty)} {p.unit}</td><td className="py-3 pr-4 font-mono">{p.weight > 0 ? `${formatNum(p.totalWeight)} ${p.measureUnit || 'kg'}` : '—'}</td><td className="py-3 pr-4 font-mono">{formatNum(p.damaged || 0)}</td></tr>)}</tbody>
           </table>
         </div>
       </div>
@@ -192,16 +180,7 @@ const Dashboard = () => {
       <div className="card-surface p-6">
         <h2 className="font-display text-lg font-bold mb-4">Aktivitas Terakhir</h2>
         <div className="space-y-2">
-          {transactions.slice(0, 8).map((t) => (
-            <div key={t.id} className="flex items-center justify-between gap-3 p-3 rounded-lg bg-[#0b0f17] border border-[#151d28]">
-              <div><div className="font-medium text-sm">{t.product}</div><div className="label-mono text-[10px]">{t.sku} · {formatDate(t.time)}</div></div>
-              <div className={`flex items-center gap-2 text-sm font-mono ${t.type === 'MASUK' ? 'text-[#22c55e]' : 'text-[#ef4444]'}`}>
-                {t.type === 'MASUK' ? <ArrowDownRight size={15} /> : <ArrowUpRight size={15} />}
-                <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: t.type === 'MASUK' ? 'rgba(34,197,94,.15)' : 'rgba(239,68,68,.15)' }}>{t.type}</span>
-                <span className="font-semibold">{t.change > 0 ? '+' : ''}{t.change}</span>
-              </div>
-            </div>
-          ))}
+          {transactions.slice(0, 8).map((t) => <div key={t.id} className="flex items-center justify-between gap-3 p-3 rounded-lg bg-[#0b0f17] border border-[#151d28]"><div><div className="font-medium text-sm">{t.product}</div><div className="label-mono text-[10px]">{t.sku} · {formatDate(t.time)}</div></div><div className={`flex items-center gap-2 text-sm font-mono ${t.type === 'MASUK' ? 'text-[#22c55e]' : 'text-[#ef4444]'}`}>{t.type === 'MASUK' ? <ArrowDownRight size={15} /> : <ArrowUpRight size={15} />}<span className="text-xs px-2 py-0.5 rounded-full" style={{ background: t.type === 'MASUK' ? 'rgba(34,197,94,.15)' : 'rgba(239,68,68,.15)' }}>{t.type}</span><span className="font-semibold">{t.change > 0 ? '+' : ''}{t.change}</span></div></div>)}
           {transactions.length === 0 && <p className="text-sm text-[#8b93a1]">Belum ada aktivitas.</p>}
         </div>
       </div>
