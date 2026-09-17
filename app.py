@@ -5,6 +5,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.server import app
+import backend.role_four_config  # noqa: F401 - consolidates legacy roles into four warehouse roles
 from backend.inventory_flow import router as inventory_flow_router
 from backend.master_products import router as master_products_router
 from backend.outbound_flow import router as outbound_flow_router
