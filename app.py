@@ -34,6 +34,7 @@ from backend.fefo_selection import router as fefo_selection_router
 from backend.lot_corrections import router as lot_corrections_router
 from backend.damaged_stock_area import router as damaged_stock_area_router
 from backend.damaged_outbound import router as damaged_outbound_router
+import backend.opname_lot_atomic  # noqa: F401 - installs compensated lot reducer for opname engines
 
 # Lot-aware wrappers must precede the generic correction/guard routes.
 app.include_router(lot_corrections_router)
