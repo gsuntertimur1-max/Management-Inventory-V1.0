@@ -25,7 +25,7 @@ def test_stock_opname_routes_are_registered():
     assert _first_endpoint("/api/stock-opnames", "GET").__name__ == "list_stock_opnames"
     assert _first_endpoint("/api/stock-opnames", "POST").__name__ == "create_stock_opname"
     assert _first_endpoint("/api/stock-opnames/{opname_id}/submit", "POST").__name__ == "submit_stock_opname"
-    assert _first_endpoint("/api/stock-opnames/{opname_id}/approve", "POST").__name__ == "approve_stock_opname"
+    assert _first_endpoint("/api/stock-opnames/{opname_id}/approve", "POST").__name__ == "approve_stock_opname_conservative"
 
 
 def test_opname_line_rejects_negative_physical_quantity():
