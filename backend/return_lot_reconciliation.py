@@ -52,11 +52,21 @@ async def list_pending_return_lot_reconciliations(user: dict = Depends(require_a
         {"movementType": "RETURN_UNTRACKED", "qty": {"$gt": EPS}},
         {"_id": 0},
     ).sort("time", -1).to_list(20000)
+    source_ids = [str(row.get("id") or "") for row in rows if row.get("id")]
+    resolved_totals: dict[str, float] = defaultdict(float)
+    if source_ids:
+        reconciled = await db.stack_lot_movements.find(
+            {"movementType": "RETURN_RECONCILED", "sourceReturnMovementId": {"$in": source_ids}},
+            {"_id": 0, "sourceReturnMovementId": 1, "qty": 1},
+        ).to_list(50000)
+        for row in reconciled:
+            resolved_totals[str(row.get("sourceReturnMovementId") or "")] += abs(_n(row.get("qty")))
+
     result = []
     for row in rows:
         source_id = str(row.get("id") or "")
         qty = _n(row.get("qty"))
-        resolved = await _resolved_qty(source_id)
+        resolved = resolved_totals.get(source_id, 0.0)
         remaining = max(qty - resolved, 0.0)
         if remaining <= EPS:
             continue
