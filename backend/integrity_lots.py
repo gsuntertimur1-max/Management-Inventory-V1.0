@@ -44,15 +44,17 @@ def apply_lot_integrity(row: dict, tracked_qty: float) -> dict:
 
 
 async def _document_integrity() -> tuple[list[dict], list[dict]]:
-    completed = await db.outbound_loads.find(
-        {"status": "Selesai"},
-        {"_id": 0, "id": 1, "bon_no": 1, "antrian": 1, "ref": 1, "surat_jalan_id": 1, "surat_jalan_no": 1},
-    ).to_list(20000)
+    all_loads = await db.outbound_loads.find(
+        {},
+        {"_id": 0, "id": 1, "status": 1, "bon_no": 1, "antrian": 1, "ref": 1, "surat_jalan_id": 1, "surat_jalan_no": 1},
+    ).to_list(30000)
+    completed = [row for row in all_loads if row.get("status") == "Selesai"]
     surat_jalan = await db.surat_jalan.find(
         {},
         {"_id": 0, "id": 1, "load_id": 1, "no": 1, "bon_no": 1, "antrian": 1},
-    ).to_list(20000)
+    ).to_list(30000)
 
+    all_load_ids = {str(row.get("id") or "") for row in all_loads if row.get("id")}
     sj_by_id = {str(row.get("id") or ""): row for row in surat_jalan if row.get("id")}
     sj_by_load = defaultdict(list)
     for row in surat_jalan:
@@ -60,7 +62,6 @@ async def _document_integrity() -> tuple[list[dict], list[dict]]:
         if load_id:
             sj_by_load[load_id].append(row)
 
-    completed_ids = {str(row.get("id") or "") for row in completed if row.get("id")}
     missing = []
     for load in completed:
         load_id = str(load.get("id") or "")
@@ -84,10 +85,7 @@ async def _document_integrity() -> tuple[list[dict], list[dict]]:
     orphan = []
     for sj in surat_jalan:
         load_id = str(sj.get("load_id") or "")
-        if not load_id or load_id in completed_ids:
-            continue
-        load = await db.outbound_loads.find_one({"id": load_id}, {"_id": 0, "status": 1})
-        if load:
+        if not load_id or load_id in all_load_ids:
             continue
         orphan.append({
             "suratJalanId": sj.get("id", ""),
