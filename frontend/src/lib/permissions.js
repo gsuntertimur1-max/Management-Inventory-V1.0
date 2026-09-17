@@ -49,12 +49,12 @@ export const canonicalRole = (role) => ({
 }[role] || role || 'Pemantau');
 
 const ROLE_PERMISSIONS = {
-  Administrator: new Set(['masterWrite', 'inbound', 'outbound', 'rebagging', 'qc', 'users', 'settings', 'costView', 'corrections', 'warehouseApprove', 'currentWrite', 'bazarView', 'bazarOps', 'ecomView', 'ecomOps', 'consignmentView']),
-  'Kepala Gudang': new Set(['inbound', 'outbound', 'costView', 'corrections', 'warehouseApprove', 'currentWrite', 'bazarView', 'bazarOps', 'ecomView', 'ecomOps', 'consignmentView']),
-  Supervisor: new Set(['inbound', 'outbound', 'costView', 'currentWrite', 'bazarView', 'bazarOps', 'ecomView', 'ecomOps', 'consignmentView']),
+  Administrator: new Set(['mainInventory', 'masterWrite', 'inbound', 'outbound', 'rebagging', 'qc', 'users', 'settings', 'costView', 'corrections', 'warehouseApprove', 'currentWrite', 'bazarView', 'bazarOps', 'ecomView', 'ecomOps', 'consignmentView']),
+  'Kepala Gudang': new Set(['mainInventory', 'inbound', 'outbound', 'costView', 'corrections', 'warehouseApprove', 'currentWrite', 'bazarView', 'bazarOps', 'ecomView', 'ecomOps', 'consignmentView']),
+  Supervisor: new Set(['mainInventory', 'inbound', 'outbound', 'costView', 'currentWrite', 'bazarView', 'bazarOps', 'ecomView', 'ecomOps', 'consignmentView']),
   Operator: new Set(['bazarView', 'bazarOps', 'consignmentView']),
   QC: new Set(['ecomView', 'ecomOps', 'consignmentView']),
-  Pemantau: new Set(['bazarView', 'ecomView', 'consignmentView']),
+  Pemantau: new Set(['mainInventory', 'bazarView', 'ecomView', 'consignmentView']),
 };
 
 export const hasPermission = (role, permission) => {
