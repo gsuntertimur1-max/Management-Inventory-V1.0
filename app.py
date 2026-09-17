@@ -19,6 +19,7 @@ from backend.integrity_control import router as integrity_control_router
 from backend.integrity_lots import router as integrity_lots_router
 from backend.stock_opname import router as stock_opname_router
 from backend.opname_lots import router as opname_lots_router
+from backend.opname_reconcile_guard import router as opname_reconcile_guard_router
 from backend.stack_lots import router as stack_lots_router, ensure_stack_lot_indexes
 from backend.fefo_flow import router as fefo_flow_router
 from backend.lot_corrections import router as lot_corrections_router
@@ -32,6 +33,8 @@ app.include_router(lot_corrections_router)
 app.include_router(operational_corrections_router)
 # FEFO completion wraps the serialized outbound completion route.
 app.include_router(fefo_flow_router)
+# Manual lot reconciliation is normalized first so one lot is mutated only once per request.
+app.include_router(opname_reconcile_guard_router)
 # Stock opname approval is wrapped so lot coverage is reconciled conservatively.
 app.include_router(opname_lots_router)
 # Damaged outbound has a dedicated physical source and R-series queue; good stock delegates to normal guard.
