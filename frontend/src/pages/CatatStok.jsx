@@ -10,6 +10,7 @@ import { stackCodes } from '../lib/warehouses';
 
 const CONSIGNMENT_DESTINATIONS = ['Gudang E-commerce', 'Gudang Bazar'];
 const CONSIGNMENT_ZONES = ['18/A01', '18/A02', '18/A03', '18/A04', '18/B01 (½)', '18/B02 (½)', '18/B03 (½)', '18/B04 (½)'];
+const DAMAGED_AREA = 'AREA BARANG RUSAK';
 const emptyRow = () => ({ productId: '', inputMode: 'QTY', inputValue: 1, qty: 1, goodQty: 1, damagedQty: 0, exp: '', stackCode: '', documentNo: '', channel: '' });
 
 const CatatStok = ({ panel = '' }) => {
@@ -128,6 +129,9 @@ const CatatStok = ({ panel = '' }) => {
   const totalNilai = chosen.reduce((a, row) => a + (row.product.cost || 0) * Number(row.qty || 0), 0);
   const outboundDocumentRefs = documentRefs.map((item) => item.trim()).filter(Boolean);
   const isMultiDocumentOutbound = type === 'KELUAR' && outboundDocumentRefs.length > 1;
+  const productOptions = type === 'KELUAR' && kondisi === 'RUSAK'
+    ? products.filter((item) => Number(item.damaged || 0) > 0)
+    : products;
   const availableStacksFor = (productId) => (stackAllocations || [])
     .filter((allocation) => allocation.productId === productId && Number(allocation.primaryQty || 0) > 0)
     .sort((a, b) => String(a.stackCode || '').localeCompare(String(b.stackCode || '')));
@@ -214,7 +218,7 @@ const CatatStok = ({ panel = '' }) => {
         return;
       }
     }
-    if (type === 'KELUAR' && (chosen.length > 1 || isMultiDocumentOutbound) && chosen.some((row) => !row.stackCode)) {
+    if (type === 'KELUAR' && kondisi === 'BAIK' && (chosen.length > 1 || isMultiDocumentOutbound) && chosen.some((row) => !row.stackCode)) {
       toast.error('Pilih tumpukan asal pada setiap barang untuk pemuatan multi-SO/multi-produk');
       return;
     }
@@ -256,7 +260,7 @@ const CatatStok = ({ panel = '' }) => {
         navigate('/riwayat');
       } else {
         const load = await createOutboundLoad({
-          items: chosen.map((row) => ({ productId: row.productId, qty: Number(row.qty), documentNo: row.documentNo || documentRefs[0], stackCode: row.stackCode || '', channel: row.channel || row.product.channel || 'KOM' })),
+          items: chosen.map((row) => ({ productId: row.productId, qty: Number(row.qty), documentNo: row.documentNo || documentRefs[0], stackCode: kondisi === 'RUSAK' ? '' : (row.stackCode || ''), channel: row.channel || row.product.channel || 'KOM' })),
           party: party.trim(),
           ref: documentRefs[0],
           polisi,
@@ -275,7 +279,7 @@ const CatatStok = ({ panel = '' }) => {
           grossMax: Number(grossMax || 0),
           loadingFeeChargeMode: feeChargeMode,
         });
-        toast.success(`Antrian ${load.antrian} dibuat. Stok belum berkurang sampai pemuatan selesai.`);
+        toast.success(`Antrian ${load.antrian} dibuat${kondisi === 'RUSAK' ? ` dari ${DAMAGED_AREA}` : ''}. Stok belum berkurang sampai pemuatan selesai.`);
         if (weighingForm) await downloadApiFile(`/export/weighing-form/outbound/${load.id}.pdf`, `form_timbangan_keluar_${load.antrian}.pdf`);
         navigate('/pengeluaran');
       }
@@ -353,15 +357,16 @@ const CatatStok = ({ panel = '' }) => {
             {rows.map((row, index) => {
               const product = products.find((item) => item.id === row.productId);
               const remaining = remainingFor(row.productId);
-              const availableStacks = type === 'KELUAR' ? availableStacksFor(row.productId) : [];
+              const availableStacks = type === 'KELUAR' && kondisi === 'BAIK' ? availableStacksFor(row.productId) : [];
               return (
                 <div key={index} className={`grid gap-2 items-end p-3 rounded-lg border border-[#1a222e] bg-[#0b0f17] ${type === 'MASUK' ? 'grid-cols-1 md:grid-cols-[minmax(190px,1fr)_125px_125px_175px_52px]' : 'grid-cols-1 md:grid-cols-[minmax(170px,1fr)_100px_135px_150px_140px_52px]'}`}>
                   <div>
                     <label className="text-[10px] text-[#6b7688] mb-1 block">Produk</label>
-                    <select value={row.productId} disabled={Boolean(selectedPO)} onChange={(e) => { const chosenProduct = products.find((item) => item.id === e.target.value); setTransactionInput(index, { productId: e.target.value, inputMode: 'QTY', inputValue: 1, channel: chosenProduct?.channel || 'KOM' }); }} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb] disabled:opacity-70">
+                    <select value={row.productId} disabled={Boolean(selectedPO)} onChange={(e) => { const chosenProduct = products.find((item) => item.id === e.target.value); setTransactionInput(index, { productId: e.target.value, inputMode: 'QTY', inputValue: 1, stackCode: '', channel: chosenProduct?.channel || 'KOM' }); }} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb] disabled:opacity-70">
                       <option value="">Pilih produk...</option>
-                      {products.map((item) => <option key={item.id} value={item.id}>{item.name} ({formatNum(item.stock || 0)} {item.unit})</option>)}
+                      {productOptions.map((item) => <option key={item.id} value={item.id}>{item.name} ({kondisi === 'RUSAK' && type === 'KELUAR' ? `Rusak ${formatNum(item.damaged || 0)}` : formatNum(item.stock || 0)} {item.unit})</option>)}
                     </select>
+                    {type === 'KELUAR' && kondisi === 'RUSAK' && product && <div className="text-[10px] text-[#fca5a5] mt-1">Saldo Area Barang Rusak: {formatNum(product.damaged || 0)} {product.unit}</div>}
                     {selectedPO && product && <div className="text-[10px] text-[#60a5fa] mt-1">Sisa PO: {formatNum(remaining)} {product.unit}</div>}<label className="text-[10px] text-[#6b7688] mt-2 mb-1 block">Saluran</label><select value={row.channel || product?.channel || 'KOM'} onChange={(e) => setRow(index, { channel: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2 text-xs"><option value="PSO">PSO</option><option value="KOM">KOM</option></select>
                   </div>
                   {type === 'KELUAR' && <div>
@@ -380,7 +385,7 @@ const CatatStok = ({ panel = '' }) => {
                   {type === 'MASUK' && (
                     <div><label className="text-[10px] text-[#6b7688] mb-1 flex items-center gap-1"><CalendarDays size={11} /> Kedaluwarsa / Lokasi</label><input type="date" value={row.exp || ''} onChange={(e) => setRow(index, { exp: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm" /><select value={row.stackCode || product?.location || ''} onChange={(e) => setRow(index, { stackCode: e.target.value })} className="w-full mt-1 bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2 text-xs"><option value="">Pilih lokasi...</option>{STACKS.map((code) => <option key={code}>{code}</option>)}</select></div>
                   )}
-                  {type === 'KELUAR' && <><div><label className="text-[10px] text-[#6b7688] mb-1 block">Dokumen sumber</label><select value={isMultiDocumentOutbound ? row.documentNo : (row.documentNo || outboundDocumentRefs[0] || '')} disabled={!isMultiDocumentOutbound && outboundDocumentRefs.length === 1} onChange={(e) => setRow(index, { documentNo: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2.5 text-xs disabled:opacity-70"><option value="">{isMultiDocumentOutbound ? 'Pilih dokumen...' : 'Isi nomor dokumen dulu'}</option>{outboundDocumentRefs.map((doc) => <option key={doc}>{doc}</option>)}</select></div><div><label className="text-[10px] text-[#6b7688] mb-1 block">Tumpukan asal · stok tersedia</label><select value={row.stackCode || ''} onChange={(e) => setRow(index, { stackCode: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2.5 text-xs"><option value="">{isMultiDocumentOutbound || rows.length > 1 ? "Pilih tumpukan asal (wajib)" : "Otomatis (pilih dari stok tersedia)"}</option>{kondisi === 'RUSAK' ? STACKS.map((code) => <option key={code} value={code}>{code} — lokasi barang rusak</option>) : availableStacks.map((allocation) => { const secondaryQty = Number(allocation.secondaryQty || 0); const qty = Number(allocation.primaryQty || 0); const secondary = secondaryQty > 0 ? Math.floor(qty / secondaryQty) : 0; const remainder = secondaryQty > 0 ? qty - (secondary * secondaryQty) : 0; const packaging = secondaryQty > 0 ? ` · ${formatNum(secondary)} ${allocation.secondary || 'sekunder'}${remainder > 0 ? ` + ${formatNum(remainder)} ${allocation.unit || 'pcs'}` : ''}` : ''; return <option key={allocation.id} value={allocation.stackCode}>{allocation.stackCode} — sisa {formatNum(qty)} {allocation.unit || 'pcs'}{packaging}</option>; })}</select>{kondisi === 'BAIK' && row.productId && availableStacks.length === 0 && <p className="text-[9px] text-[#fbbf24] mt-1">Belum ada alokasi tumpukan untuk produk ini; sistem akan menentukan otomatis.</p>}</div></>}
+                  {type === 'KELUAR' && <><div><label className="text-[10px] text-[#6b7688] mb-1 block">Dokumen sumber</label><select value={isMultiDocumentOutbound ? row.documentNo : (row.documentNo || outboundDocumentRefs[0] || '')} disabled={!isMultiDocumentOutbound && outboundDocumentRefs.length === 1} onChange={(e) => setRow(index, { documentNo: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2.5 text-xs disabled:opacity-70"><option value="">{isMultiDocumentOutbound ? 'Pilih dokumen...' : 'Isi nomor dokumen dulu'}</option>{outboundDocumentRefs.map((doc) => <option key={doc}>{doc}</option>)}</select></div><div><label className="text-[10px] text-[#6b7688] mb-1 block">{kondisi === 'RUSAK' ? 'Lokasi sumber' : 'Tumpukan asal · stok tersedia'}</label>{kondisi === 'RUSAK' ? <div className="w-full rounded-lg border border-[#7f1d1d] bg-[#2a0f14] px-3 py-2.5 text-xs text-[#fecaca]"><div className="font-semibold">{DAMAGED_AREA}</div><div className="text-[9px] text-[#fca5a5] mt-1">Tidak memakai tumpukan stok Baik · antrean otomatis seri R-xxx</div></div> : <><select value={row.stackCode || ''} onChange={(e) => setRow(index, { stackCode: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2.5 text-xs"><option value="">{isMultiDocumentOutbound || rows.length > 1 ? "Pilih tumpukan asal (wajib)" : "Otomatis (pilih dari stok tersedia)"}</option>{availableStacks.map((allocation) => { const secondaryQty = Number(allocation.secondaryQty || 0); const qty = Number(allocation.primaryQty || 0); const secondary = secondaryQty > 0 ? Math.floor(qty / secondaryQty) : 0; const remainder = secondaryQty > 0 ? qty - (secondary * secondaryQty) : 0; const packaging = secondaryQty > 0 ? ` · ${formatNum(secondary)} ${allocation.secondary || 'sekunder'}${remainder > 0 ? ` + ${formatNum(remainder)} ${allocation.unit || 'pcs'}` : ''}` : ''; return <option key={allocation.id} value={allocation.stackCode}>{allocation.stackCode} — sisa {formatNum(qty)} {allocation.unit || 'pcs'}{packaging}</option>; })}</select>{row.productId && availableStacks.length === 0 && <p className="text-[9px] text-[#fbbf24] mt-1">Belum ada alokasi tumpukan untuk produk ini; sistem akan menentukan otomatis.</p>}</>}</div></>}
                   <button type="button" onClick={() => delRow(index)} disabled={rows.length === 1} className="w-10 h-[42px] rounded-lg border border-[#242f3d] flex items-center justify-center text-[#ef4444] disabled:opacity-30"><Trash2 size={15} /></button>
                 </div>
               );
@@ -395,7 +400,7 @@ const CatatStok = ({ panel = '' }) => {
             {type === 'KELUAR' ? (
               <div><label className="text-sm font-medium mb-1.5 block">Nama Pengambil / Sopir</label><input value={pengambil} onChange={(e) => setPengambil(e.target.value)} placeholder="Contoh: KOYUM" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm" /></div>
             ) : <div className="rounded-lg border border-[#1f3657] bg-[#0d1728] px-3 py-2.5 text-xs text-[#8fb8ef]">Isi kuantum <b>Baik</b> dan <b>Rusak</b> pada setiap komoditas.</div>}
-            {type === 'KELUAR' && <div><label className="text-sm font-medium mb-1.5 block">Kondisi Barang</label><select value={kondisi} onChange={(e) => setKondisi(e.target.value)} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm"><option value="BAIK">Baik (Good)</option><option value="RUSAK">Rusak (Damage)</option></select></div>}
+            {type === 'KELUAR' && <div><label className="text-sm font-medium mb-1.5 block">Kondisi Barang</label><select value={kondisi} onChange={(e) => { const next = e.target.value; setKondisi(next); if (next === 'RUSAK') setRows((prev) => prev.map((row) => ({ ...row, stackCode: '' }))); }} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm"><option value="BAIK">Baik (Good)</option><option value="RUSAK">Rusak (Damage)</option></select>{kondisi === 'RUSAK' && <p className="text-[10px] text-[#fca5a5] mt-1">Sumber fisik otomatis: {DAMAGED_AREA} · antrean R-xxx.</p>}</div>}
           </div>
           <div className="mt-4"><label className="text-sm font-medium mb-1.5 block">Keterangan</label><textarea value={ket} onChange={(e) => setKet(e.target.value)} rows={2} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm resize-none" /></div>
           <button onClick={submit} disabled={saving} className="btn-primary w-full mt-5 flex items-center justify-center gap-2 py-3 rounded-lg font-semibold text-sm disabled:opacity-60"><Save size={16} /> {saving ? 'Menyimpan…' : type === 'MASUK' ? 'Simpan Stok Masuk' : 'Buat Antrian Pemuatan'}</button>
@@ -405,6 +410,7 @@ const CatatStok = ({ panel = '' }) => {
           <h2 className="font-display text-lg font-bold mb-4">Ringkasan</h2>
           <span className="text-xs px-2.5 py-1 rounded-full font-semibold" style={{ background: type === 'MASUK' ? 'rgba(34,197,94,.15)' : 'rgba(239,68,68,.15)', color: type === 'MASUK' ? '#22c55e' : '#ef4444' }}>{type}</span>
           <div className="mt-5 space-y-3 text-sm">{[['Jenis barang', chosen.length], ['Total unit', formatNum(totalUnit)], ['Total berat', `${totalBerat.toFixed(2)} kg`], ['Estimasi nilai', formatRp(totalNilai)]].map(([label, value]) => <div key={label} className="flex justify-between border-b border-[#151d28] pb-3"><span className="text-[#8b93a1]">{label}</span><span className="font-mono font-semibold">{value}</span></div>)}</div>
+          {type === 'KELUAR' && kondisi === 'RUSAK' && <div className="mt-4 rounded-lg border border-[#7f1d1d] bg-[#2a0f14] p-3 text-xs text-[#fecaca]"><div className="flex justify-between gap-3"><span>Lokasi sumber</span><strong>{DAMAGED_AREA}</strong></div><div className="mt-1 text-[#fca5a5]">Nomor antrean akan memakai seri R-xxx.</div></div>}
           {type === 'KELUAR' && <div className="mt-4 p-3 rounded-lg bg-[#0d1728] border border-[#1f3657] text-xs text-[#8fb8ef]">Setelah antrian dibuat, stok fisik tetap sama sampai pemuatan dinyatakan selesai.</div>}
         </div>
       </div>
