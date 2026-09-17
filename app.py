@@ -16,6 +16,7 @@ from backend.return_lot_reconciliation import router as return_lot_reconciliatio
 from backend.outbound_completion_hardening import router as outbound_completion_hardening_router
 from backend.consignment import router as consignment_router
 from backend.stack_allocations import router as stack_allocations_router
+from backend.outbound_pdf_multi import router as outbound_pdf_multi_router
 from backend.pdf_documents import router as pdf_documents_router
 from backend.queue_flow import router as queue_flow_router
 from backend.runtime_hardening import ensure_performance_indexes, hardening_middleware
@@ -75,6 +76,8 @@ app.include_router(master_products_router)
 app.include_router(outbound_flow_router)
 app.include_router(consignment_router)
 app.include_router(stack_allocations_router)
+# Multi-document Bon Muat/Surat Jalan owns these export paths and must precede legacy PDF routes.
+app.include_router(outbound_pdf_multi_router)
 app.include_router(pdf_documents_router)
 app.include_router(queue_flow_router)
 # Authoritative outbound reservation view is available to authenticated operators.
