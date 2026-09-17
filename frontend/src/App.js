@@ -57,13 +57,13 @@ function AppRoutes() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/" element={<Protected><DashboardUnified /></Protected>} />
-      <Route path="/produk" element={<Protected><DaftarProduk /></Protected>} />
+      <Route path="/produk" element={<Protected permission="mainInventory"><DaftarProduk /></Protected>} />
       <Route path="/import" element={<Protected permission="masterWrite"><ImportData /></Protected>} />
       <Route path="/tumpukan" element={<Protected><TumpukanUnified /></Protected>} />
-      <Route path="/fefo" element={<Protected><FefoLot /></Protected>} />
-      <Route path="/area-barang-rusak" element={<Protected><AreaBarangRusak /></Protected>} />
-      <Route path="/opname-gudang" element={<Protected><OpnameGudang /></Protected>} />
-      <Route path="/opname-konsinyasi" element={<Protected><OpnameKonsinyasi /></Protected>} />
+      <Route path="/fefo" element={<Protected permission="mainInventory"><FefoLot /></Protected>} />
+      <Route path="/area-barang-rusak" element={<Protected permission="mainInventory"><AreaBarangRusak /></Protected>} />
+      <Route path="/opname-gudang" element={<Protected permission="mainInventory"><OpnameGudang /></Protected>} />
+      <Route path="/opname-konsinyasi" element={<Protected permission="consignmentView"><OpnameKonsinyasi /></Protected>} />
       <Route path="/catat" element={<Protected permission="operations"><CatatStok /></Protected>} />
       <Route path="/mutasi-tumpukan" element={<Protected permission="operations"><MutasiTumpukan /></Protected>} />
       <Route path="/temuan-kerusakan" element={<Protected permission="operations"><CatatStok panel="damage" /></Protected>} />
@@ -71,10 +71,10 @@ function AppRoutes() {
       <Route path="/pengeluaran" element={<Protected permission="outboundPage"><><PengeluaranReservationPanel /><Pengeluaran /></></Protected>} />
       <Route path="/koreksi-operasional" element={<Protected permission="corrections"><KoreksiOperasional /></Protected>} />
       <Route path="/kontrol-integritas" element={<Protected permission="masterWrite"><><OutboundDocumentIntegrityPanel /><KontrolIntegritas /></></Protected>} />
-      <Route path="/riwayat" element={<Protected><Riwayat /></Protected>} />
-      <Route path="/po" element={<Protected><PurchaseOrder /></Protected>} />
-      <Route path="/supplier" element={<Protected><Supplier /></Protected>} />
-      <Route path="/antrian" element={<Protected><LayarAntrianEnhanced /></Protected>} />
+      <Route path="/riwayat" element={<Protected permission="mainInventory"><Riwayat /></Protected>} />
+      <Route path="/po" element={<Protected permission="mainInventory"><PurchaseOrder /></Protected>} />
+      <Route path="/supplier" element={<Protected permission="mainInventory"><Supplier /></Protected>} />
+      <Route path="/antrian" element={<Protected permission="mainInventory"><LayarAntrianEnhanced /></Protected>} />
       <Route path="/pengguna" element={<Protected permission="users"><Pengguna /></Protected>} />
       <Route path="/pengaturan" element={<Protected permission="settings"><Pengaturan /></Protected>} />
       <Route path="*" element={<Navigate to="/" replace />} />
