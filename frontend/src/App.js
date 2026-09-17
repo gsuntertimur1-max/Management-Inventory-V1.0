@@ -19,6 +19,7 @@ import Pengguna from './pages/Pengguna';
 import Pengaturan from './pages/Pengaturan';
 import ImportData from './pages/ImportData';
 import TumpukanUnified from './pages/TumpukanUnified';
+import MutasiTumpukan from './pages/MutasiTumpukan';
 import OpnameKonsinyasi from './pages/OpnameKonsinyasi';
 import KoreksiOperasional from './pages/KoreksiOperasional';
 import KontrolIntegritas from './pages/KontrolIntegritas';
@@ -64,6 +65,7 @@ function AppRoutes() {
       <Route path="/opname-gudang" element={<Protected><OpnameGudang /></Protected>} />
       <Route path="/opname-konsinyasi" element={<Protected><OpnameKonsinyasi /></Protected>} />
       <Route path="/catat" element={<Protected permission="operations"><CatatStok /></Protected>} />
+      <Route path="/mutasi-tumpukan" element={<Protected permission="operations"><MutasiTumpukan /></Protected>} />
       <Route path="/temuan-kerusakan" element={<Protected permission="operations"><CatatStok panel="damage" /></Protected>} />
       <Route path="/retur-pemasok" element={<Protected permission="operations"><CatatStok panel="supplier-return" /></Protected>} />
       <Route path="/pengeluaran" element={<Protected permission="outboundPage"><><PengeluaranReservationPanel /><Pengeluaran /></></Protected>} />
