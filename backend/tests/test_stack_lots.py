@@ -12,6 +12,9 @@ os.environ.setdefault("JWT_SECRET", "test-only-jwt-secret")
 
 from app import app
 from backend.stack_lots import expiry_status, lot_sort_key
+import backend.opname_lots as opname_lots
+import backend.opname_lots_conservative as opname_lots_conservative
+from backend.opname_lot_atomic import reduce_single_lot_atomic
 
 
 def _first_endpoint(path: str, method: str):
@@ -24,8 +27,13 @@ def _first_endpoint(path: str, method: str):
 def test_fefo_routes_are_registered():
     assert _first_endpoint("/api/stack-lots", "GET").__name__ == "list_stack_lots"
     assert _first_endpoint("/api/fefo-recommendations", "GET").__name__ == "fefo_recommendations"
-    assert _first_endpoint("/api/outbound-loads/{load_id}/complete", "POST").__name__ == "guarded_complete_outbound"
+    assert _first_endpoint("/api/outbound-loads/{load_id}/complete", "POST").__name__ == "hardened_complete_outbound"
     assert _first_endpoint("/api/operational-corrections/receipts/{operation_id}/void", "POST").__name__ == "void_receipt_operation"
+
+
+def test_opname_engines_use_compensated_single_lot_reducer():
+    assert opname_lots._reduce_single_lot is reduce_single_lot_atomic
+    assert opname_lots_conservative._reduce_single_lot is reduce_single_lot_atomic
 
 
 def test_fefo_sort_prioritizes_earliest_dated_lot_before_undated():
