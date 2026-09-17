@@ -5,7 +5,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.server import app
-import backend.role_four_config  # noqa: F401 - consolidates legacy roles into four warehouse roles
+import backend.role_four_config  # noqa: F401 - consolidates legacy roles into warehouse roles
 from backend.inventory_flow import router as inventory_flow_router
 from backend.master_products import router as master_products_router
 from backend.outbound_flow import router as outbound_flow_router
@@ -17,6 +17,7 @@ from backend.document_settlement_guards import router as document_settlement_gua
 from backend.return_lot_reconciliation import router as return_lot_reconciliation_router
 from backend.outbound_completion_hardening import router as outbound_completion_hardening_router
 from backend.consignment import router as consignment_router
+from backend.consignment_operations import router as consignment_operations_router, ensure_consignment_operation_indexes
 from backend.stack_allocations import router as stack_allocations_router
 from backend.stock_transfer import router as stock_transfer_router
 from backend.outbound_pdf_multi import router as outbound_pdf_multi_router
@@ -83,6 +84,8 @@ app.include_router(operational_guards_router)
 app.include_router(inventory_flow_router)
 app.include_router(master_products_router)
 app.include_router(outbound_flow_router)
+# Bazar/E-commerce operations patch consignment balances before the public consignment routes execute.
+app.include_router(consignment_operations_router)
 app.include_router(consignment_router)
 app.include_router(stack_allocations_router)
 # Dedicated internal mutation changes only physical location/subledger. It never changes product.stock.
@@ -113,6 +116,7 @@ async def hardened_lifespan(application):
         await ensure_performance_indexes()
         await ensure_operational_guard_indexes()
         await ensure_stack_lot_indexes()
+        await ensure_consignment_operation_indexes()
         yield
 
 
