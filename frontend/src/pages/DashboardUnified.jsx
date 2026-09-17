@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Boxes, Layers3, Warehouse } from 'lucide-react';
+import { Boxes, Layers3, ShoppingBag, Warehouse } from 'lucide-react';
 import Dashboard from './Dashboard';
 import './DashboardUnified.css';
 import { useData } from '../context/DataContext';
@@ -30,18 +30,23 @@ const DashboardUnified = () => {
 
   const totals = useMemo(() => {
     const main = {};
-    const consignment = {};
+    const bazar = {};
+    const ecommerce = {};
     (products || []).forEach((product) => addByUnit(main, product.unit, product.stock));
-    (consignmentStock || []).forEach((item) => addByUnit(consignment, item.unit, item.qty));
-    return { main, consignment, physical: mergeTotals(main, consignment) };
+    (consignmentStock || []).forEach((item) => {
+      if (item.destination === 'Gudang Bazar') addByUnit(bazar, item.unit, item.qty);
+      if (item.destination === 'Gudang E-commerce') addByUnit(ecommerce, item.unit, item.qty);
+    });
+    return { main, bazar, ecommerce, physical: mergeTotals(main, bazar, ecommerce) };
   }, [products, consignmentStock]);
 
   return <div className="dashboard-unified space-y-6">
     <section>
       <div className="label-mono mb-2">Posisi Persediaan Fisik</div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <SummaryCard icon={Warehouse} label="Stok Gudang Utama" value={formatTotals(totals.main)} note="Saldo yang masih berada di GBB/MP1. Tidak termasuk Bazar dan E-commerce." accent="#3b82f6" />
-        <SummaryCard icon={Boxes} label="Stok Bazar / E-commerce" value={formatTotals(totals.consignment)} note="Saldo fisik pada sub-ledger Bazar dan E-commerce." accent="#f59e0b" />
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <SummaryCard icon={Warehouse} label="Stok Gudang Utama" value={formatTotals(totals.main)} note="Saldo yang masih berada di GBB/MP1." accent="#3b82f6" />
+        <SummaryCard icon={ShoppingBag} label="Stok Bazar" value={formatTotals(totals.bazar)} note="Saldo fisik sub-ledger Gudang Bazar." accent="#f59e0b" />
+        <SummaryCard icon={Boxes} label="Stok E-commerce" value={formatTotals(totals.ecommerce)} note="Saldo fisik sub-ledger Gudang E-commerce." accent="#0ea5e9" />
         <SummaryCard icon={Layers3} label="Total Stok Fisik" value={formatTotals(totals.physical)} note="Gudang Utama + Bazar + E-commerce. Perpindahan lokasi tidak menambah total." accent="#22c55e" />
       </div>
     </section>
