@@ -17,6 +17,7 @@ from backend.operational_guards import (
     product_lock_keys,
     surat_jalan_with_exact_locations,
 )
+from backend.qc_receipt_guard import qc_receipt_allowed
 from backend.supplier_lifecycle_guards import supplier_return_lock_keys
 
 
@@ -28,7 +29,7 @@ def _first_endpoint(path: str, method: str):
 
 
 def test_guard_routes_precede_original_mutating_routes():
-    assert _first_endpoint("/api/receipts", "POST").__name__ == "guarded_receive_stock_with_metadata"
+    assert _first_endpoint("/api/receipts", "POST").__name__ == "guarded_receive_stock_qc"
     assert _first_endpoint("/api/stock-damage-discoveries", "POST").__name__ == "guarded_stock_damage_with_reservations"
     assert _first_endpoint("/api/supplier-returns", "POST").__name__ == "guarded_supplier_return_with_reservations"
     assert _first_endpoint("/api/supplier-returns/{return_id}/replacement", "POST").__name__ == "guarded_receive_supplier_replacement"
@@ -38,6 +39,13 @@ def test_guard_routes_precede_original_mutating_routes():
     assert _first_endpoint("/api/outbound-loads/{load_id}/return", "POST").__name__ == "guarded_consignment_return_document"
     assert _first_endpoint("/api/outbound-loads/{load_id}/sales-return", "POST").__name__ == "guarded_sales_return_document"
     assert _first_endpoint("/api/outbound-loads/{load_id}/settle", "POST").__name__ == "guarded_settle_outbound_document"
+
+
+def test_qc_receipt_status_gate():
+    assert qc_receipt_allowed("") is True
+    assert qc_receipt_allowed("APPROVED") is True
+    assert qc_receipt_allowed("PENDING") is False
+    assert qc_receipt_allowed("REJECTED") is False
 
 
 def test_supplier_return_lock_keys_cover_claim_and_product():
