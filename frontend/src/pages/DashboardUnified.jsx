@@ -4,6 +4,7 @@ import Dashboard from './Dashboard';
 import './DashboardUnified.css';
 import { useData } from '../context/DataContext';
 import { formatNum } from '../mock';
+import { roleDestination } from '../lib/permissions';
 
 const addByUnit = (target, unit, qty) => {
   const key = String(unit || 'Unit').trim() || 'Unit';
@@ -26,7 +27,8 @@ const SummaryCard = ({ icon: Icon, label, value, note, accent }) => <div classNa
 </div>;
 
 const DashboardUnified = () => {
-  const { products, consignmentStock } = useData();
+  const { user, products, consignmentStock } = useData();
+  const scopedDestination = roleDestination(user?.role);
 
   const totals = useMemo(() => {
     const main = {};
@@ -39,6 +41,21 @@ const DashboardUnified = () => {
     });
     return { main, bazar, ecommerce, physical: mergeTotals(main, bazar, ecommerce) };
   }, [products, consignmentStock]);
+
+  if (scopedDestination) {
+    const isBazar = scopedDestination === 'Gudang Bazar';
+    const own = isBazar ? totals.bazar : totals.ecommerce;
+    return <div className="dashboard-unified space-y-6">
+      <section>
+        <div className="label-mono mb-2">Area Kerja</div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <SummaryCard icon={isBazar ? ShoppingBag : Boxes} label={isBazar ? 'Stok Bazar' : 'Stok E-commerce'} value={formatTotals(own)} note={`Saldo aktif yang menjadi tanggung jawab ${isBazar ? 'Petugas Bazar' : 'Petugas E-commerce'}.`} accent={isBazar ? '#f59e0b' : '#0ea5e9'} />
+          <SummaryCard icon={Layers3} label="Ruang Lingkup Akses" value={isBazar ? 'BAZAR' : 'E-COM'} note="Akun ini tidak memiliki hak mengubah stok GBB/MP1 atau lokasi konsinyasi lain." accent="#22c55e" />
+        </div>
+      </section>
+      <Dashboard />
+    </div>;
+  }
 
   return <div className="dashboard-unified space-y-6">
     <section>
