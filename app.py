@@ -11,6 +11,7 @@ from backend.outbound_flow import router as outbound_flow_router
 from backend.outbound_reservation_view import router as outbound_reservation_view_router
 from backend.outbound_start_guard import router as outbound_start_guard_router
 from backend.reservation_mutation_guards import router as reservation_mutation_guards_router
+from backend.document_settlement_guards import router as document_settlement_guards_router
 from backend.consignment import router as consignment_router
 from backend.stack_allocations import router as stack_allocations_router
 from backend.pdf_documents import router as pdf_documents_router
@@ -52,6 +53,9 @@ app.include_router(outbound_start_guard_router)
 # Any mutation that can reduce stock while an outbound queue is active must validate reservations
 # inside the same product lock before delegating to the core inventory operation.
 app.include_router(reservation_mutation_guards_router)
+# Return/CR/SO settlement mutations are serialized per source load and document number.
+# This must precede generic operational guards and outbound routes exposing the same paths.
+app.include_router(document_settlement_guards_router)
 # Guard routes must be registered before the original operational routers so
 # the same public paths are serialized across Railway workers. The core outbound flow
 # performs the per-stack reservation check while these guards serialize product writes.
