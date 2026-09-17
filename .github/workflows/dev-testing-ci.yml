@@ -5,24 +5,11 @@ on:
     branches: [dev-testing]
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Apply FEFO pick-control patch
-        if: contains(github.event.head_commit.message, 'apply FEFO pick-control patch')
-        run: |
-          python tools/apply_fefo_pick_control.py
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add frontend/src/pages/CatatStok.jsx backend/outbound_flow.py backend/fefo_selection.py backend/tests/test_subledgers.py app.py
-          git commit -m "feat: guide outbound stack selection with FEFO"
-          git push origin HEAD:dev-testing
 
       - uses: actions/setup-node@v4
         with:
