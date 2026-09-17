@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { Boxes, Layers3, Warehouse } from 'lucide-react';
 import Dashboard from './Dashboard';
+import './DashboardUnified.css';
 import { useData } from '../context/DataContext';
 import { formatNum } from '../mock';
 
