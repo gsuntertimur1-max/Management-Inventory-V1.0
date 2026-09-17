@@ -1,0 +1,100 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { History, PackageCheck, PackagePlus, RefreshCcw, RotateCcw, Truck } from 'lucide-react';
+import api, { apiError } from '../lib/api';
+import { toast } from 'sonner';
+
+const inputCls = 'w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]';
+
+const EcomOperasional = () => {
+  const [availability, setAvailability] = useState([]);
+  const [orders, setOrders] = useState([]);
+  const [history, setHistory] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({ marketplace: 'Manual', orderNo: '', buyer: '', productId: '', qty: '', note: '' });
+  const [returnOrder, setReturnOrder] = useState(null);
+  const [returnRows, setReturnRows] = useState({});
+
+  const load = async () => {
+    const [a, o, h] = await Promise.all([
+      api.get('/ecom/availability'), api.get('/ecom/orders'), api.get('/consignment-operation-history?destination=Gudang%20E-commerce'),
+    ]);
+    setAvailability(a.data); setOrders(o.data); setHistory(h.data);
+  };
+
+  useEffect(() => { load().catch(() => {}); }, []);
+  const selected = useMemo(() => availability.find((x) => x.productId === form.productId), [availability, form.productId]);
+
+  const createOrder = async () => {
+    if (!form.orderNo.trim() || !form.productId || Number(form.qty) <= 0) return toast.error('Nomor pesanan, produk dan jumlah wajib diisi');
+    setSaving(true);
+    try {
+      await api.post('/ecom/orders', { marketplace: form.marketplace, orderNo: form.orderNo, buyer: form.buyer, note: form.note, items: [{ productId: form.productId, qty: Number(form.qty) }] });
+      toast.success('Pesanan dibuat dan stok E-commerce telah direservasi');
+      setForm((p) => ({ ...p, orderNo: '', buyer: '', productId: '', qty: '', note: '' }));
+      await load();
+    } catch (e) { toast.error(apiError(e)); } finally { setSaving(false); }
+  };
+
+  const setStatus = async (order, status) => {
+    try {
+      let trackingNo = order.trackingNo || '';
+      if (status === 'SHIPPED' && !trackingNo) trackingNo = window.prompt('Nomor resi (boleh dikosongkan):', '') || '';
+      await api.post(`/ecom/orders/${order.id}/status`, { status, trackingNo, note: '' });
+      toast.success(`Status pesanan menjadi ${status}`); await load();
+    } catch (e) { toast.error(apiError(e)); }
+  };
+
+  const openReturn = (order) => {
+    const rows = {}; (order.items || []).forEach((item) => { rows[item.productId] = { goodQty: '', damagedQty: '' }; });
+    setReturnRows(rows); setReturnOrder(order);
+  };
+
+  const submitReturn = async () => {
+    try {
+      const items = (returnOrder.items || []).map((item) => ({ productId: item.productId, goodQty: Number(returnRows[item.productId]?.goodQty || 0), damagedQty: Number(returnRows[item.productId]?.damagedQty || 0) }));
+      await api.post(`/ecom/orders/${returnOrder.id}/return`, { items, note: 'Retur E-commerce diterima' });
+      toast.success('Retur E-commerce diterima'); setReturnOrder(null); await load();
+    } catch (e) { toast.error(apiError(e)); }
+  };
+
+  return <div className="space-y-6">
+    <div><div className="label-mono mb-2">Operasional E-commerce</div><h1 className="font-display text-3xl sm:text-4xl font-bold">Pesanan & Fulfillment E-commerce</h1><p className="text-[#8b93a1] mt-2 text-sm">Order → Reserved → Packing → Dikirim / Batal / Retur. Stok fisik baru berkurang ketika pesanan dikirim.</p></div>
+
+    <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+      <div className="card-surface p-5 space-y-3">
+        <div className="font-semibold flex items-center gap-2"><PackagePlus size={17}/> Input Pesanan</div>
+        <select className={inputCls} value={form.marketplace} onChange={(e) => setForm({ ...form, marketplace: e.target.value })}><option>Manual</option><option>Shopee</option><option>Tokopedia</option><option>TikTok Shop</option><option>Lainnya</option></select>
+        <input className={inputCls} placeholder="Nomor pesanan" value={form.orderNo} onChange={(e) => setForm({ ...form, orderNo: e.target.value })}/>
+        <input className={inputCls} placeholder="Pembeli (opsional)" value={form.buyer} onChange={(e) => setForm({ ...form, buyer: e.target.value })}/>
+        <select className={inputCls} value={form.productId} onChange={(e) => setForm({ ...form, productId: e.target.value })}><option value="">Pilih komoditi</option>{availability.map((x) => <option key={x.productId} value={x.productId}>{x.name} · tersedia {x.availableQty} {x.unit}</option>)}</select>
+        <input type="number" min="0" className={inputCls} placeholder="Jumlah" value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })}/>
+        {selected && <div className="text-xs text-[#94a3b8]">Fisik {selected.physicalQty} · Reserved {selected.reservedQty} · Tersedia {selected.availableQty} {selected.unit}</div>}
+        <textarea className={inputCls} placeholder="Catatan" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })}/>
+        <button disabled={saving} onClick={createOrder} className="btn-primary w-full py-2.5 rounded-lg font-semibold">{saving ? 'Menyimpan…' : 'Buat & Reservasi Order'}</button>
+      </div>
+
+      <div className="card-surface p-5 xl:col-span-2">
+        <div className="flex items-center justify-between mb-4"><div className="font-semibold flex items-center gap-2"><PackageCheck size={17}/> Daftar Pesanan</div><button onClick={() => load()} className="text-xs inline-flex items-center gap-1 text-[#93c5fd]"><RefreshCcw size={13}/> Refresh</button></div>
+        <div className="space-y-3">
+          {orders.length === 0 && <div className="text-sm text-[#8b93a1]">Belum ada pesanan E-commerce.</div>}
+          {orders.map((order) => <div key={order.id} className="border border-[#243044] rounded-xl p-4">
+            <div className="flex flex-wrap justify-between gap-2"><div><div className="font-semibold">{order.marketplace} · {order.orderNo}</div><div className="text-xs text-[#8b93a1] mt-1">{order.buyer || 'Pembeli tidak dicatat'} {order.trackingNo ? `· Resi ${order.trackingNo}` : ''}</div></div><span className="text-xs px-2.5 py-1 rounded-full bg-[#2563eb]/15 text-[#93c5fd]">{order.status}</span></div>
+            <div className="mt-3 text-xs space-y-1">{(order.items || []).map((item) => <div key={item.productId} className="flex justify-between gap-3"><span>{item.name}</span><span className="font-mono">{item.qty} {item.unit}</span></div>)}</div>
+            <div className="flex flex-wrap gap-2 mt-3">
+              {order.status === 'RESERVED' && <button onClick={() => setStatus(order, 'PACKING')} className="px-3 py-2 rounded-lg border border-[#f59e0b]/40 text-[#fbbf24] text-xs font-semibold">Packing</button>}
+              {['RESERVED','PACKING'].includes(order.status) && <button onClick={() => setStatus(order, 'SHIPPED')} className="px-3 py-2 rounded-lg border border-[#22c55e]/40 text-[#86efac] text-xs font-semibold inline-flex items-center gap-1"><Truck size={13}/> Dikirim</button>}
+              {['RESERVED','PACKING'].includes(order.status) && <button onClick={() => setStatus(order, 'CANCELLED')} className="px-3 py-2 rounded-lg border border-[#ef4444]/40 text-[#fca5a5] text-xs font-semibold">Batal</button>}
+              {['SHIPPED','PARTIAL_RETURN'].includes(order.status) && <button onClick={() => openReturn(order)} className="px-3 py-2 rounded-lg border border-[#60a5fa]/40 text-[#93c5fd] text-xs font-semibold inline-flex items-center gap-1"><RotateCcw size={13}/> Terima Retur</button>}
+            </div>
+          </div>)}
+        </div>
+      </div>
+    </div>
+
+    <div className="card-surface p-5"><div className="font-semibold flex items-center gap-2 mb-4"><History size={17}/> History E-commerce</div><div className="space-y-2 max-h-[420px] overflow-auto">{history.map((row) => <div key={row.id} className="border-b border-[#1f2937] pb-2 text-xs"><div className="font-medium">{row.eventType} · {row.referenceNo}</div><div className="text-[#8b93a1]">{new Date(row.time).toLocaleString('id-ID')} · {row.operator}</div></div>)}</div></div>
+
+    {returnOrder && <div className="fixed inset-0 z-[90] bg-black/75 flex items-center justify-center p-4"><div className="card-surface w-full max-w-2xl p-6"><h2 className="font-display text-xl font-bold">Retur {returnOrder.orderNo}</h2><p className="text-xs text-[#8b93a1] mt-1 mb-4">Retur baik kembali ke stok jual E-commerce. Retur rusak dicatat di histori dan tidak menambah stok jual.</p>{(returnOrder.items || []).map((item) => <div key={item.productId} className="border border-[#243044] rounded-xl p-4 mb-3"><div className="font-semibold text-sm">{item.name} · Dikirim {item.qty} {item.unit}</div><div className="grid grid-cols-2 gap-2 mt-3"><input type="number" min="0" className={inputCls} placeholder="Retur baik" value={returnRows[item.productId]?.goodQty || ''} onChange={(e) => setReturnRows((p) => ({ ...p, [item.productId]: { ...p[item.productId], goodQty: e.target.value } }))}/><input type="number" min="0" className={inputCls} placeholder="Retur rusak" value={returnRows[item.productId]?.damagedQty || ''} onChange={(e) => setReturnRows((p) => ({ ...p, [item.productId]: { ...p[item.productId], damagedQty: e.target.value } }))}/></div></div>)}<div className="flex justify-end gap-2 mt-5"><button onClick={() => setReturnOrder(null)} className="px-4 py-2 rounded-lg border border-[#243044]">Batal</button><button onClick={submitReturn} className="btn-primary px-5 py-2 rounded-lg font-semibold">Simpan Retur</button></div></div></div>}
+  </div>;
+};
+
+export default EcomOperasional;
