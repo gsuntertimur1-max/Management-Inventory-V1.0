@@ -48,6 +48,8 @@ async def ensure_stack_lot_indexes() -> None:
     await db.stack_lots.create_index([("remainingQty", 1), ("exp", 1)], name="stack_lot_remaining_exp")
     await db.stack_lot_movements.create_index([("loadId", 1), ("time", -1)], name="lot_movement_load")
     await db.stack_lot_movements.create_index([("lotId", 1), ("time", -1)], name="lot_movement_lot")
+    await db.stack_lot_movements.create_index([("movementType", 1), ("productId", 1), ("stackCode", 1)], name="lot_movement_type_stack")
+    await db.stack_lot_movements.create_index([("sourceReturnMovementId", 1), ("movementType", 1)], name="lot_return_reconciliation_source")
 
 
 async def record_receipt_lots(body, result: dict) -> None:
@@ -186,22 +188,73 @@ async def list_stack_lots(productId: str = "", stackCode: str = "", includeEmpty
     return lots
 
 
+async def _pending_return_reconciliation_by_stack() -> dict[tuple[str, str], float]:
+    movements = await db.stack_lot_movements.find(
+        {"movementType": {"$in": ["RETURN_UNTRACKED", "RETURN_RECONCILED"]}},
+        {"_id": 0, "id": 1, "movementType": 1, "sourceReturnMovementId": 1, "productId": 1, "stackCode": 1, "qty": 1},
+    ).to_list(50000)
+    source_rows: dict[str, dict] = {}
+    reconciled = defaultdict(float)
+    for movement in movements:
+        if movement.get("movementType") == "RETURN_UNTRACKED":
+            source_id = str(movement.get("id") or "")
+            if source_id:
+                source_rows[source_id] = movement
+        elif movement.get("movementType") == "RETURN_RECONCILED":
+            source_id = str(movement.get("sourceReturnMovementId") or "")
+            if source_id:
+                reconciled[source_id] += abs(_n(movement.get("qty")))
+
+    result = defaultdict(float)
+    for source_id, source in source_rows.items():
+        remaining = max(_n(source.get("qty")) - reconciled.get(source_id, 0.0), 0.0)
+        product_id = str(source.get("productId") or "")
+        stack_code = str(source.get("stackCode") or "").strip().upper()
+        if remaining > EPS and product_id and stack_code:
+            result[(product_id, stack_code)] += remaining
+    return dict(result)
+
+
 @router.get("/fefo-recommendations")
 async def fefo_recommendations(user: dict = Depends(get_current_user)):
-    lots = await db.stack_lots.find({"remainingQty": {"$gt": EPS}}, {"_id": 0}).to_list(50000)
+    lots = await db.stack_lots.find({"remainingQty": {"$gt": EPS}, "status": {"$nin": ["DIBATALKAN"]}}, {"_id": 0}).to_list(50000)
     lots.sort(key=lot_sort_key)
     by_product: dict[str, list[dict]] = defaultdict(list)
+    tracked_by_stack = defaultdict(float)
+    lots_by_stack: dict[tuple[str, str], list[dict]] = defaultdict(list)
     for lot in lots:
         lot["expiryStatus"] = expiry_status(lot.get("exp", ""))
-        by_product[str(lot.get("productId") or "")].append(lot)
+        product_id = str(lot.get("productId") or "")
+        stack_code = str(lot.get("stackCode") or "").strip().upper()
+        by_product[product_id].append(lot)
+        if product_id and stack_code:
+            key = (product_id, stack_code)
+            tracked_by_stack[key] += _n(lot.get("remainingQty"))
+            lots_by_stack[key].append(lot)
 
-    allocations = await db.stack_allocations.find({}, {"_id": 0, "productId": 1, "productName": 1, "sku": 1, "unit": 1, "primaryQty": 1}).to_list(50000)
+    allocations = await db.stack_allocations.find(
+        {},
+        {"_id": 0, "productId": 1, "productName": 1, "sku": 1, "unit": 1, "stackCode": 1, "primaryQty": 1},
+    ).to_list(50000)
     stack_totals = defaultdict(float)
+    physical_by_stack = defaultdict(float)
     identity = {}
+    stacks_by_product: dict[str, set[str]] = defaultdict(set)
     for allocation in allocations:
         product_id = str(allocation.get("productId") or "")
-        stack_totals[product_id] += _n(allocation.get("primaryQty"))
+        stack_code = str(allocation.get("stackCode") or "").strip().upper()
+        qty = _n(allocation.get("primaryQty"))
+        stack_totals[product_id] += qty
+        if product_id and stack_code:
+            physical_by_stack[(product_id, stack_code)] += qty
+            stacks_by_product[product_id].add(stack_code)
         identity.setdefault(product_id, {"sku": allocation.get("sku", ""), "product": allocation.get("productName", ""), "unit": allocation.get("unit", "")})
+
+    pending_return_by_stack = await _pending_return_reconciliation_by_stack()
+    for product_id, stack_code in tracked_by_stack:
+        stacks_by_product[product_id].add(stack_code)
+    for product_id, stack_code in pending_return_by_stack:
+        stacks_by_product[product_id].add(stack_code)
 
     result = []
     for product_id in set(stack_totals) | set(by_product):
@@ -209,11 +262,56 @@ async def fefo_recommendations(user: dict = Depends(get_current_user)):
         tracked = sum(_n(lot.get("remainingQty")) for lot in product_lots)
         stack_qty = stack_totals.get(product_id, 0.0)
         meta = identity.get(product_id) or (product_lots[0] if product_lots else {})
+        stack_coverage = []
+        pending_return_total = 0.0
+        for stack_code in sorted(stacks_by_product.get(product_id, set())):
+            key = (product_id, stack_code)
+            physical = physical_by_stack.get(key, 0.0)
+            tracked_stack = tracked_by_stack.get(key, 0.0)
+            untracked_stack = max(physical - tracked_stack, 0.0)
+            pending_return = pending_return_by_stack.get(key, 0.0)
+            pending_return_total += pending_return
+            stack_lots = sorted(lots_by_stack.get(key, []), key=lot_sort_key)
+            if pending_return > EPS:
+                coverage_status = "PENDING_RETURN_RECONCILIATION"
+            elif untracked_stack > EPS and tracked_stack > EPS:
+                coverage_status = "MIXED"
+            elif untracked_stack > EPS:
+                coverage_status = "LEGACY"
+            else:
+                coverage_status = "VERIFIED"
+            stack_coverage.append({
+                "stackCode": stack_code,
+                "physicalQty": physical,
+                "trackedQty": tracked_stack,
+                "untrackedQty": untracked_stack,
+                "coveragePct": (tracked_stack / physical * 100.0) if physical > EPS else (100.0 if tracked_stack <= EPS else 0.0),
+                "pendingReturnQty": pending_return,
+                "coverageStatus": coverage_status,
+                "nextLot": stack_lots[0] if stack_lots else None,
+                "lotCount": len(stack_lots),
+            })
+        stack_coverage.sort(key=lambda row: (
+            0 if row.get("pendingReturnQty", 0) > EPS else 1,
+            0 if row.get("untrackedQty", 0) > EPS else 1,
+            lot_sort_key(row.get("nextLot") or {}),
+            row.get("stackCode", ""),
+        ))
         result.append({
             "productId": product_id, "sku": meta.get("sku", ""), "product": meta.get("product", ""), "unit": meta.get("unit", ""),
             "stackQty": stack_qty, "trackedQty": tracked, "untrackedQty": max(stack_qty - tracked, 0.0),
             "coveragePct": (tracked / stack_qty * 100) if stack_qty > EPS else 100.0,
-            "nextLot": product_lots[0] if product_lots else None, "lots": product_lots[:20],
+            "pendingReturnQty": pending_return_total,
+            "fefoBlockedByLegacy": any(_n(row.get("untrackedQty")) > EPS for row in stack_coverage),
+            "nextLot": product_lots[0] if product_lots else None,
+            "lots": product_lots[:20],
+            "stackCoverage": stack_coverage,
         })
-    result.sort(key=lambda row: (0 if row.get("nextLot") else 1, lot_sort_key(row.get("nextLot") or {}), str(row.get("product") or "")))
+    result.sort(key=lambda row: (
+        0 if _n(row.get("pendingReturnQty")) > EPS else 1,
+        0 if _n(row.get("untrackedQty")) > EPS else 1,
+        0 if row.get("nextLot") else 1,
+        lot_sort_key(row.get("nextLot") or {}),
+        str(row.get("product") or ""),
+    ))
     return result
