@@ -7,6 +7,8 @@ compatible, while permissions and labels are consolidated to:
 Superadmin, Kepala Gudang, Admin Operasional, Viewer.
 """
 
+from fastapi import Depends, HTTPException
+
 import backend.server as server
 
 ROLE_SUPERADMIN = server.ROLE_SUPERADMIN          # Administrator
@@ -62,11 +64,24 @@ def has_four_role_permission(role: str | None, permission: str) -> bool:
     if permission == "view":
         return canonical in FOUR_ROLE_PERMISSIONS
     if permission == "operations":
-        return permission in FOUR_ROLE_PERMISSIONS.get(canonical, set()) or (
+        return (
             "inbound" in FOUR_ROLE_PERMISSIONS.get(canonical, set())
             or "outbound" in FOUR_ROLE_PERMISSIONS.get(canonical, set())
         )
     return permission in FOUR_ROLE_PERMISSIONS.get(canonical, set())
+
+
+async def require_operational_approval(user: dict = Depends(server.get_current_user)) -> dict:
+    """Operational admin dependency for routers loaded after this module.
+
+    Server-owned user/settings endpoints were registered before this compatibility
+    layer and therefore remain Superadmin-only. Operational correction/integrity
+    routers imported afterwards may be used by Kepala Gudang as intended.
+    """
+    canonical = canonical_four_role(user.get("role"))
+    if canonical not in {ROLE_SUPERADMIN, ROLE_WAREHOUSE_HEAD}:
+        raise HTTPException(status_code=403, detail="Hanya Superadmin atau Kepala Gudang yang diizinkan")
+    return user
 
 
 def configure_four_roles() -> None:
@@ -79,6 +94,10 @@ def configure_four_roles() -> None:
     server.canonical_role = canonical_four_role
     server.has_role_permission = has_four_role_permission
     server.WRITE_ROLES = {ROLE_SUPERADMIN, ROLE_WAREHOUSE_HEAD, ROLE_ADMIN}
+    # Only routers imported after this module receive the broader operational
+    # approval dependency. Existing server routes for users/settings keep the
+    # original Superadmin-only dependency captured during server import.
+    server.require_admin = require_operational_approval
 
 
 configure_four_roles()
