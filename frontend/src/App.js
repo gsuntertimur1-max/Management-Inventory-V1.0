@@ -5,6 +5,7 @@ import { Toaster } from 'sonner';
 import { DataProvider, useData } from './context/DataContext';
 import Layout from './components/Layout';
 import PengeluaranReservationPanel from './components/PengeluaranReservationPanel';
+import OutboundDocumentIntegrityPanel from './components/OutboundDocumentIntegrityPanel';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import DaftarProduk from './pages/DaftarProduk';
@@ -67,7 +68,7 @@ function AppRoutes() {
       <Route path="/retur-pemasok" element={<Protected permission="operations"><CatatStok panel="supplier-return" /></Protected>} />
       <Route path="/pengeluaran" element={<Protected permission="outboundPage"><><PengeluaranReservationPanel /><Pengeluaran /></></Protected>} />
       <Route path="/koreksi-operasional" element={<Protected permission="corrections"><KoreksiOperasional /></Protected>} />
-      <Route path="/kontrol-integritas" element={<Protected permission="masterWrite"><KontrolIntegritas /></Protected>} />
+      <Route path="/kontrol-integritas" element={<Protected permission="masterWrite"><><OutboundDocumentIntegrityPanel /><KontrolIntegritas /></></Protected>} />
       <Route path="/riwayat" element={<Protected><Riwayat /></Protected>} />
       <Route path="/po" element={<Protected><PurchaseOrder /></Protected>} />
       <Route path="/supplier" element={<Protected><Supplier /></Protected>} />
