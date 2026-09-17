@@ -14,7 +14,7 @@ import Riwayat from './pages/Riwayat';
 import Pengeluaran from './pages/Pengeluaran';
 import PurchaseOrder from './pages/PurchaseOrder';
 import Supplier from './pages/Supplier';
-import LayarAntrian from './pages/LayarAntrian';
+import LayarAntrianEnhanced from './pages/LayarAntrianEnhanced';
 import Pengguna from './pages/Pengguna';
 import Pengaturan from './pages/Pengaturan';
 import ImportData from './pages/ImportData';
@@ -72,7 +72,7 @@ function AppRoutes() {
       <Route path="/riwayat" element={<Protected><Riwayat /></Protected>} />
       <Route path="/po" element={<Protected><PurchaseOrder /></Protected>} />
       <Route path="/supplier" element={<Protected><Supplier /></Protected>} />
-      <Route path="/antrian" element={<Protected><LayarAntrian /></Protected>} />
+      <Route path="/antrian" element={<Protected><LayarAntrianEnhanced /></Protected>} />
       <Route path="/pengguna" element={<Protected permission="users"><Pengguna /></Protected>} />
       <Route path="/pengaturan" element={<Protected permission="settings"><Pengaturan /></Protected>} />
       <Route path="*" element={<Navigate to="/" replace />} />
