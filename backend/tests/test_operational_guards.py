@@ -17,6 +17,7 @@ from backend.operational_guards import (
     product_lock_keys,
     surat_jalan_with_exact_locations,
 )
+from backend.supplier_lifecycle_guards import supplier_return_lock_keys
 
 
 def _first_endpoint(path: str, method: str):
@@ -30,12 +31,17 @@ def test_guard_routes_precede_original_mutating_routes():
     assert _first_endpoint("/api/receipts", "POST").__name__ == "guarded_receive_stock_with_metadata"
     assert _first_endpoint("/api/stock-damage-discoveries", "POST").__name__ == "guarded_stock_damage_with_reservations"
     assert _first_endpoint("/api/supplier-returns", "POST").__name__ == "guarded_supplier_return_with_reservations"
+    assert _first_endpoint("/api/supplier-returns/{return_id}/replacement", "POST").__name__ == "guarded_receive_supplier_replacement"
     assert _first_endpoint("/api/outbound-loads", "POST").__name__ == "guarded_create_outbound"
     assert _first_endpoint("/api/outbound-loads/{load_id}/complete", "POST").__name__ == "hardened_complete_outbound"
     assert _first_endpoint("/api/outbound-loads/{load_id}/repair-completion", "POST").__name__ == "repair_completed_outbound"
     assert _first_endpoint("/api/outbound-loads/{load_id}/return", "POST").__name__ == "guarded_consignment_return_document"
     assert _first_endpoint("/api/outbound-loads/{load_id}/sales-return", "POST").__name__ == "guarded_sales_return_document"
     assert _first_endpoint("/api/outbound-loads/{load_id}/settle", "POST").__name__ == "guarded_settle_outbound_document"
+
+
+def test_supplier_return_lock_keys_cover_claim_and_product():
+    assert supplier_return_lock_keys("ret-2", "prod-1") == ["product:prod-1", "supplier-return:ret-2"]
 
 
 def test_return_lot_reconciliation_routes_are_registered():
