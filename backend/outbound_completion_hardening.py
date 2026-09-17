@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
-from backend.server import db, now_iso, require_write
+from backend.server import db, now_iso, require_admin, require_write
 from backend.outbound_flow import complete_outbound_load
 from backend.operational_guards import (
     _load_product_ids,
     _tag_load_transaction_product_ids,
     idempotent_operation,
+    operation_guard,
     product_lock_keys,
     surat_jalan_with_exact_locations,
 )
@@ -54,6 +55,72 @@ async def _resolve_issue(load_id: str, stage: str) -> None:
         logger.exception("Gagal menutup post-commit issue %s untuk load %s", stage, load_id)
 
 
+async def _enrich_completed_outbound(load_id: str, load: dict, surat_jalan: dict | None = None) -> dict:
+    warnings = []
+    result: dict = {}
+
+    try:
+        await _tag_load_transaction_product_ids(load_id, load)
+        await _resolve_issue(load_id, "TRANSACTION_METADATA")
+    except Exception as exc:
+        logger.exception("Outbound %s selesai tetapi tagging transaksi gagal", load_id)
+        await _record_issue(load_id, "TRANSACTION_METADATA", exc)
+        warnings.append("Metadata transaksi belum lengkap dan masuk antrean perbaikan integritas.")
+
+    try:
+        sj_source = surat_jalan
+        if not sj_source:
+            sj_id = str(load.get("surat_jalan_id") or "")
+            if sj_id:
+                sj_source = await db.surat_jalan.find_one({"id": sj_id}, {"_id": 0})
+            if not sj_source:
+                sj_source = await db.surat_jalan.find_one({"load_id": load_id}, {"_id": 0})
+        sj = surat_jalan_with_exact_locations(load, sj_source)
+        if sj and sj.get("id"):
+            await db.surat_jalan.update_one(
+                {"id": sj["id"]},
+                {"$set": {"items": sj.get("items", []), "unit_loading": sj.get("unit_loading", "")}},
+            )
+            result["suratJalan"] = sj
+        await _resolve_issue(load_id, "SURAT_JALAN_LOCATION")
+    except Exception as exc:
+        logger.exception("Outbound %s selesai tetapi enrichment Surat Jalan gagal", load_id)
+        await _record_issue(load_id, "SURAT_JALAN_LOCATION", exc)
+        warnings.append("Lokasi detail Surat Jalan belum tersinkron dan masuk antrean perbaikan integritas.")
+
+    try:
+        fefo = await consume_stack_lots_conservative(load)
+        result["fefo"] = fefo
+        await db.outbound_loads.update_one(
+            {"id": load_id},
+            {"$set": {
+                "fefo_tracked_qty": fefo.get("tracked", 0),
+                "fefo_untracked_qty": fefo.get("untracked", 0),
+                "fefo_legacy_protected_qty": fefo.get("legacyProtected", 0),
+                "fefo_policy": fefo.get("policy", "CONSERVATIVE_LEGACY_FIRST"),
+                "fefo_sync_status": "SYNCED",
+                "fefo_synced_at": now_iso(),
+                "fefo_sync_error": "",
+            }},
+        )
+        await _resolve_issue(load_id, "FEFO_SYNC")
+    except Exception as exc:
+        logger.exception("Outbound %s selesai tetapi sinkronisasi FEFO gagal", load_id)
+        try:
+            await db.outbound_loads.update_one(
+                {"id": load_id},
+                {"$set": {"fefo_sync_status": "REPAIR_REQUIRED", "fefo_sync_error": str(exc)[:500]}},
+            )
+        except Exception:
+            logger.exception("Gagal menandai FEFO repair required untuk %s", load_id)
+        await _record_issue(load_id, "FEFO_SYNC", exc)
+        warnings.append("FEFO belum tersinkron. Stok outbound tetap sah; Kontrol Integritas menandai kebutuhan repair.")
+
+    if warnings:
+        result["postCommitWarnings"] = warnings
+    return result
+
+
 @router.post("/outbound-loads/{load_id}/complete")
 async def hardened_complete_outbound(load_id: str, request: Request, user: dict = Depends(require_write)):
     _, product_ids = await _load_product_ids(load_id)
@@ -62,65 +129,17 @@ async def hardened_complete_outbound(load_id: str, request: Request, user: dict 
         # Core stock/document mutation remains authoritative and rollback-capable.
         result = await complete_outbound_load(load_id, user)
         load = result.get("load") or await db.outbound_loads.find_one({"id": load_id}, {"_id": 0}) or {}
-        warnings = []
-
-        # Metadata enrichment must never turn a committed outbound into a false API failure.
-        try:
-            await _tag_load_transaction_product_ids(load_id, load)
-            await _resolve_issue(load_id, "TRANSACTION_METADATA")
-        except Exception as exc:
-            logger.exception("Outbound %s selesai tetapi tagging transaksi gagal", load_id)
-            await _record_issue(load_id, "TRANSACTION_METADATA", exc)
-            warnings.append("Metadata transaksi belum lengkap dan masuk antrean perbaikan integritas.")
-
-        try:
-            sj = surat_jalan_with_exact_locations(load, result.get("suratJalan"))
-            if sj and sj.get("id"):
-                await db.surat_jalan.update_one(
-                    {"id": sj["id"]},
-                    {"$set": {"items": sj.get("items", []), "unit_loading": sj.get("unit_loading", "")}},
-                )
-                result["suratJalan"] = sj
-            await _resolve_issue(load_id, "SURAT_JALAN_LOCATION")
-        except Exception as exc:
-            logger.exception("Outbound %s selesai tetapi enrichment Surat Jalan gagal", load_id)
-            await _record_issue(load_id, "SURAT_JALAN_LOCATION", exc)
-            warnings.append("Lokasi detail Surat Jalan belum tersinkron dan masuk antrean perbaikan integritas.")
-
-        try:
-            fefo = await consume_stack_lots_conservative(load)
-            result["fefo"] = fefo
-            await db.outbound_loads.update_one(
-                {"id": load_id},
-                {"$set": {
-                    "fefo_tracked_qty": fefo.get("tracked", 0),
-                    "fefo_untracked_qty": fefo.get("untracked", 0),
-                    "fefo_legacy_protected_qty": fefo.get("legacyProtected", 0),
-                    "fefo_policy": fefo.get("policy", "CONSERVATIVE_LEGACY_FIRST"),
-                    "fefo_sync_status": "SYNCED",
-                    "fefo_synced_at": now_iso(),
-                }},
-            )
-            if result.get("load"):
-                result["load"].update({
-                    "fefo_tracked_qty": fefo.get("tracked", 0),
-                    "fefo_untracked_qty": fefo.get("untracked", 0),
-                    "fefo_legacy_protected_qty": fefo.get("legacyProtected", 0),
-                    "fefo_policy": fefo.get("policy", "CONSERVATIVE_LEGACY_FIRST"),
-                    "fefo_sync_status": "SYNCED",
-                })
-            await _resolve_issue(load_id, "FEFO_SYNC")
-        except Exception as exc:
-            logger.exception("Outbound %s selesai tetapi sinkronisasi FEFO gagal", load_id)
-            await db.outbound_loads.update_one(
-                {"id": load_id},
-                {"$set": {"fefo_sync_status": "REPAIR_REQUIRED", "fefo_sync_error": str(exc)[:500]}},
-            )
-            await _record_issue(load_id, "FEFO_SYNC", exc)
-            warnings.append("FEFO belum tersinkron. Stok outbound tetap sah; Kontrol Integritas menandai kebutuhan repair.")
-
-        if warnings:
-            result["postCommitWarnings"] = warnings
+        enrichment = await _enrich_completed_outbound(load_id, load, result.get("suratJalan"))
+        result.update(enrichment)
+        if result.get("load") and enrichment.get("fefo"):
+            fefo = enrichment["fefo"]
+            result["load"].update({
+                "fefo_tracked_qty": fefo.get("tracked", 0),
+                "fefo_untracked_qty": fefo.get("untracked", 0),
+                "fefo_legacy_protected_qty": fefo.get("legacyProtected", 0),
+                "fefo_policy": fefo.get("policy", "CONSERVATIVE_LEGACY_FIRST"),
+                "fefo_sync_status": "SYNCED",
+            })
         return result
 
     return await idempotent_operation(
@@ -130,3 +149,27 @@ async def hardened_complete_outbound(load_id: str, request: Request, user: dict 
         product_lock_keys(product_ids),
         action,
     )
+
+
+@router.post("/outbound-loads/{load_id}/repair-completion")
+async def repair_completed_outbound(load_id: str, user: dict = Depends(require_admin)):
+    load, product_ids = await _load_product_ids(load_id)
+    if str(load.get("status") or "") != "Selesai":
+        raise HTTPException(status_code=400, detail="Repair completion hanya untuk pemuatan yang sudah berstatus Selesai")
+
+    async with operation_guard(product_lock_keys(product_ids) + [f"outbound-repair:{load_id}"]):
+        current = await db.outbound_loads.find_one({"id": load_id}, {"_id": 0}) or load
+        enrichment = await _enrich_completed_outbound(load_id, current)
+        open_issues = await db.operational_postcommit_issues.find(
+            {"loadId": load_id, "operation": "OUTBOUND_COMPLETE", "status": "OPEN"},
+            {"_id": 0},
+        ).to_list(20)
+        return {
+            "loadId": load_id,
+            "status": "REPAIRED" if not open_issues else "PARTIAL",
+            "postCommitWarnings": enrichment.get("postCommitWarnings", []),
+            "fefo": enrichment.get("fefo"),
+            "suratJalan": enrichment.get("suratJalan"),
+            "openIssues": open_issues,
+            "stockPhysicalChanged": False,
+        }
