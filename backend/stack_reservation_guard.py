@@ -13,12 +13,18 @@ EPS = 1e-9
 ACTIVE_STATUSES = ["Menunggu", "Sedang Dimuat"]
 
 
+def _item_value(item, key: str, default=None):
+    if isinstance(item, dict):
+        return item.get(key, default)
+    return getattr(item, key, default)
+
+
 def aggregate_stack_demand(items) -> dict[tuple[str, str], float]:
     demand: dict[tuple[str, str], float] = defaultdict(float)
     for item in items:
-        product_id = str(getattr(item, "productId", None) or item.get("productId", "") if isinstance(item, dict) else "").strip()
-        stack_code = str(getattr(item, "stackCode", None) or item.get("stackCode", "") if isinstance(item, dict) else "").strip().upper()
-        qty = float(getattr(item, "qty", None) if not isinstance(item, dict) else item.get("qty", 0) or 0)
+        product_id = str(_item_value(item, "productId", "") or "").strip()
+        stack_code = str(_item_value(item, "stackCode", "") or "").strip().upper()
+        qty = float(_item_value(item, "qty", 0) or 0)
         if product_id and stack_code and qty > 0:
             demand[(product_id, stack_code)] += qty
     return dict(demand)
