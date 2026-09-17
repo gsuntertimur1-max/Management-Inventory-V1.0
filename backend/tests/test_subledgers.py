@@ -10,11 +10,14 @@ os.environ.setdefault("MONGO_URL", "mongodb://127.0.0.1:27017")
 os.environ.setdefault("DB_NAME", "management_inventory_test")
 os.environ.setdefault("JWT_SECRET", "test-only-jwt-secret")
 
+from fastapi import HTTPException
+
 from app import app
 from backend.integrity_lots import apply_lot_integrity
 from backend.damaged_stock_area import damaged_movement_qty
 from backend.damaged_outbound import DAMAGED_AREA, DAMAGED_QUEUE_PREFIX, damaged_loading_context
 from backend.opname_lots import LotReconcileInput
+from backend.opname_reconcile_guard import aggregate_lot_reconcile_input
 
 
 def _first_endpoint(path: str, method: str):
@@ -31,7 +34,7 @@ def test_lot_integrity_wrapper_is_first_route():
 def test_stock_opname_lot_wrapper_is_first_approval_route():
     assert _first_endpoint("/api/stock-opnames/{opname_id}/approve", "POST").__name__ == "approve_stock_opname"
     assert _first_endpoint("/api/stock-opnames/{opname_id}/sync-lots", "POST").__name__ == "repair_stock_opname_lots"
-    assert _first_endpoint("/api/stock-opnames/{opname_id}/reconcile-lots", "POST").__name__ == "reconcile_stock_opname_lots"
+    assert _first_endpoint("/api/stock-opnames/{opname_id}/reconcile-lots", "POST").__name__ == "guarded_reconcile_stock_opname_lots"
 
 
 def test_lot_reconciliation_rejects_zero_quantity():
@@ -40,6 +43,32 @@ def test_lot_reconciliation_rejects_zero_quantity():
     except Exception:
         return
     raise AssertionError("Kuantum rekonsiliasi lot nol harus ditolak")
+
+
+def test_duplicate_lot_reconciliation_rows_are_aggregated_once():
+    body = LotReconcileInput(items=[
+        {"productId": "p1", "stackCode": "18/a01", "lotId": "lot1", "qty": 2},
+        {"productId": "p1", "stackCode": "18/A01", "lotId": "lot1", "qty": 3},
+    ], note="hitung ulang fisik")
+    normalized = aggregate_lot_reconcile_input(body)
+    assert len(normalized.items) == 1
+    assert normalized.items[0].lotId == "lot1"
+    assert normalized.items[0].stackCode == "18/A01"
+    assert normalized.items[0].qty == 5
+    assert normalized.note == "hitung ulang fisik"
+
+
+def test_duplicate_lot_cannot_cross_stack_in_one_request():
+    body = LotReconcileInput(items=[
+        {"productId": "p1", "stackCode": "18/A01", "lotId": "lot1", "qty": 1},
+        {"productId": "p1", "stackCode": "18/A02", "lotId": "lot1", "qty": 1},
+    ])
+    try:
+        aggregate_lot_reconcile_input(body)
+    except HTTPException as exc:
+        assert exc.status_code == 400
+        return
+    raise AssertionError("Lot yang sama pada dua tumpukan harus ditolak")
 
 
 def test_damaged_stock_area_route_is_registered():
