@@ -23,6 +23,7 @@ from backend.operational_guards import router as operational_guards_router, ensu
 from backend.operational_corrections import router as operational_corrections_router
 from backend.integrity_control import router as integrity_control_router
 from backend.integrity_lots import router as integrity_lots_router
+from backend.integrity_postcommit import router as integrity_postcommit_router
 from backend.stock_opname import router as stock_opname_router
 from backend.opname_lots import router as opname_lots_router
 from backend.opname_lots_conservative import router as opname_lots_conservative_router
@@ -76,7 +77,8 @@ app.include_router(pdf_documents_router)
 app.include_router(queue_flow_router)
 # Authoritative outbound reservation view is available to authenticated operators.
 app.include_router(outbound_reservation_view_router)
-# Integrity wrapper adds FEFO/lot coverage before the base integrity endpoint.
+# Integrity wrapper adds post-commit repair issues on top of lot/document integrity.
+app.include_router(integrity_postcommit_router)
 app.include_router(integrity_lots_router)
 app.include_router(integrity_control_router)
 app.include_router(stock_opname_router)
