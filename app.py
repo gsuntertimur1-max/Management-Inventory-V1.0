@@ -23,6 +23,7 @@ from backend.queue_flow import router as queue_flow_router
 from backend.runtime_hardening import ensure_performance_indexes, hardening_middleware
 from backend.operational_guards import router as operational_guards_router, ensure_operational_guard_indexes
 from backend.operational_corrections import router as operational_corrections_router
+from backend.qc_receipt_guard import router as qc_receipt_guard_router
 from backend.integrity_control import router as integrity_control_router
 from backend.integrity_lots import router as integrity_lots_router
 from backend.integrity_postcommit import router as integrity_postcommit_router
@@ -39,6 +40,9 @@ from backend.damaged_stock_area import router as damaged_stock_area_router
 from backend.damaged_outbound import router as damaged_outbound_router
 import backend.opname_lot_atomic  # noqa: F401 - installs compensated lot reducer for opname engines
 
+# QC state is authoritative for explicit QC-linked receipts. PENDING/REJECTED must
+# stop before any stock mutation; approved receipts delegate to the hardened receipt path.
+app.include_router(qc_receipt_guard_router)
 # Lot-aware wrappers must precede the generic correction/guard routes.
 app.include_router(lot_corrections_router)
 # Koreksi penerimaan mendaftarkan pembungkus /api/receipts lebih dulu agar
