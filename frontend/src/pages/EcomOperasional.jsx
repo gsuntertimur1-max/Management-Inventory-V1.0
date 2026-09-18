@@ -2,10 +2,12 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { History, PackageCheck, PackagePlus, Plus, RefreshCcw, RotateCcw, Truck } from 'lucide-react';
 import api, { apiError } from '../lib/api';
 import { toast } from 'sonner';
+import { useData } from '../context/DataContext';
 
 const inputCls = 'w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]';
 
 const EcomOperasional = () => {
+  const { refreshConsignmentFlow } = useData();
   const [availability, setAvailability] = useState([]);
   const [orders, setOrders] = useState([]);
   const [history, setHistory] = useState([]);
@@ -54,7 +56,7 @@ const EcomOperasional = () => {
       let trackingNo = order.trackingNo || '';
       if (status === 'SHIPPED' && !trackingNo) trackingNo = window.prompt('Nomor resi (boleh dikosongkan):', '') || '';
       await api.post(`/ecom/orders/${order.id}/status`, { status, trackingNo, note: '' });
-      toast.success(`Status pesanan menjadi ${status}`); await load();
+      toast.success(`Status pesanan menjadi ${status}`); await Promise.all([load(), refreshConsignmentFlow()]);
     } catch (e) { toast.error(apiError(e)); }
   };
 
@@ -67,7 +69,7 @@ const EcomOperasional = () => {
     try {
       const items = (returnOrder.items || []).map((item) => ({ productId: item.productId, goodQty: Number(returnRows[item.productId]?.goodQty || 0), damagedQty: Number(returnRows[item.productId]?.damagedQty || 0) }));
       await api.post(`/ecom/orders/${returnOrder.id}/return`, { items, note: 'Retur E-commerce diterima' });
-      toast.success('Retur E-commerce diterima'); setReturnOrder(null); await load();
+      toast.success('Retur E-commerce diterima'); setReturnOrder(null); await Promise.all([load(), refreshConsignmentFlow()]);
     } catch (e) { toast.error(apiError(e)); }
   };
 
