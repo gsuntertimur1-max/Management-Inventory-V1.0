@@ -61,12 +61,16 @@ def clean_master(body: MasterProductBody) -> dict:
     if doc["channel"] not in {"PSO", "KOM"}:
         raise HTTPException(status_code=400, detail="Saluran produk harus PSO atau KOM")
     doc["loadingFeeChargeMode"] = str(doc.get("loadingFeeChargeMode") or "TIDAK_ADA").strip().upper()
+    if doc["loadingFeeChargeMode"] == "0":
+        doc["loadingFeeChargeMode"] = "TIDAK_ADA"
     if doc["loadingFeeChargeMode"] not in {"PENGAMBIL", "TERMASUK", "TIDAK_ADA"}:
         raise HTTPException(status_code=400, detail="Status biaya muat tidak valid")
     fee_keys = [key for key in doc if key.startswith(("loadingFee", "unloadingFee", "loadingOvertime", "loadingHoliday", "unloadingOvertime", "unloadingHoliday")) and key.endswith(("Labor", "Daily", "Warehouse"))]
     for key in fee_keys:
         doc[key] = float(doc.get(key, 0) or 0)
     doc["unloadingFeeChargeMode"] = str(doc.get("unloadingFeeChargeMode") or "TIDAK_ADA").strip().upper()
+    if doc["unloadingFeeChargeMode"] == "0":
+        doc["unloadingFeeChargeMode"] = "TIDAK_ADA"
     if doc["unloadingFeeChargeMode"] not in {"PENGIRIM", "TERMASUK", "TIDAK_ADA"}:
         raise HTTPException(status_code=400, detail="Status biaya bongkar tidak valid")
     if doc["loadingFeeChargeMode"] == "TIDAK_ADA" and sum(doc[key] for key in ("loadingFeeLabor", "loadingFeeDaily", "loadingFeeWarehouse")) > 0:
