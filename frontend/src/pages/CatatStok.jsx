@@ -480,7 +480,7 @@ const CatatStok = ({ panel = '' }) => {
               <div><label className="text-xs text-[#fcd34d] block mb-1">Mulai bongkar</label><input type="time" value={unloadingStartTime} onChange={(e) => { setUnloadingStartTime(e.target.value); setShowUnloadingSplit(false); }} className="w-full bg-[#0b0f17] border border-[#7c5a1f] rounded-lg px-3 py-2.5 font-mono" /></div>
               <div className="rounded-lg border border-[#4b3b1c] px-3 py-2.5 text-xs text-[#d8c995]">{(() => { const start = timeMinutes(unloadingStartTime); const now = wibMinutesNow(); if (start === null) return 'Isi waktu mulai bongkar.'; if (start >= 16 * 60) return 'Lembur penuh: seluruh kuantitas mendapat tambahan lembur.'; if (now >= 16 * 60) return 'Lembur parsial: isi kuantitas selesai sampai 16.00 di bawah.'; return 'Masih jam normal. Jika penyelesaian melewati 16.00, sistem akan meminta split kuantitas.'; })()}</div>
             </div>
-          </div>
+          </div>}
 
           <div className="mb-5 rounded-xl border border-[#294263] bg-[#0d1728] p-4">
             <label className="flex items-center gap-3 cursor-pointer"><input type="checkbox" checked={weighingForm} onChange={(e) => setWeighingForm(e.target.checked)} className="h-4 w-4 accent-[#2563eb]" /><span><span className="text-sm font-semibold">Buat form timbangan</span><span className="block text-xs text-[#8fb8ef] mt-0.5">Opsional. Sistem mengisi 20 baris bruto dari satu nilai awal.</span></span></label>
