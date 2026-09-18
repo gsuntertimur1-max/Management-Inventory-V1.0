@@ -636,6 +636,348 @@ async def _exchange_tiktok(provider: str, auth_code: str) -> dict:
     return token_data
 
 
+
+def _shopee_push_key() -> str:
+    return (
+        _env("Shopee", "PUSH_PARTNER_KEY")
+        or _env("Shopee", "PARTNER_KEY", "APP_SECRET", "CLIENT_SECRET")
+    )
+
+
+def _shopee_callback_url(request: Request) -> str:
+    configured = _env("Shopee", "PUSH_CALLBACK_URL")
+    if configured:
+        return configured
+    return f"{_base_url(request)}/api/marketplace/webhooks/shopee"
+
+
+def _verify_shopee_push(raw_body: bytes, authorization: str, callback_url: str) -> bool:
+    key = _shopee_push_key()
+    if not key or not authorization:
+        return False
+    expected = hmac.new(
+        key.encode("utf-8"),
+        callback_url.encode("utf-8") + raw_body,
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(expected.lower(), authorization.strip().lower())
+
+
+def _shopee_shop_signature(partner_id: str, partner_key: str, path: str, timestamp: int, access_token: str, shop_id: str) -> str:
+    base = f"{partner_id}{path}{timestamp}{access_token}{shop_id}"
+    return hmac.new(partner_key.encode("utf-8"), base.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+async def _shopee_shop_api(
+    account: dict,
+    method: str,
+    path: str,
+    *,
+    query: dict | None = None,
+    body: dict | None = None,
+) -> dict:
+    provider = account.get("provider", "Shopee")
+    partner_id = _env(provider, "PARTNER_ID", "APP_ID", "CLIENT_ID")
+    partner_key = _env(provider, "PARTNER_KEY", "APP_SECRET", "CLIENT_SECRET")
+    shop_id = str(account.get("shopId") or "")
+    if not partner_id or not partner_key or not shop_id:
+        raise HTTPException(status_code=409, detail="Shopee Partner ID/Partner Key/Shop ID belum lengkap")
+
+    bundle = await _token_bundle(account["id"])
+    access_token = str(bundle.get("access_token") or "")
+    if not access_token:
+        raise HTTPException(status_code=409, detail="Access token Shopee tidak tersedia")
+
+    timestamp = int(time.time())
+    sign = _shopee_shop_signature(partner_id, partner_key, path, timestamp, access_token, shop_id)
+    params = {
+        "partner_id": partner_id,
+        "timestamp": timestamp,
+        "access_token": access_token,
+        "shop_id": shop_id,
+        "sign": sign,
+        **(query or {}),
+    }
+    host = _env(provider, "API_HOST") or "https://partner.shopeemobile.com"
+    async with httpx.AsyncClient(timeout=25.0) as client:
+        response = await client.request(
+            method.upper(),
+            host.rstrip("/") + path,
+            params=params,
+            json=body if body is not None else None,
+        )
+    try:
+        data = response.json()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Respons Shopee Open API tidak valid") from exc
+    if response.status_code >= 400 or data.get("error"):
+        raise HTTPException(
+            status_code=502,
+            detail=f"Shopee API gagal: {data.get('message') or data.get('error') or response.status_code}",
+        )
+    return data
+
+
+async def _shopee_order_detail(account: dict, order_sn: str) -> dict:
+    data = await _shopee_shop_api(
+        account,
+        "GET",
+        "/api/v2/order/get_order_detail",
+        query={
+            "order_sn_list": order_sn,
+            "response_optional_fields": "item_list,buyer_username,recipient_address,pay_time,tracking_number,fulfillment_flag",
+        },
+    )
+    response = data.get("response") or {}
+    orders = list(response.get("order_list") or [])
+    if not orders:
+        raise HTTPException(status_code=404, detail=f"Order Shopee {order_sn} tidak ditemukan")
+    return orders[0]
+
+
+def _extract_shopee_items(order: dict) -> list[dict]:
+    items = []
+    for line in order.get("item_list") or []:
+        marketplace_sku = str(
+            line.get("model_sku")
+            or line.get("item_sku")
+            or line.get("model_id")
+            or line.get("item_id")
+            or ""
+        ).strip()
+        if not marketplace_sku:
+            continue
+        try:
+            qty = float(line.get("model_quantity_purchased") or line.get("quantity_purchased") or 1)
+        except (TypeError, ValueError):
+            qty = 1.0
+        if qty <= 0:
+            continue
+        items.append({
+            "marketplaceSku": marketplace_sku,
+            "qty": qty,
+            "itemId": str(line.get("item_id") or ""),
+            "modelId": str(line.get("model_id") or ""),
+            "itemName": str(line.get("item_name") or ""),
+            "modelName": str(line.get("model_name") or ""),
+        })
+    return items
+
+
+def _normalize_shopee_status(status: str) -> str:
+    value = str(status or "").upper()
+    if value in {"CANCELLED", "IN_CANCEL"}:
+        return "ORDER_CANCELLED"
+    if value in {"SHIPPED", "TO_CONFIRM_RECEIVE", "COMPLETED", "TO_RETURN"}:
+        return "ORDER_SHIPPED"
+    if value in {"READY_TO_SHIP", "PROCESSED"}:
+        return "ORDER_PACKING"
+    return "ORDER_CREATED"
+
+
+async def _ingest_shopee_order(account: dict, order: dict, notification_id: str) -> dict:
+    from backend.marketplace_integration import (
+        NormalizedMarketplaceEvent,
+        NormalizedMarketplaceItem,
+        _apply_order_created,
+        _apply_status_event,
+    )
+
+    order_sn = str(order.get("order_sn") or order.get("ordersn") or "")
+    status = str(order.get("order_status") or order.get("status") or "")
+    extracted = _extract_shopee_items(order)
+    target_event = _normalize_shopee_status(status)
+    existing = await db.ecom_orders.find_one(
+        {"marketplaceAccountId": account["id"], "orderNo": order_sn},
+        {"_id": 0},
+    )
+
+    if not existing:
+        if not extracted:
+            raise HTTPException(status_code=409, detail=f"Order {order_sn} tidak memiliki SKU yang dapat dipetakan")
+        create_event = NormalizedMarketplaceEvent(
+            eventId=f"{notification_id}:create",
+            eventType="ORDER_CREATED",
+            accountId=account["id"],
+            orderNo=order_sn,
+            buyer=str(order.get("buyer_username") or ""),
+            trackingNo=str(order.get("tracking_number") or ""),
+            items=[
+                NormalizedMarketplaceItem(marketplaceSku=item["marketplaceSku"], qty=item["qty"])
+                for item in extracted
+            ],
+            raw={"providerStatus": status},
+        )
+        existing = await _apply_order_created(account, create_event)
+
+    if target_event == "ORDER_CREATED":
+        return existing
+
+    status_event = NormalizedMarketplaceEvent(
+        eventId=f"{notification_id}:{target_event}",
+        eventType=target_event,
+        accountId=account["id"],
+        orderNo=order_sn,
+        trackingNo=str(order.get("tracking_number") or ""),
+        items=[],
+        raw={"providerStatus": status},
+    )
+    return await _apply_status_event(account, status_event)
+
+
+async def _setup_shopee_push(account: dict, request: Request) -> dict:
+    provider = account.get("provider", "Shopee")
+    partner_id = _env(provider, "PARTNER_ID", "APP_ID", "CLIENT_ID")
+    partner_key = _env(provider, "PARTNER_KEY", "APP_SECRET", "CLIENT_SECRET")
+    if not partner_id or not partner_key:
+        raise HTTPException(status_code=409, detail="Shopee Partner ID/Partner Key belum lengkap")
+
+    callback_url = _shopee_callback_url(request)
+    host = _env(provider, "API_HOST") or "https://partner.shopeemobile.com"
+    path = _env(provider, "PUSH_CONFIG_PATH") or "/api/v2/push/set_push_config"
+    timestamp = int(time.time())
+    sign = _shopee_signature(partner_id, partner_key, path, timestamp)
+    url = _append_query(host.rstrip("/") + path, {
+        "partner_id": partner_id,
+        "timestamp": timestamp,
+        "sign": sign,
+    })
+    body = {
+        "callback_url": callback_url,
+        "push_config": {
+            "order_status": 1,
+            "order_tracking_no": 1,
+        },
+        "blocked_shop_id": [],
+    }
+    async with httpx.AsyncClient(timeout=25.0) as client:
+        response = await client.post(url, json=body)
+    try:
+        data = response.json()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Respons konfigurasi Shopee Push tidak valid") from exc
+    if response.status_code >= 400 or data.get("error"):
+        raise HTTPException(
+            status_code=502,
+            detail=f"Konfigurasi Shopee Push gagal: {data.get('message') or data.get('error') or response.status_code}",
+        )
+
+    await db.marketplace_accounts.update_many(
+        {"provider": "Shopee"},
+        {"$set": {
+            "webhookUrl": callback_url,
+            "webhookStatus": "ACTIVE",
+            "webhookError": "",
+            "updatedAt": now_iso(),
+        }},
+    )
+    return {"webhookUrl": callback_url, "webhookStatus": "ACTIVE"}
+
+
+@router.post("/marketplace/webhooks/shopee")
+async def shopee_webhook(request: Request):
+    raw_body = await request.body()
+    authorization = request.headers.get("Authorization", "")
+    callback_url = _shopee_callback_url(request)
+    if not _verify_shopee_push(raw_body, authorization, callback_url):
+        raise HTTPException(status_code=401, detail="Signature webhook Shopee tidak valid")
+
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Payload webhook Shopee tidak valid") from exc
+
+    code = int(payload.get("code") or 0)
+    shop_id = str(payload.get("shop_id") or "")
+    data = payload.get("data") or {}
+    order_sn = str(data.get("ordersn") or data.get("order_sn") or "")
+    timestamp = str(payload.get("timestamp") or "")
+    notification_id = f"{code}:{shop_id}:{order_sn}:{timestamp}"
+    event_key = f"shopee:{notification_id}"
+
+    existing_event = await db.marketplace_webhook_events.find_one({"eventKey": event_key}, {"_id": 0})
+    if existing_event and existing_event.get("status") == "PROCESSED":
+        return {}
+
+    account = await db.marketplace_accounts.find_one(
+        {"provider": "Shopee", "shopId": shop_id, "active": {"$ne": False}},
+        {"_id": 0},
+    )
+    if not account:
+        await db.marketplace_webhook_events.update_one(
+            {"eventKey": event_key},
+            {"$set": {
+                "id": (existing_event or {}).get("id") or new_id(),
+                "eventKey": event_key,
+                "provider": "Shopee",
+                "shopId": shop_id,
+                "eventId": notification_id,
+                "eventType": f"SHOPEE_PUSH_{code}",
+                "orderNo": order_sn,
+                "receivedAt": now_iso(),
+                "status": "FAILED",
+                "error": "Shop ID Shopee belum terhubung ke akun Inventory",
+                "payload": payload,
+            }},
+            upsert=True,
+        )
+        return {}
+
+    event_doc = {
+        "id": (existing_event or {}).get("id") or new_id(),
+        "eventKey": event_key,
+        "provider": "Shopee",
+        "accountId": account["id"],
+        "eventId": notification_id,
+        "eventType": f"SHOPEE_PUSH_{code}",
+        "orderNo": order_sn,
+        "receivedAt": now_iso(),
+        "status": "RECEIVED",
+        "payload": payload,
+    }
+    await db.marketplace_webhook_events.update_one({"eventKey": event_key}, {"$set": event_doc}, upsert=True)
+
+    # order_status_push = code 3. Tracking push = code 4, which also triggers a fresh detail read.
+    if code not in {3, 4} or not order_sn:
+        await db.marketplace_webhook_events.update_one(
+            {"eventKey": event_key},
+            {"$set": {"status": "IGNORED", "processedAt": now_iso()}},
+        )
+        return {}
+
+    try:
+        order = await _shopee_order_detail(account, order_sn)
+        result = await _ingest_shopee_order(account, order, notification_id)
+        await db.marketplace_webhook_events.update_one(
+            {"eventKey": event_key},
+            {"$set": {"status": "PROCESSED", "processedAt": now_iso(), "resultId": result.get("id", "")}},
+        )
+        await _log(
+            level="INFO",
+            event_type="SHOPEE_ORDER_SYNC",
+            provider="Shopee",
+            account_id=account["id"],
+            reference=order_sn,
+            message=f"Order Shopee disinkronkan otomatis. Status {order.get('order_status', '')}.",
+        )
+        return {}
+    except HTTPException as exc:
+        await db.marketplace_webhook_events.update_one(
+            {"eventKey": event_key},
+            {"$set": {"status": "FAILED", "failedAt": now_iso(), "error": str(exc.detail)}},
+        )
+        await _log(
+            level="ERROR",
+            event_type="SHOPEE_ORDER_SYNC_FAILED",
+            provider="Shopee",
+            account_id=account["id"],
+            reference=order_sn,
+            message=str(exc.detail),
+        )
+        # Return 200 to prevent endless push retries for business mapping failures.
+        return {}
+
+
 async def _exchange_shopee(provider: str, auth_code: str, shop_id: str) -> dict:
     partner_id = _env(provider, "PARTNER_ID", "APP_ID", "CLIENT_ID")
     partner_key = _env(provider, "PARTNER_KEY", "APP_SECRET", "CLIENT_SECRET")
@@ -709,6 +1051,23 @@ async def marketplace_oauth_callback(
         post_connect = {}
         if _credential_key(provider) == "TIKTOK_SHOP":
             post_connect = await _setup_tiktok_after_connect(account, bundle, request)
+        elif _credential_key(provider) == "SHOPEE":
+            try:
+                post_connect = await _setup_shopee_push(account, request)
+            except HTTPException as exc:
+                post_connect = {
+                    "webhookUrl": _shopee_callback_url(request),
+                    "webhookStatus": "FAILED",
+                    "webhookError": str(exc.detail),
+                }
+                await _log(
+                    level="ERROR",
+                    event_type="WEBHOOK_SETUP_FAILED",
+                    provider="Shopee",
+                    account_id=account["id"],
+                    reference=account.get("shopName", ""),
+                    message=str(exc.detail),
+                )
         patch = {"lastConnectionError": "", "updatedAt": now_iso(), **post_connect}
         resolved_shop = str(bundle.get("shop_id") or shop_id or account.get("shopId", ""))
         if resolved_shop:
