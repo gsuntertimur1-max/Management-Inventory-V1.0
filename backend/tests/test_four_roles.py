@@ -38,19 +38,19 @@ def test_roles_are_canonicalized_to_six_business_roles():
 
 
 def test_superadmin_keeps_full_control_including_consignment():
-    for permission in ("masterWrite", "currentWrite", "users", "settings", "corrections", "costView", "bazarOps", "ecomOps"):
+    for permission in ("masterWrite", "currentWrite", "users", "settings", "corrections", "costView", "bazarOps", "ecomOps", "consignmentHistory"):
         assert has_role_permission(ROLE_SUPERADMIN, permission)
 
 
 def test_warehouse_head_keeps_consignment_visibility_and_operations():
-    for permission in ("inbound", "outbound", "bazarView", "bazarOps", "ecomView", "ecomOps"):
+    for permission in ("inbound", "outbound", "bazarView", "bazarOps", "ecomView", "ecomOps", "consignmentHistory"):
         assert has_role_permission(ROLE_WAREHOUSE_HEAD, permission)
 
 
 def test_admin_operasional_sees_consignment_stock_but_not_scoped_outbound_operations():
     for permission in ("inbound", "outbound", "bazarView", "ecomView", "consignmentView"):
         assert has_role_permission(ROLE_ADMIN, permission)
-    for permission in ("bazarOps", "ecomOps", "settings"):
+    for permission in ("bazarOps", "ecomOps", "settings", "consignmentHistory"):
         assert not has_role_permission(ROLE_ADMIN, permission)
 
 
@@ -58,6 +58,7 @@ def test_bazar_role_is_scoped_and_not_general_writer():
     assert role_destination(ROLE_BAZAR) == "Gudang Bazar"
     assert has_role_permission(ROLE_BAZAR, "bazarView")
     assert has_role_permission(ROLE_BAZAR, "bazarOps")
+    assert has_role_permission(ROLE_BAZAR, "consignmentHistory")
     for permission in ("ecomView", "ecomOps", "currentWrite", "inbound", "outbound", "masterWrite", "users", "settings"):
         assert not has_role_permission(ROLE_BAZAR, permission)
 
@@ -66,6 +67,7 @@ def test_ecommerce_role_is_scoped_and_not_general_writer():
     assert role_destination(ROLE_ECOM) == "Gudang E-commerce"
     assert has_role_permission(ROLE_ECOM, "ecomView")
     assert has_role_permission(ROLE_ECOM, "ecomOps")
+    assert has_role_permission(ROLE_ECOM, "consignmentHistory")
     for permission in ("bazarView", "bazarOps", "currentWrite", "inbound", "outbound", "masterWrite", "users", "settings"):
         assert not has_role_permission(ROLE_ECOM, permission)
 
@@ -74,5 +76,5 @@ def test_viewer_is_read_only():
     assert has_role_permission(ROLE_VIEWER, "view")
     assert has_role_permission(ROLE_VIEWER, "bazarView")
     assert has_role_permission(ROLE_VIEWER, "ecomView")
-    for permission in ("currentWrite", "inbound", "outbound", "costView", "users", "settings", "corrections", "bazarOps", "ecomOps"):
+    for permission in ("currentWrite", "inbound", "outbound", "costView", "users", "settings", "corrections", "bazarOps", "ecomOps", "consignmentHistory"):
         assert not has_role_permission(ROLE_VIEWER, permission)
