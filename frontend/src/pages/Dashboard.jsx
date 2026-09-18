@@ -6,12 +6,11 @@ import { formatNum, formatDate } from '../mock';
 import { apiError, downloadApiFile } from '../lib/api';
 import { toast } from 'sonner';
 
-const StatCard = ({ icon: Icon, label, value, sub, color }) => (
+const StatCard = ({ icon: Icon, label, value, color }) => (
   <div className="card-surface stat-card p-5">
     <div className="w-10 h-10 rounded-xl flex items-center justify-center mb-8" style={{ background: `${color}1f`, color }}><Icon size={20} /></div>
     <div className="label-mono mb-1">{label}</div>
     <div className="font-display text-3xl font-bold">{value}</div>
-    <div className="text-xs text-[#6b7688] mt-1">{sub}</div>
   </div>
 );
 
@@ -91,15 +90,14 @@ const Dashboard = () => {
         <div>
           <div className="label-mono mb-2">Pusat Kendali Gudang</div>
           <h1 className="font-display text-4xl font-bold">Ringkasan Penyimpanan Stok</h1>
-          <p className="text-[#8b93a1] mt-2 max-w-xl">Pantau stok gudang utama, stok konsinyasi, peringatan operasional, dan aktivitas transaksi terbaru.</p>
         </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        <StatCard icon={Layers} label="Stok Gudang Utama" value={formatNum(totalUnits)} sub="Belum termasuk konsinyasi" color="#a855f7" />
-        <StatCard icon={AlertTriangle} label="Stok Rusak (Damage)" value={formatNum(totalDamaged)} sub="Unit kondisi rusak" color="#ef4444" />
-        <StatCard icon={Layers} label="Produk Aktif Bazar" value={formatNum(bazarStock.length)} sub="SKU konsinyasi belum SO/CR" color="#f59e0b" />
-        <StatCard icon={Layers} label="Produk Aktif E-commerce" value={formatNum(ecommerceStock.length)} sub="SKU konsinyasi belum SO/CR" color="#0ea5e9" />
+        <StatCard icon={Layers} label="Stok Gudang Utama" value={formatNum(totalUnits)} color="#a855f7" />
+        <StatCard icon={AlertTriangle} label="Stok Rusak (Damage)" value={formatNum(totalDamaged)} color="#ef4444" />
+        <StatCard icon={Layers} label="Produk Aktif Bazar" value={formatNum(bazarStock.length)} color="#f59e0b" />
+        <StatCard icon={Layers} label="Produk Aktif E-commerce" value={formatNum(ecommerceStock.length)} color="#0ea5e9" />
       </div>
 
       {(settings?.lowAlert ?? true) && (
@@ -156,7 +154,7 @@ const Dashboard = () => {
       </div>
 
       <div className="card-surface p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-4"><div><h2 className="font-display text-xl font-bold">Monitoring Stok Seluruh Lokasi</h2><p className="text-xs text-[#8b93a1] mt-1">Saldo Gudang, E-commerce, dan Bazar dipisahkan menurut PSO/KOM.</p></div><button onClick={() => downloadApiFile('/export/monitoring-stock.xlsx', 'monitoring_stok.xlsx').catch((e) => toast.error(apiError(e)))} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#294263] text-xs text-[#93c5fd]"><Printer size={14} /> Unduh Monitoring</button></div>
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4"><div><h2 className="font-display text-xl font-bold">Monitoring Stok Seluruh Lokasi</h2></div><button onClick={() => downloadApiFile('/export/monitoring-stock.xlsx', 'monitoring_stok.xlsx').catch((e) => toast.error(apiError(e)))} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#294263] text-xs text-[#93c5fd]"><Printer size={14} /> Unduh Monitoring</button></div>
         <div className="relative mb-4 max-w-md">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6b7688]" />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari produk, SKU, atau lokasi..." className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg pl-9 pr-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" />
@@ -173,7 +171,7 @@ const Dashboard = () => {
         { destination: 'Gudang Bazar', title: 'Kartu Stok Gudang Bazar', rows: bazarStock, color: '#f59e0b' },
         { destination: 'Gudang E-commerce', title: 'Kartu Stok Gudang E-commerce', rows: ecommerceStock, color: '#0ea5e9' },
       ].map(({ destination, title, rows, color }) => <div key={destination} className="card-surface p-6 border border-[#1f3657]">
-        <div className="flex flex-wrap items-start justify-between gap-3 mb-4"><div><div className="label-mono text-[10px]" style={{ color }}>Konsinyasi Unit 18</div><h2 className="font-display text-xl font-bold mt-1">{title}</h2><p className="text-sm text-[#8b93a1] mt-1">Saldo Memo/ND dikurangi SO serta Retur pengecualian.</p></div><button onClick={() => downloadApiFile(`/export/consignment-stock-card.pdf?destination=${encodeURIComponent(destination)}`, `kartu_stok_${destination.replaceAll(' ', '_')}.pdf`).catch((e) => toast.error(apiError(e)))} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#294263] text-xs text-[#93c5fd]"><Printer size={14} /> Download kartu</button></div>
+        <div className="flex flex-wrap items-start justify-between gap-3 mb-4"><div><div className="label-mono text-[10px]" style={{ color }}>Konsinyasi Unit 18</div><h2 className="font-display text-xl font-bold mt-1">{title}</h2></div><button onClick={() => downloadApiFile(`/export/consignment-stock-card.pdf?destination=${encodeURIComponent(destination)}`, `kartu_stok_${destination.replaceAll(' ', '_')}.pdf`).catch((e) => toast.error(apiError(e)))} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#294263] text-xs text-[#93c5fd]"><Printer size={14} /> Download kartu</button></div>
         {rows.length === 0 ? <p className="text-sm text-[#8b93a1]">Belum ada stok konsinyasi aktif.</p> : <div className="overflow-x-auto"><table className="w-full text-sm tbl"><thead><tr className="text-left border-b border-[#1a222e]"><th className="py-2.5 pr-3">Saluran</th><th className="py-2.5 pr-3">SKU</th><th className="py-2.5 pr-3">Nama Komoditi</th><th className="py-2.5 pr-3">Pack/pcs</th><th className="py-2.5 pr-3">Kuantum Fisik</th><th className="py-2.5">Dokumen ND/Memo</th></tr></thead><tbody>{rows.map((item) => <tr key={`${item.productId}-${item.channel}`} className="tbl-row border-b border-[#131a24]"><td className="py-3 pr-3"><span className={`text-[10px] px-2 py-0.5 rounded-full ${(item.channel || 'KOM') === 'PSO' ? 'bg-[#2563eb]/15 text-[#60a5fa]' : 'bg-[#a855f7]/15 text-[#c084fc]'}`}>{item.channel || 'KOM'}</span></td><td className="py-3 pr-3 font-mono text-xs text-[#93c5fd]">{item.sku || '—'}</td><td className="py-3 pr-3 font-medium">{item.name}</td><td className="py-3 pr-3 font-mono whitespace-nowrap">{formatNum(item.qty)} {item.unit}</td><td className="py-3 pr-3 font-mono whitespace-nowrap">{item.weight > 0 ? `${formatNum(item.totalWeight)} ${item.measureUnit || 'kg'}` : '—'}</td><td className="py-3 text-xs text-[#8b93a1]">{item.documents?.join(', ') || '—'}</td></tr>)}</tbody></table></div>}
       </div>)}</div>
 
