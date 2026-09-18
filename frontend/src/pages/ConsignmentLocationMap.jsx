@@ -5,7 +5,7 @@ import { useData } from '../context/DataContext';
 import { formatNum } from '../mock';
 import { apiError, downloadApiFile } from '../lib/api';
 import { hasPermission } from '../lib/permissions';
-import { consignmentAreaLabel, consignmentStackCodes, defaultConsignmentStack } from '../lib/consignmentLocations';
+import { consignmentStackCodes, defaultConsignmentStack } from '../lib/consignmentLocations';
 
 const inputCls = 'w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]';
 
