@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Boxes, Layers3, ShoppingBag, Warehouse } from 'lucide-react';
+import { Boxes, Layers3, RefreshCcw, ShoppingBag, Warehouse } from 'lucide-react';
 import Dashboard from './Dashboard';
 import './DashboardUnified.css';
 import { useData } from '../context/DataContext';
@@ -27,8 +27,24 @@ const SummaryCard = ({ icon: Icon, label, value, note, accent }) => <div classNa
 </div>;
 
 const DashboardUnified = () => {
-  const { user, products, consignmentStock, monitoringStock } = useData();
+  const { user, products, consignmentStock, monitoringStock, consignmentLastSync, consignmentSyncing, refreshConsignmentFlow } = useData();
   const scopedDestination = roleDestination(user?.role);
+  const syncLabel = consignmentLastSync
+    ? consignmentLastSync.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    : 'belum sinkron';
+
+  const SyncStatus = () => <div className="flex flex-wrap items-center gap-2 text-xs text-[#8b93a1]">
+    <span>Auto-sync 15 detik · terakhir {syncLabel}</span>
+    <button
+      type="button"
+      onClick={() => refreshConsignmentFlow().catch(() => {})}
+      disabled={consignmentSyncing}
+      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-[#243044] text-[#93c5fd] disabled:opacity-50"
+    >
+      <RefreshCcw size={12} className={consignmentSyncing ? 'animate-spin' : ''}/>
+      {consignmentSyncing ? 'Sinkron…' : 'Sinkron sekarang'}
+    </button>
+  </div>;
 
   const totals = useMemo(() => {
     const main = {};
@@ -48,7 +64,7 @@ const DashboardUnified = () => {
     const rows = (monitoringStock || []).filter((item) => item.location === scopedDestination);
     return <div className="dashboard-unified space-y-6">
       <section>
-        <div className="label-mono mb-2">Area Kerja</div>
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-2"><div className="label-mono">Area Kerja</div><SyncStatus /></div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <SummaryCard icon={isBazar ? ShoppingBag : Boxes} label={isBazar ? 'Stok Bazar' : 'Stok E-commerce'} value={formatTotals(own)} note={`Saldo aktif yang menjadi tanggung jawab ${isBazar ? 'Petugas Bazar' : 'Petugas E-commerce'}.`} accent={isBazar ? '#f59e0b' : '#0ea5e9'} />
           <SummaryCard icon={Layers3} label="Ruang Lingkup Akses" value={isBazar ? 'BAZAR' : 'E-COM'} note="Akun ini tidak memiliki hak mengubah stok GBB/MP1 atau lokasi konsinyasi lain." accent="#22c55e" />
@@ -63,7 +79,7 @@ const DashboardUnified = () => {
 
   return <div className="dashboard-unified space-y-6">
     <section>
-      <div className="label-mono mb-2">Posisi Persediaan Fisik</div>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-2"><div className="label-mono">Posisi Persediaan Fisik</div><SyncStatus /></div>
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <SummaryCard icon={Warehouse} label="Stok Gudang Utama" value={formatTotals(totals.main)} note="Saldo yang masih berada di GBB/MP1." accent="#3b82f6" />
         <SummaryCard icon={ShoppingBag} label="Stok Bazar" value={formatTotals(totals.bazar)} note="Saldo fisik sub-ledger Gudang Bazar." accent="#f59e0b" />
