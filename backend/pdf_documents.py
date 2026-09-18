@@ -298,20 +298,11 @@ async def export_bon_muat_pdf(load_id: str, user: dict = Depends(get_current_use
         entry["qty"] += float(item.get("qty", 0) or 0)
         entry["berat"] += float(item.get("berat", 0) or 0)
 
-    remainder_rows = 0
-    for item in grouped.values():
-        qty = float(item.get("qty", 0) or 0)
-        secondary_qty = float(item.get("secondaryQty", 0) or 0)
-        if secondary_qty:
-            remainder = qty - (int(qty // secondary_qty) * secondary_qty)
-            if remainder > 1e-9:
-                remainder_rows += 1
-
     buffer = io.BytesIO()
     width = 80 * mm
     # Font besar dipertahankan. Jika item/SO bertambah, kertas thermal yang memanjang,
     # bukan ukuran font yang dikecilkan.
-    height = max(185 * mm, (148 + (len(grouped) * 36) + (remainder_rows * 7)) * mm)
+    height = max(185 * mm, (148 + (len(grouped) * 36)) * mm)
     c = canvas.Canvas(buffer, pagesize=(width, height))
     mid = width / 2
 
@@ -428,9 +419,13 @@ async def export_bon_muat_pdf(load_id: str, user: dict = Depends(get_current_use
             x2 + col_widths[2] / 2,
         ]
         headers = ["KEMASAN SEKUNDER", "PACK / PCS", "BERAT / FISIK"]
+        # Jika produk memiliki kemasan sekunder, kolom PACK/PCS menampilkan
+        # hanya sisa satuan primer di luar kemasan sekunder.
+        # Contoh Setra Ramos 5 kg: 803 pack = 100 karung x 8 pack + 3 pack.
+        loose_primary = remaining_primary if secondary_qty else qty
         values = [
             secondary_value,
-            f"{_num(qty)} {unit}",
+            f"{_num(loose_primary)} {unit}",
             f"{_num(item.get('berat', 0))} {measure_unit}",
         ]
 
@@ -451,13 +446,6 @@ async def export_bon_muat_pdf(load_id: str, user: dict = Depends(get_current_use
             c.drawCentredString(center_x, value_y, value_text)
 
         y = table_bottom
-
-        if secondary_qty and remaining_primary > 1e-9:
-            y -= 6.5 * mm
-            c.setFont("Helvetica-Bold", 10.5)
-            c.drawString(7 * mm, y, f"SISA DI LUAR KEMASAN: {_num(remaining_primary)} {unit}")
-            y -= 1.5 * mm
-
         y -= 5 * mm
         c.setDash(2, 2)
         c.line(5 * mm, y, width - 5 * mm, y)
