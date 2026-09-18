@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import api, { setToken, apiError } from '../lib/api';
 import { hasPermission, roleLabel } from '../lib/permissions';
 import { DEFAULT_CATEGORIES } from '../mock';
@@ -39,6 +39,9 @@ export const DataProvider = ({ children }) => {
   const [checking, setChecking] = useState(true);
   const [state, setState] = useState(EMPTY);
   const [theme, setThemeState] = useState(() => localStorage.getItem('bulog_theme') || 'dark');
+  const [consignmentLastSync, setConsignmentLastSync] = useState(null);
+  const [consignmentSyncing, setConsignmentSyncing] = useState(false);
+  const consignmentSyncInFlight = useRef(false);
 
   const setTheme = useCallback((nextTheme) => {
     setThemeState(nextTheme === 'light' ? 'light' : 'dark');
@@ -169,16 +172,25 @@ export const DataProvider = ({ children }) => {
   }, []);
 
   const refreshConsignmentFlow = useCallback(async () => {
-    const [stockRes, monitoringRes] = await Promise.all([
-      api.get('/consignment-stock'),
-      api.get('/monitoring-stock'),
-    ]);
-    setState((prev) => ({
-      ...prev,
-      consignmentStock: stockRes.data,
-      monitoringStock: monitoringRes.data,
-    }));
-    return stockRes.data;
+    if (consignmentSyncInFlight.current) return null;
+    consignmentSyncInFlight.current = true;
+    setConsignmentSyncing(true);
+    try {
+      const [stockRes, monitoringRes] = await Promise.all([
+        api.get('/consignment-stock'),
+        api.get('/monitoring-stock'),
+      ]);
+      setState((prev) => ({
+        ...prev,
+        consignmentStock: stockRes.data,
+        monitoringStock: monitoringRes.data,
+      }));
+      setConsignmentLastSync(new Date());
+      return stockRes.data;
+    } finally {
+      consignmentSyncInFlight.current = false;
+      setConsignmentSyncing(false);
+    }
   }, []);
 
   const refreshConsignmentLayouts = useCallback(async () => {
@@ -208,6 +220,52 @@ export const DataProvider = ({ children }) => {
   }, []);
 
   useEffect(() => { if (user) fetchAll(); }, [user, fetchAll]);
+
+  useEffect(() => {
+    if (!user || !hasPermission(user?.role, 'consignmentView')) return undefined;
+
+    const CONSignment_AUTO_SYNC_INTERVAL = 15000;
+    let timerId = null;
+
+    const syncIfVisible = () => {
+      if (document.visibilityState !== 'visible' || !navigator.onLine) return;
+      refreshConsignmentFlow().catch((error) => {
+        if (process.env.NODE_ENV !== 'production') console.debug('consignment auto-sync skipped', error);
+      });
+    };
+
+    const startTimer = () => {
+      if (timerId) window.clearInterval(timerId);
+      timerId = window.setInterval(syncIfVisible, CONSignment_AUTO_SYNC_INTERVAL);
+    };
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        syncIfVisible();
+        startTimer();
+      } else if (timerId) {
+        window.clearInterval(timerId);
+        timerId = null;
+      }
+    };
+
+    const handleOnline = () => {
+      syncIfVisible();
+      startTimer();
+    };
+
+    syncIfVisible();
+    startTimer();
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('online', handleOnline);
+
+    return () => {
+      if (timerId) window.clearInterval(timerId);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('online', handleOnline);
+    };
+  }, [user, refreshConsignmentFlow]);
+
 
   const login = async (username, password) => {
     try {
@@ -329,6 +387,7 @@ export const DataProvider = ({ children }) => {
       canManageUsers: hasPermission(user?.role, 'users'),
       canManageSettings: hasPermission(user?.role, 'settings'),
       theme, setTheme,
+      consignmentLastSync, consignmentSyncing,
       login, logout, ...state, fetchAll,
       addProduct, updateProduct, deleteProduct, addTransaction, addReceipt, recordStockDamage, createSupplierReturn, receiveSupplierReplacement,
       createOutboundLoad, refreshOutboundLoads, startOutboundLoad, completeOutboundLoad, createConsignmentReturn, createSalesReturn, settleOutboundDocument, updateSJStatus, cancelOutboundLoad, editOutboundLoad, cancelPurchaseOrder,
