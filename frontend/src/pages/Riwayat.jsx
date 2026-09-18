@@ -26,7 +26,10 @@ const normalizeUnloadingGroup = (value) => {
   if (text.includes('GRUP 2') || text.includes('MANDOR 2') || text.includes('MP1') || /21-24/.test(text)) {
     return 'MANDOR 2 - MP1/GBB 21-24';
   }
-  return 'MANDOR 1 - GBB 17-20';
+  if (text.includes('GRUP 1') || text.includes('MANDOR 1') || /17-20/.test(text)) {
+    return 'MANDOR 1 - GBB 17-20';
+  }
+  return '';
 };
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
@@ -171,21 +174,24 @@ const Riwayat = () => {
     const index = { loading: {}, unloading: {} };
     ['loading', 'unloading'].forEach((kind) => {
       (costSettlements[kind] || []).forEach((row) => {
-        index[kind][`${row.date}:${row.recipient}`] = row;
+        index[kind][`${row.date}:${row.recipient}:${row.group || ''}`] = row;
       });
     });
     return index;
   }, [costSettlements]);
 
-  const getSettlementInfo = (kind, date, recipient, total) => {
-    const row = settlementIndex[kind]?.[`${date}:${recipient}`] || null;
+  const getSettlementInfo = (kind, date, recipient, total, group = '') => {
+    const row = settlementIndex[kind]?.[`${date}:${recipient}:${group}`] || null;
     const paid = Math.min(Number(row?.amount || 0), Number(total || 0));
     const outstanding = Math.max(Number(total || 0) - paid, 0);
     return { row, paid, outstanding, settled: Number(total || 0) > 0 && outstanding <= 1e-9 };
   };
 
   const accumulatedUnpaid = (kind, days, recipient, key) => days.reduce(
-    (sum, day) => sum + getSettlementInfo(kind, day.date, recipient, day.totals[key]).outstanding,
+    (sum, day) => sum + Object.entries(day.groups || {}).reduce(
+      (groupSum, [group, values]) => groupSum + getSettlementInfo(kind, day.date, recipient, values[key], group).outstanding,
+      0,
+    ),
     0,
   );
 
@@ -194,9 +200,9 @@ const Riwayat = () => {
   const unloadingLaborUnpaid = accumulatedUnpaid('unloading', unloadingDays, 'BURUH', 'labor');
   const unloadingDailyUnpaid = accumulatedUnpaid('unloading', unloadingDays, 'HARIAN', 'daily');
 
-  const renderSettlementCard = (kind, day, recipient, amount) => {
+  const renderSettlementCard = (kind, day, recipient, amount, group) => {
     const label = recipient === 'BURUH' ? 'Buruh' : 'Harian / UH';
-    const info = getSettlementInfo(kind, day.date, recipient, amount);
+    const info = getSettlementInfo(kind, day.date, recipient, amount, group);
     if (Number(amount || 0) <= 0) return null;
     return (
       <div className={`rounded-lg border px-3 py-2 text-xs ${info.settled ? 'border-[#166534] bg-[#14532d]/10' : 'border-[#7f1d1d] bg-[#7f1d1d]/10'}`}>
@@ -209,7 +215,7 @@ const Riwayat = () => {
           {canWrite && info.outstanding > 0 && (
             <button
               type="button"
-              onClick={() => setSettlementModal({ kind, date: day.date, recipient, label, total: Number(amount || 0), outstanding: info.outstanding, note: '' })}
+              onClick={() => setSettlementModal({ kind, date: day.date, recipient, label, group, total: Number(amount || 0), outstanding: info.outstanding, note: '' })}
               className="px-2.5 py-1.5 rounded-lg border border-[#2563eb] text-[#93c5fd] hover:bg-[#2563eb]/10"
             >
               Tandai dibayar
@@ -252,10 +258,11 @@ const Riwayat = () => {
       const prefix = settlementModal.kind === 'loading' ? 'loading-costs' : 'unloading-costs';
       await api.post(`/${prefix}/${settlementModal.date}/settle`, {
         recipient: settlementModal.recipient,
+        group: settlementModal.group || '',
         note: settlementModal.note || '',
       });
       await loadCostSettlements();
-      toast.success(`Pembayaran ${settlementModal.label} tanggal ${settlementModal.date} ditandai sudah dibayar`);
+      toast.success(`Pembayaran ${settlementModal.label} · ${settlementModal.group || 'semua grup'} tanggal ${settlementModal.date} ditandai sudah dibayar`);
       setSettlementModal(null);
     } catch (error) {
       toast.error(apiError(error));
@@ -405,11 +412,6 @@ const Riwayat = () => {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-                    {renderSettlementCard('loading', day, 'BURUH', day.totals.labor)}
-                    {renderSettlementCard('loading', day, 'HARIAN', day.totals.daily)}
-                  </div>
-
                   <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
                     {['GRUP 1 - GBB 17-20', 'GRUP 2 - MP1/21-24', 'GRUP 3 - RTR'].map((group) => {
                       const values = day.groups[group];
@@ -422,6 +424,10 @@ const Riwayat = () => {
                             <div><span className="text-[#8b93a1]">UH</span><div className="font-mono">{formatRp(values.daily)}</div></div>
                             <div><span className="text-[#8b93a1]">Gudang</span><div className="font-mono">{formatRp(values.warehouse)}</div></div>
                             <div><span className="text-[#8b93a1]">Total</span><div className="font-mono font-bold text-[#93c5fd]">{formatRp(values.total)}</div></div>
+                          </div>
+                          <div className="grid grid-cols-1 gap-2 mt-3">
+                            {renderSettlementCard('loading', day, 'BURUH', values.labor, group)}
+                            {renderSettlementCard('loading', day, 'HARIAN', values.daily, group)}
                           </div>
                           <div className="flex flex-wrap gap-2 mt-3">
                             <button onClick={() => printLoadingDay(day, group, 'BURUH')} className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-[#294263] text-[#93c5fd]"><Printer size={12} /> Buruh 80mm</button>
@@ -485,11 +491,6 @@ const Riwayat = () => {
                     {Number(day.totals.chargeable || 0) > 0 && <div className="text-xs rounded-lg border border-[#8a5a16] px-3 py-2 text-[#fbbf24]">Tagihan Pengirim {formatRp(day.totals.chargeable)}</div>}
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-                    {renderSettlementCard('unloading', day, 'BURUH', day.totals.labor)}
-                    {renderSettlementCard('unloading', day, 'HARIAN', day.totals.daily)}
-                  </div>
-
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                     {['MANDOR 1 - GBB 17-20', 'MANDOR 2 - MP1/GBB 21-24'].map((group) => {
                       const values = day.groups[group];
@@ -502,6 +503,10 @@ const Riwayat = () => {
                             <div><span className="text-[#8b93a1]">UH</span><div className="font-mono">{formatRp(values.daily)}</div></div>
                             <div><span className="text-[#8b93a1]">Gudang</span><div className="font-mono">{formatRp(values.warehouse)}</div></div>
                             <div><span className="text-[#8b93a1]">Total</span><div className="font-mono font-bold text-[#fbbf24]">{formatRp(values.total)}</div></div>
+                          </div>
+                          <div className="grid grid-cols-1 gap-2 mt-3">
+                            {renderSettlementCard('unloading', day, 'BURUH', values.labor, group)}
+                            {renderSettlementCard('unloading', day, 'HARIAN', values.daily, group)}
                           </div>
                           <div className="flex flex-wrap gap-2 mt-3">
                             <button onClick={() => printUnloadingDay(day, group, 'BURUH')} className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-[#294263] text-[#93c5fd]"><Printer size={12} /> Buruh 80mm</button>
@@ -547,7 +552,7 @@ const Riwayat = () => {
         <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/80 p-4">
           <div className="card-surface w-full max-w-md p-5">
             <div className="flex items-center justify-between mb-4"><h3 className="font-display text-lg font-bold">Tandai Pembayaran {settlementModal.label}</h3><button onClick={() => setSettlementModal(null)} disabled={savingPayment} className="text-[#8b93a1] hover:text-white"><X size={18} /></button></div>
-            <div className="rounded-lg border border-[#242f3d] p-3 mb-4 text-xs"><div>Tanggal <b>{settlementModal.date}</b></div><div className="mt-1">Sisa belum dibayar <b className="font-mono text-[#f87171]">{formatRp(settlementModal.outstanding)}</b></div><div className="mt-1 text-[#8b93a1]">Setelah disimpan, status tanggal ini tercatat sebagai sudah dibayar. Jika kemudian ada biaya tambahan pada tanggal yang sama, sisa tambahan akan muncul lagi sebagai tunggakan.</div></div>
+            <div className="rounded-lg border border-[#242f3d] p-3 mb-4 text-xs"><div>Tanggal <b>{settlementModal.date}</b></div><div className="mt-1">Grup <b>{settlementModal.group || 'Semua Grup'}</b></div><div className="mt-1">Sisa belum dibayar <b className="font-mono text-[#f87171]">{formatRp(settlementModal.outstanding)}</b></div><div className="mt-1 text-[#8b93a1]">Setelah disimpan, status tanggal ini tercatat sebagai sudah dibayar. Jika kemudian ada biaya tambahan pada tanggal yang sama, sisa tambahan akan muncul lagi sebagai tunggakan.</div></div>
             <div><label className="text-xs text-[#8b93a1] block mb-1">Catatan pembayaran (opsional)</label><textarea rows={3} value={settlementModal.note} onChange={(e) => setSettlementModal((prev) => ({ ...prev, note: e.target.value }))} placeholder="Contoh: Dibayar transfer / diterima koordinator buruh" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" /></div>
             <div className="flex justify-end gap-2 mt-5"><button onClick={() => setSettlementModal(null)} disabled={savingPayment} className="px-4 py-2 rounded-lg border border-[#242f3d] text-sm">Batal</button><button onClick={saveSettlement} disabled={savingPayment} className="btn-primary px-4 py-2 rounded-lg text-sm font-semibold">{savingPayment ? 'Menyimpan…' : 'Tandai sudah dibayar'}</button></div>
           </div>
