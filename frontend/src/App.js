@@ -11,6 +11,7 @@ import DashboardUnified from './pages/DashboardUnified';
 import DaftarProduk from './pages/DaftarProduk';
 import CatatStok from './pages/CatatStok';
 import Riwayat from './pages/Riwayat';
+import RiwayatConsignment from './pages/RiwayatConsignment';
 import Pengeluaran from './pages/Pengeluaran';
 import PurchaseOrder from './pages/PurchaseOrder';
 import Supplier from './pages/Supplier';
@@ -81,6 +82,7 @@ function AppRoutes() {
       <Route path="/koreksi-operasional" element={<Protected permission="corrections"><KoreksiOperasional /></Protected>} />
       <Route path="/kontrol-integritas" element={<Protected permission="masterWrite"><><OutboundDocumentIntegrityPanel /><KontrolIntegritas /></></Protected>} />
       <Route path="/riwayat" element={<Protected permission="mainInventory"><Riwayat /></Protected>} />
+      <Route path="/riwayat-bazar-ecom" element={<Protected permission="consignmentHistory"><RiwayatConsignment /></Protected>} />
       <Route path="/po" element={<Protected permission="mainInventory"><PurchaseOrder /></Protected>} />
       <Route path="/supplier" element={<Protected permission="mainInventory"><Supplier /></Protected>} />
       <Route path="/antrian" element={<Protected permission="mainInventory"><LayarAntrianEnhanced /></Protected>} />
