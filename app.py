@@ -16,7 +16,7 @@ from backend.supplier_lifecycle_guards import router as supplier_lifecycle_guard
 from backend.document_settlement_guards import router as document_settlement_guards_router
 from backend.return_lot_reconciliation import router as return_lot_reconciliation_router
 from backend.outbound_completion_hardening import router as outbound_completion_hardening_router
-from backend.consignment import router as consignment_router
+from backend.consignment import router as consignment_router, ensure_consignment_location_codes
 from backend.consignment_operations import router as consignment_operations_router, ensure_consignment_operation_indexes
 from backend.bazar_packages import router as bazar_packages_router, ensure_bazar_package_indexes
 from backend.marketplace_integration import router as marketplace_integration_router, ensure_marketplace_indexes
@@ -132,6 +132,7 @@ async def hardened_lifespan(application):
         await ensure_marketplace_oauth_indexes()
         await ensure_cost_payment_indexes()
         await ensure_consignment_document_indexes()
+        await ensure_consignment_location_codes()
         yield
 
 
