@@ -46,6 +46,21 @@ const MarketplaceIntegration = () => {
 
   useEffect(() => { loadAll().catch(() => {}); }, [loadAll]);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const result = params.get('marketplaceConnection');
+    const message = params.get('message');
+    if (!result) return;
+    if (result === 'success') toast.success(message || 'Marketplace berhasil terhubung');
+    if (result === 'failed') toast.error(message || 'Koneksi marketplace gagal');
+    params.delete('marketplaceConnection');
+    params.delete('accountId');
+    params.delete('message');
+    const nextQuery = params.toString();
+    window.history.replaceState({}, '', window.location.pathname + (nextQuery ? '?' + nextQuery : ''));
+    loadAll().catch(() => {});
+  }, [loadAll]);
+
   const accountMap = useMemo(() => Object.fromEntries(accounts.map((x) => [x.id, x])), [accounts]);
 
   const createAccount = async () => {
@@ -69,7 +84,7 @@ const MarketplaceIntegration = () => {
 
   const connectAccount = async (account) => {
     try {
-      const res = await api.post('/marketplace/accounts/' + account.id + '/connect');
+      const res = await api.post('/marketplace/accounts/' + account.id + '/authorize');
       const data = res.data || {};
       await loadAll();
       if (data.authorizationUrl) {
@@ -86,10 +101,18 @@ const MarketplaceIntegration = () => {
   };
 
   const disconnectAccount = async (account) => {
-    if (!window.confirm('Putuskan koneksi ' + account.provider + ' / ' + account.shopName + ' dari Inventory? Secret di Railway tidak akan dihapus.')) return;
+    if (!window.confirm('Putuskan koneksi ' + account.provider + ' / ' + account.shopName + ' dari Inventory? Token lokal akan dihapus, tetapi App Secret di Railway tetap aman.')) return;
     try {
       await api.post('/marketplace/accounts/' + account.id + '/disconnect');
       toast.success('Koneksi marketplace diputuskan dari Inventory');
+      await loadAll();
+    } catch (e) { toast.error(apiError(e)); }
+  };
+
+  const refreshToken = async (account) => {
+    try {
+      await api.post('/marketplace/accounts/' + account.id + '/refresh-token');
+      toast.success('Access token ' + account.provider + ' berhasil diperbarui');
       await loadAll();
     } catch (e) { toast.error(apiError(e)); }
   };
@@ -173,8 +196,8 @@ const MarketplaceIntegration = () => {
                 <div className="text-xs text-[#8b93a1] mt-1">Shop ID: {account.shopId || '—'} · Mode {account.connectionMode}</div>
               </div>
               <div className="text-right">
-                <div className={'text-xs font-semibold ' + (account.gatewayConfigured ? 'text-[#22c55e]' : 'text-[#f59e0b]')}>
-                  Gateway {account.gatewayConfigured ? 'Siap' : 'Belum dikonfigurasi'}
+                <div className={'text-xs font-semibold ' + (['CONNECTED','CONNECTED_MANUAL'].includes(account.connectionStatus) ? 'text-[#22c55e]' : 'text-[#f59e0b]')}>
+                  {['CONNECTED','CONNECTED_MANUAL'].includes(account.connectionStatus) ? 'Terhubung ✓' : 'Belum Terhubung'}
                 </div>
                 <div className="text-xs text-[#8b93a1] mt-1">{account.connectionStatus || 'NOT_CONNECTED'}</div>
               </div>
@@ -184,13 +207,20 @@ const MarketplaceIntegration = () => {
               <div>Prefix: <span className="font-mono">{account.credentialEnvPrefix}</span></div>
               <div>App/Client ID: <b className={account.clientConfigured ? 'text-[#86efac]' : 'text-[#fbbf24]'}>{account.clientConfigured ? 'Tersedia' : 'Belum'}</b></div>
               <div>Secret/Key: <b className={account.secretConfigured ? 'text-[#86efac]' : 'text-[#fbbf24]'}>{account.secretConfigured ? 'Tersedia' : 'Belum'}</b></div>
-              <div>Access Token: <b className={account.tokenConfigured ? 'text-[#86efac]' : 'text-[#94a3b8]'}>{account.tokenConfigured ? 'Tersimpan' : 'Belum'}</b></div>
-              <div>Webhook: <b className={account.gatewayConfigured ? 'text-[#86efac]' : 'text-[#fbbf24]'}>{account.gatewayConfigured ? 'Siap' : 'Belum'}</b></div>
+              <div>Access Token: <b className={account.tokenConfigured ? 'text-[#86efac]' : 'text-[#94a3b8]'}>{account.tokenConfigured ? 'Terenkripsi/Tersimpan' : 'Belum'}</b></div>
+              <div>Refresh Token: <b className={account.storedRefreshToken ? 'text-[#86efac]' : 'text-[#94a3b8]'}>{account.storedRefreshToken ? 'Tersedia' : 'Belum'}</b></div>
+              <div>Webhook Order: <b className={account.webhookStatus === 'ACTIVE' ? 'text-[#86efac]' : 'text-[#fbbf24]'}>{account.webhookStatus || (account.gatewayConfigured ? 'Gateway siap' : 'Belum')}</b></div>
+              <div>Shop Cipher: <b className={account.shopCipher ? 'text-[#86efac]' : 'text-[#94a3b8]'}>{account.shopCipher ? 'Tersimpan' : 'Belum'}</b></div>
+              {account.tokenExpiresAt && <div className="sm:col-span-2">Token berlaku s.d.: <span className="font-mono">{new Date(account.tokenExpiresAt).toLocaleString('id-ID')}</span></div>}
+              {account.callbackUrl && <div className="sm:col-span-2 break-all">Callback: <span className="font-mono text-[#93c5fd]">{account.callbackUrl}</span></div>}
+              {account.lastConnectionError && <div className="sm:col-span-2 text-[#fca5a5]">Error terakhir: {account.lastConnectionError}</div>}
+              {account.webhookError && <div className="sm:col-span-2 text-[#fca5a5]">Webhook: {account.webhookError}</div>}
             </div>
             <div className="flex flex-wrap gap-2 mt-3">
               <button onClick={() => { setSelectedAccount(account.id); setActiveTab('Mapping SKU'); setMappingForm((p) => ({ ...p, accountId: account.id })); }} className="px-3 py-2 rounded-lg border border-[#3b82f6]/40 text-[#93c5fd] text-xs font-semibold">Mapping SKU</button>
               <button onClick={() => { setActiveTab('Sinkron Stok'); loadPreview(account.id, false); }} className="px-3 py-2 rounded-lg border border-[#22c55e]/40 text-[#86efac] text-xs font-semibold">Preview Stok</button>
               {canManage && !['CONNECTED','CONNECTED_MANUAL'].includes(account.connectionStatus) && <button onClick={() => connectAccount(account)} className="px-3 py-2 rounded-lg border border-[#22c55e]/40 text-[#86efac] text-xs font-semibold">Hubungkan</button>}
+              {canManage && account.storedRefreshToken && ['CONNECTED','CONNECTED_MANUAL'].includes(account.connectionStatus) && <button onClick={() => refreshToken(account)} className="px-3 py-2 rounded-lg border border-[#0ea5e9]/40 text-[#7dd3fc] text-xs font-semibold">Refresh Token</button>}
               {canManage && ['CONNECTED','CONNECTED_MANUAL'].includes(account.connectionStatus) && <button onClick={() => disconnectAccount(account)} className="px-3 py-2 rounded-lg border border-[#ef4444]/40 text-[#fca5a5] text-xs font-semibold">Putuskan</button>}
               {canManage && <button onClick={() => toggleAccount(account)} className="px-3 py-2 rounded-lg border border-[#64748b]/40 text-[#cbd5e1] text-xs font-semibold">{account.active ? 'Nonaktifkan' : 'Aktifkan'}</button>}
             </div>
@@ -292,7 +322,7 @@ const MarketplaceIntegration = () => {
 
     <section className="card-surface p-5 text-xs text-[#94a3b8]">
       <div className="font-semibold text-[#e2e8f0] mb-2">Status integrasi</div>
-      Pengaturan akun, mapping SKU, stock preview, tombol Hubungkan/Putuskan, event idempotency dan log tersedia di web. Nilai App ID/Secret/Token tidak pernah dikirim kembali ke browser; halaman ini hanya menampilkan apakah variabel aman di Railway sudah tersedia.
+      Setelah App ID/Secret dan Authorization Link resmi tersedia di Railway, tombol Hubungkan menjalankan OAuth/callback otomatis. Access/refresh token disimpan terenkripsi, dan untuk TikTok Shop/Tokopedia & Shop sistem mencoba mendaftarkan webhook order otomatis. Nilai secret/token tidak pernah ditampilkan ke browser.
     </section>
   </div>;
 };
