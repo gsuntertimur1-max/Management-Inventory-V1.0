@@ -2,10 +2,12 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Boxes, CheckCircle2, History, PackagePlus, Plus, RefreshCcw, Truck, Undo2 } from 'lucide-react';
 import api, { apiError } from '../lib/api';
 import { toast } from 'sonner';
+import { useData } from '../context/DataContext';
 
 const inputCls = 'w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]';
 
 const BazarPaket = () => {
+  const { refreshConsignmentFlow } = useData();
   const [availability, setAvailability] = useState([]);
   const [templates, setTemplates] = useState([]);
   const [packageStock, setPackageStock] = useState([]);
@@ -138,7 +140,7 @@ const BazarPaket = () => {
       });
       await api.post(`/bazar/package-loads/${closing.id}/close`, { items, note: 'Rekonsiliasi distribusi paket' });
       toast.success('Distribusi paket selesai dan stok telah direkonsiliasi');
-      setClosing(null); await loadAll();
+      setClosing(null); await Promise.all([loadAll(), refreshConsignmentFlow()]);
     } catch (e) { toast.error(e?.response ? apiError(e) : e.message); }
   };
 
