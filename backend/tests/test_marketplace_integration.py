@@ -91,6 +91,8 @@ from backend.marketplace_oauth import (
     _encrypt_token_bundle,
     _shopee_signature,
     _tiktok_sign,
+    _verify_shopee_push,
+    _normalize_shopee_status,
 )
 
 
@@ -121,3 +123,34 @@ def test_tiktok_signature_changes_with_body():
     second = _tiktok_sign("/event/202309/webhooks", query, '{"event_type":"PACKAGE_UPDATE"}', "secret")
     assert len(first) == 64
     assert first != second
+
+
+def test_shopee_push_signature_uses_callback_url_plus_raw_body(monkeypatch):
+    import hashlib
+    import hmac
+
+    monkeypatch.setenv("MARKETPLACE_SHOPEE_PUSH_PARTNER_KEY", "push-secret")
+    callback = "https://inventory.example/api/marketplace/webhooks/shopee"
+    raw = b'{"code":3,"shop_id":123,"data":{"ordersn":"ORDER-1"}}'
+    authorization = hmac.new(
+        b"push-secret",
+        callback.encode("utf-8") + raw,
+        hashlib.sha256,
+    ).hexdigest()
+    assert _verify_shopee_push(raw, authorization, callback) is True
+    assert _verify_shopee_push(raw + b" ", authorization, callback) is False
+
+
+@pytest.mark.parametrize(
+    "status, event",
+    [
+        ("UNPAID", "ORDER_CREATED"),
+        ("READY_TO_SHIP", "ORDER_PACKING"),
+        ("PROCESSED", "ORDER_PACKING"),
+        ("SHIPPED", "ORDER_SHIPPED"),
+        ("COMPLETED", "ORDER_SHIPPED"),
+        ("CANCELLED", "ORDER_CANCELLED"),
+    ],
+)
+def test_shopee_order_status_normalization(status, event):
+    assert _normalize_shopee_status(status) == event
