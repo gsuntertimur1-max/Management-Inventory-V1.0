@@ -299,19 +299,19 @@ async def export_bon_muat_pdf(load_id: str, user: dict = Depends(get_current_use
 
     buffer = io.BytesIO()
     width = 80 * mm
-    height = max(150 * mm, (124 + (len(grouped) * 18)) * mm)
+    height = max(165 * mm, (138 + (len(grouped) * 24)) * mm)
     c = canvas.Canvas(buffer, pagesize=(width, height))
     mid = width / 2
     if THERMAL_LOGO.exists():
         c.drawImage(str(THERMAL_LOGO), (width - 34 * mm) / 2, height - 20 * mm, width=34 * mm, height=15 * mm, preserveAspectRatio=True, mask="auto")
     y = height - 26 * mm
-    c.setFont("Helvetica-Bold", 10); c.drawCentredString(mid, y, "BON PEMUATAN")
-    y -= 5 * mm; c.setFont("Helvetica", 6.5); c.drawCentredString(mid, y, "GBB SUNTER TIMUR I & II")
+    c.setFont("Helvetica-Bold", 13); c.drawCentredString(mid, y, "BON PEMUATAN")
+    y -= 5.5 * mm; c.setFont("Helvetica-Bold", 8.5); c.drawCentredString(mid, y, "GBB SUNTER TIMUR I & II")
     y -= 7 * mm; c.setDash(2, 2); c.line(4 * mm, y, width - 4 * mm, y); c.setDash(); y -= 6 * mm
-    c.setFont("Helvetica-Bold", 7); c.drawCentredString(mid, y, "NOMOR BON MUAT")
-    y -= 5 * mm; c.setFont("Helvetica-Bold", 10); c.drawCentredString(mid, y, load.get("bon_no", "-"))
-    y -= 7 * mm; c.setFont("Helvetica-Bold", 7); c.drawCentredString(mid, y, "NOMOR ANTRIAN")
-    y -= 11 * mm; c.setFont("Helvetica-Bold", 27); c.drawCentredString(mid, y, load.get("antrian", "-"))
+    c.setFont("Helvetica-Bold", 9); c.drawCentredString(mid, y, "NOMOR BON MUAT")
+    y -= 5.5 * mm; c.setFont("Helvetica-Bold", 12); c.drawCentredString(mid, y, load.get("bon_no", "-"))
+    y -= 7 * mm; c.setFont("Helvetica-Bold", 9); c.drawCentredString(mid, y, "NOMOR ANTRIAN")
+    y -= 12 * mm; c.setFont("Helvetica-Bold", 30); c.drawCentredString(mid, y, load.get("antrian", "-"))
     y -= 8 * mm; c.setDash(2, 2); c.line(4 * mm, y, width - 4 * mm, y); c.setDash(); y -= 6 * mm
     docs = ", ".join(load.get("documents") or [load.get("ref", "-")])
     fields = [
@@ -323,11 +323,11 @@ async def export_bon_muat_pdf(load_id: str, user: dict = Depends(get_current_use
         ("Lokasi muat", load.get("unit_loading", "-")),
     ]
     for label, value in fields:
-        c.setFont("Helvetica", 6.5); c.drawString(5 * mm, y, label)
-        c.setFont("Helvetica-Bold", 6.5); c.drawString(23 * mm, y, str(value)[:45])
-        y -= 5 * mm
+        c.setFont("Helvetica-Bold", 8.2); c.drawString(5 * mm, y, label)
+        c.setFont("Helvetica-Bold", 8.2); c.drawString(24 * mm, y, str(value)[:36])
+        y -= 6 * mm
     y -= 2 * mm; c.setDash(2, 2); c.line(4 * mm, y, width - 4 * mm, y); c.setDash(); y -= 6 * mm
-    c.setFont("Helvetica-Bold", 7); c.drawString(5 * mm, y, "BARANG YANG DIMUAT"); y -= 5 * mm
+    c.setFont("Helvetica-Bold", 9.5); c.drawString(5 * mm, y, "BARANG YANG DIMUAT"); y -= 6 * mm
 
     for item in grouped.values():
         qty = float(item.get("qty", 0) or 0)
@@ -335,22 +335,22 @@ async def export_bon_muat_pdf(load_id: str, user: dict = Depends(get_current_use
         secondary_name = item.get("secondary") or "kemasan sekunder"
         full_secondary = int(qty // secondary_qty) if secondary_qty else 0
         remaining_primary = qty - (full_secondary * secondary_qty) if secondary_qty else qty
-        c.setFont("Helvetica-Bold", 6.7); c.drawString(5 * mm, y, str(item.get("name", ""))[:48]); y -= 4 * mm
-        c.setFont("Helvetica", 6.2); c.drawString(7 * mm, y, f"{item.get('documentNo') or load.get('ref', '-')} | Tumpukan: {item.get('stackCode') or item.get('location') or '-'}"[:72]); y -= 4 * mm
-        c.setFont("Helvetica", 6.2)
+        c.setFont("Helvetica-Bold", 8.8); c.drawString(5 * mm, y, str(item.get("name", ""))[:38]); y -= 5 * mm
+        c.setFont("Helvetica-Bold", 7.8); c.drawString(7 * mm, y, f"{item.get('documentNo') or load.get('ref', '-')} | Tumpukan: {item.get('stackCode') or item.get('location') or '-'}"[:54]); y -= 5 * mm
+        c.setFont("Helvetica-Bold", 8.2)
         c.drawString(7 * mm, y, f"Total: {_num(qty)} {item.get('unit', 'pcs')} | {_num(item.get('berat', 0))} {item.get('measureUnit', 'kg')}")
-        y -= 4 * mm
+        y -= 5 * mm
         if secondary_qty:
             detail = f"Kemasan sekunder: {full_secondary} {secondary_name}"
             if remaining_primary > 1e-9:
                 detail += f" | Sisa: {_num(remaining_primary)} {item.get('unit', 'pcs')}"
         else:
             detail = f"Kemasan sekunder: - | Per pcs: {_num(qty)} {item.get('unit', 'pcs')}"
-        c.setFont("Helvetica-Bold", 6.2); c.drawString(7 * mm, y, detail[:72]); y -= 6 * mm
+        c.setFont("Helvetica-Bold", 7.8); c.drawString(7 * mm, y, detail[:54]); y -= 7 * mm
 
     c.setDash(2, 2); c.line(4 * mm, y, width - 4 * mm, y); c.setDash(); y -= 6 * mm
-    c.setFont("Helvetica-Bold", 7); c.drawCentredString(mid, y, "Serahkan bon ini kepada petugas pemuatan")
-    y -= 5 * mm; c.setFont("Helvetica", 6.5); c.drawCentredString(mid, y, "Terima kasih - GBB Sunter Timur I & II")
+    c.setFont("Helvetica-Bold", 9); c.drawCentredString(mid, y, "Serahkan bon ini kepada petugas pemuatan")
+    y -= 5.5 * mm; c.setFont("Helvetica-Bold", 8); c.drawCentredString(mid, y, "Terima kasih - GBB Sunter Timur I & II")
     c.save()
     return _pdf_response(buffer, f"bon_pemuatan_{load.get('bon_no', '')}.pdf")
 
