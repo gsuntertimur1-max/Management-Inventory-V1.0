@@ -132,13 +132,14 @@ def _number(value, default=0.0) -> float:
         return default
 
 
-def _crew_group_from_location(location: str) -> str:
+def _unloading_crew_group(location: str) -> str:
+    """Biaya bongkar hanya memakai dua mandor; RTR tidak termasuk biaya bongkar."""
     text = str(location or "").upper()
     if "RTR" in text:
-        return "GRUP 3 - RTR"
+        return ""
     if "MP1" in text or any(re.search(rf"(?:UNIT\\s*)?{unit}(?:/|\\b)", text) for unit in ("21", "22", "23", "24")):
-        return "GRUP 2 - MP1/21-24"
-    return "GRUP 1 - GBB 17-20"
+        return "MANDOR 2 - MP1/GBB 21-24"
+    return "MANDOR 1 - GBB 17-20"
 
 
 def _unloading_fee(product: dict, qty: float, at, charge_mode_override: str = "") -> dict:
@@ -247,106 +248,10 @@ async def _hydrate_legacy_po(doc: dict) -> dict:
     return normalized
 
 
-def _receipt_operational_date(txn: dict) -> str:
-    if txn.get("operational_date"):
-        return str(txn["operational_date"])
-    raw = str(txn.get("time") or "")
-    try:
-        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        if parsed.tzinfo is not None:
-            return parsed.astimezone(timezone.utc).strftime("%Y-%m-%d")
-        return parsed.strftime("%Y-%m-%d")
-    except ValueError:
-        return raw[:10] or "-"
-
-
 @router.get("/purchase-orders-v2")
 async def list_purchase_orders(user: dict = Depends(get_current_user)):
     docs = await db.purchase_orders.find({}, {"_id": 0}).sort("date", -1).to_list(1000)
-    hydrated = [await _hydrate_legacy_po(doc) for doc in docs]
-    po_ids = [doc.get("id") for doc in hydrated if doc.get("id")]
-    summaries = {}
-
-    if po_ids:
-        transactions = await db.transactions.find(
-            {
-                "po_id": {"$in": po_ids},
-                "type": "MASUK",
-                "unloading_cost": {"$exists": True},
-            },
-            {
-                "_id": 0,
-                "po_id": 1,
-                "time": 1,
-                "operational_date": 1,
-                "ref": 1,
-                "product": 1,
-                "sku": 1,
-                "change": 1,
-                "unit": 1,
-                "unloading_group": 1,
-                "unloading_cost": 1,
-            },
-        ).sort("time", 1).to_list(20000)
-
-        for txn in transactions:
-            po_id = txn.get("po_id")
-            cost = dict(txn.get("unloading_cost") or {})
-            if not po_id or not cost or float(cost.get("total", 0) or 0) <= 0:
-                continue
-
-            summary = summaries.setdefault(po_id, {
-                "totals": {"labor": 0.0, "daily": 0.0, "warehouse": 0.0, "total": 0.0, "chargeable": 0.0},
-                "days": {},
-            })
-            date = _receipt_operational_date(txn)
-            day = summary["days"].setdefault(date, {
-                "date": date,
-                "totals": {"labor": 0.0, "daily": 0.0, "warehouse": 0.0, "total": 0.0, "chargeable": 0.0},
-                "groups": {},
-                "items": [],
-            })
-            group = str(txn.get("unloading_group") or "GRUP 1 - GBB 17-20")
-            group_totals = day["groups"].setdefault(group, {"labor": 0.0, "daily": 0.0, "warehouse": 0.0, "total": 0.0})
-
-            for key in ("labor", "daily", "warehouse", "total", "chargeable"):
-                value = float(cost.get(key, 0) or 0)
-                summary["totals"][key] += value
-                day["totals"][key] += value
-                if key != "chargeable":
-                    group_totals[key] += value
-
-            day["items"].append({
-                "time": txn.get("time", ""),
-                "ref": txn.get("ref", ""),
-                "product": txn.get("product", ""),
-                "sku": txn.get("sku", ""),
-                "qty": float(txn.get("change", 0) or 0),
-                "unit": txn.get("unit", ""),
-                "group": group,
-                "cost": {
-                    "labor": float(cost.get("labor", 0) or 0),
-                    "daily": float(cost.get("daily", 0) or 0),
-                    "warehouse": float(cost.get("warehouse", 0) or 0),
-                    "total": float(cost.get("total", 0) or 0),
-                    "chargeable": float(cost.get("chargeable", 0) or 0),
-                    "mode": cost.get("mode", "TIDAK_ADA"),
-                    "overtime": bool(cost.get("overtime")),
-                    "holiday": bool(cost.get("holiday")),
-                },
-            })
-
-    for doc in hydrated:
-        summary = summaries.get(doc.get("id"), {
-            "totals": {"labor": 0.0, "daily": 0.0, "warehouse": 0.0, "total": 0.0, "chargeable": 0.0},
-            "days": {},
-        })
-        doc["unloadingSummary"] = {
-            "totals": summary["totals"],
-            "days": [summary["days"][key] for key in sorted(summary["days"], reverse=True)],
-        }
-
-    return hydrated
+    return [await _hydrate_legacy_po(doc) for doc in docs]
 
 
 @router.post("/purchase-orders-v2")
@@ -537,6 +442,9 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
                 await allocate_stock_to_stack(product, stack_code, good_qty, user.get("name", ""))
                 stack_changes.append({"productId": product["id"], "stackCode": stack_code, "qty": good_qty})
 
+            unloading_group = _unloading_crew_group(item.stackCode or product.get("location", ""))
+            unloading_fee = _unloading_fee(product, total_qty, op_now, body.unloadingFeeChargeMode) if unloading_group else {}
+
             def receipt_txn(kondisi: str, qty: float, loading_cost: dict, include_weighing: bool):
                 return {
                 "id": new_id(),
@@ -570,14 +478,14 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
                 "gross_min": float(body.grossMin) if body.weighingForm and include_weighing else 0,
                 "gross_max": float(body.grossMax) if body.weighingForm and include_weighing else 0,
                 "weighing_entries": _weighing_entries(float(body.grossWeight), float(body.grossMin), float(body.grossMax)) if body.weighingForm and include_weighing else [],
-                "unloading_group": _crew_group_from_location(item.stackCode or product.get("location", "")),
+                "unloading_group": unloading_group,
                 "unloading_cost": loading_cost,
             }
 
             if good_qty > 0:
-                txns.append(receipt_txn("BAIK", good_qty, _unloading_fee(product, total_qty, op_now, body.unloadingFeeChargeMode), True))
+                txns.append(receipt_txn("BAIK", good_qty, unloading_fee, True))
             if damaged_qty > 0:
-                damaged_cost = _unloading_fee(product, total_qty, op_now, body.unloadingFeeChargeMode) if good_qty <= 0 else {}
+                damaged_cost = unloading_fee if good_qty <= 0 else {}
                 txns.append(receipt_txn("RUSAK", damaged_qty, damaged_cost, good_qty <= 0))
 
         if txns:
