@@ -92,7 +92,7 @@ const BazarOperasional = () => {
         const damaged = Number(closeRows[rowKey]?.returnedDamagedQty || 0);
         const returnedGood = Number(item.loadedQty || 0) - sold - damaged;
         if (returnedGood < 0) throw new Error(`${item.name}: terjual + retur rusak melebihi jumlah muat`);
-        return { productId: item.productId, soldQty: sold, returnedDamagedQty: damaged, returnedGoodQty: returnedGood };
+        return { productId: item.productId, stackCode: item.stackCode || '', soldQty: sold, returnedDamagedQty: damaged, returnedGoodQty: returnedGood };
       });
       await api.post(`/bazar/trips/${closing.id}/close`, { items: resultItems, note: 'Rekonsiliasi penutupan bazar' });
       toast.success('Perjalanan Bazar selesai dan stok direkonsiliasi');

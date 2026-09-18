@@ -165,6 +165,7 @@ class BazarTripCreate(BaseModel):
 
 class BazarCloseItem(BaseModel):
     productId: str
+    stackCode: str = ""
     soldQty: float = Field(ge=0)
     returnedGoodQty: float = Field(ge=0)
     returnedDamagedQty: float = Field(default=0, ge=0)
@@ -220,6 +221,19 @@ async def create_bazar_trip(body: BazarTripCreate, user: dict = Depends(get_curr
                 sort=[("stackCode", 1)],
             )
             stack_code = str((layout or {}).get("stackCode") or "BZR/A01")
+
+        product_layout_count = await db.consignment_layouts.count_documents({"destination": BAZAR, "productId": product_id})
+        selected_layout = await db.consignment_layouts.find_one(
+            {"destination": BAZAR, "productId": product_id, "stackCode": stack_code},
+            {"_id": 0},
+        )
+        if product_layout_count and not selected_layout:
+            raise HTTPException(status_code=400, detail=f"Tumpukan {stack_code} tidak memiliki perkalian aktif untuk {identity.get('name', '')}")
+        if selected_layout and qty > consignment_module._layout_primary_qty(selected_layout) + EPS:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Stok {identity.get('name', '')} pada {stack_code} hanya {consignment_module._layout_primary_qty(selected_layout):g} {identity.get('unit', '')}",
+            )
 
         items.append({
             "productId": product_id,
@@ -286,15 +300,23 @@ async def close_bazar_trip(trip_id: str, body: BazarTripClose, user: dict = Depe
     if trip.get("status") != "BERJALAN":
         raise HTTPException(status_code=409, detail="Perjalanan Bazar tidak dapat ditutup dari status saat ini")
 
-    result_map = {item.productId: item for item in body.items}
-    if set(result_map) != {item.get("productId") for item in trip.get("items", [])}:
-        raise HTTPException(status_code=400, detail="Rekonsiliasi harus mencakup seluruh komoditi yang dimuat")
+    result_map = {
+        (item.productId, str(item.stackCode or "").strip().upper()): item
+        for item in body.items
+    }
+    expected = {
+        (item.get("productId"), str(item.get("stackCode") or "").strip().upper())
+        for item in trip.get("items", [])
+    }
+    if set(result_map) != expected:
+        raise HTTPException(status_code=400, detail="Rekonsiliasi harus mencakup seluruh komoditi dan tumpukan yang dimuat")
 
     final_items = []
     movements = []
     now = now_iso()
     for loaded in trip.get("items", []):
-        result = result_map[loaded["productId"]]
+        stack_code = str(loaded.get("stackCode") or "").strip().upper()
+        result = result_map[(loaded["productId"], stack_code)]
         sold = float(result.soldQty)
         returned_good = float(result.returnedGoodQty)
         returned_damaged = float(result.returnedDamagedQty)
@@ -306,7 +328,7 @@ async def close_bazar_trip(trip_id: str, body: BazarTripClose, user: dict = Depe
         consumed = sold + returned_damaged
         if consumed > EPS:
             movements.append({
-                "id": new_id(), "eventKey": f"bazar-close:{trip_id}:{loaded['productId']}", "time": now,
+                "id": new_id(), "eventKey": f"bazar-close:{trip_id}:{loaded['productId']}:{stack_code}", "time": now,
                 "destination": BAZAR, "movementType": "BAZAR_PENJUALAN", "referenceId": trip_id,
                 "referenceNo": trip.get("tripNo", ""), "productId": loaded["productId"], "sku": loaded.get("sku", ""),
                 "name": loaded.get("name", ""), "unit": loaded.get("unit", ""), "channel": loaded.get("channel", "KOM"),
