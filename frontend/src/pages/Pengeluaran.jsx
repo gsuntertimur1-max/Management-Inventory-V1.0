@@ -72,7 +72,7 @@ const Pengeluaran = () => {
   });
   const findFinalSJ = (load) => suratJalan.find((sj) => sj.id === load.surat_jalan_id || sj.load_id === load.id);
   const downloadBon = (load) => downloadApiFile(`/export/bon-muat-v2/${load.id}.pdf`, `bon_pemuatan_${load.bon_no || load.id}_72mm.pdf`).catch((e) => toast.error(apiError(e)));
-  const downloadSuratJalan = (sj) => sj ? downloadApiFile(`/export/surat-jalan/${sj.id}.pdf`, `surat_jalan_${(sj.ref || sj.no || sj.id).replaceAll('/', '-')}.pdf`).catch((e) => toast.error(apiError(e))) : toast.error('Surat Jalan belum tersedia');
+  const downloadSuratJalan = (sj) => sj ? downloadApiFile(`/export/surat-jalan/${sj.id}.pdf`, `surat_jalan_${(sj.no || sj.ref || sj.id).replaceAll('/', '-')}.pdf`).catch((e) => toast.error(apiError(e))) : toast.error('Surat Jalan belum tersedia');
   const downloadWeighingForm = (load) => downloadApiFile(`/export/weighing-form/outbound/${load.id}.pdf`, `form_timbangan_keluar_${load.antrian || load.id}.pdf`).catch((e) => toast.error(apiError(e)));
   const sourceDocumentFor = (load, item) => item.documentNo || load.ref || '';
   const linkedUsageFor = (load, sourceDocumentNo, productId) => (load.document_links || []).reduce((total, link) => {
