@@ -284,6 +284,24 @@ async def save_consignment_layout(body: ConsignmentLayoutInput, user: dict = Dep
         allocated_elsewhere += _layout_primary_qty(row)
 
     stock_qty = float(stock.get("qty", 0) or 0)
+    if body.destination == "Gudang Bazar":
+        reserved_on_stack = 0.0
+        active_trips = await db.bazar_trips.find(
+            {"status": "BERJALAN"},
+            {"_id": 0, "items": 1},
+        ).to_list(5000)
+        for trip in active_trips:
+            for trip_item in trip.get("items", []):
+                if (
+                    trip_item.get("productId") == body.productId
+                    and str(trip_item.get("stackCode") or "").strip().upper() == stack_code
+                ):
+                    reserved_on_stack += float(trip_item.get("loadedQty", 0) or 0)
+        if calculated + 1e-9 < reserved_on_stack:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Tumpukan {stack_code} sedang mereservasi {reserved_on_stack:g} {stock.get('unit', '')} untuk perjalanan Bazar aktif",
+            )
     if allocated_elsewhere + calculated > stock_qty + 1e-9:
         available = max(stock_qty - allocated_elsewhere, 0)
         raise HTTPException(
@@ -342,6 +360,24 @@ async def delete_consignment_layout(layout_id: str, user: dict = Depends(get_cur
     if not existing:
         raise HTTPException(status_code=404, detail="Perkalian tumpukan tidak ditemukan")
     _ensure_destination_access(user, existing.get("destination", ""), write=True)
+    if existing.get("destination") == "Gudang Bazar":
+        active_trip = await db.bazar_trips.find_one(
+            {
+                "status": "BERJALAN",
+                "items": {
+                    "$elemMatch": {
+                        "productId": existing.get("productId", ""),
+                        "stackCode": existing.get("stackCode", ""),
+                    }
+                },
+            },
+            {"_id": 0, "tripNo": 1},
+        )
+        if active_trip:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Tumpukan sedang dipakai perjalanan Bazar aktif {active_trip.get('tripNo', '')}; selesaikan perjalanan terlebih dahulu",
+            )
     await db.consignment_layouts.delete_one({"id": layout_id})
     await db.consignment_layout_history.insert_one({
         "id": new_id(),
@@ -364,6 +400,7 @@ async def decrease_consignment_layouts(
     qty: float,
     operator: str,
     preferred_stack: str = "",
+    strict_preferred: bool = False,
 ) -> None:
     remaining = max(float(qty or 0), 0.0)
     if remaining <= 1e-9:
@@ -372,7 +409,17 @@ async def decrease_consignment_layouts(
     layouts = await db.consignment_layouts.find(query, {"_id": 0}).sort([("updatedAt", 1), ("stackCode", 1)]).to_list(5000)
     if preferred_stack:
         normalized = normalize_consignment_stack_code(destination, preferred_stack)
-        layouts.sort(key=lambda row: (row.get("stackCode") != normalized, row.get("stackCode", "")))
+        preferred_rows = [row for row in layouts if row.get("stackCode") == normalized]
+        if strict_preferred and layouts:
+            available_on_stack = sum(_layout_primary_qty(row) for row in preferred_rows)
+            if available_on_stack + 1e-9 < remaining:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Saldo tumpukan {normalized} berubah dan hanya tersisa {available_on_stack:g}. Periksa perjalanan aktif/perkalian sebelum menyelesaikan.",
+                )
+            layouts = preferred_rows
+        else:
+            layouts.sort(key=lambda row: (row.get("stackCode") != normalized, row.get("stackCode", "")))
     for layout in layouts:
         if remaining <= 1e-9:
             break

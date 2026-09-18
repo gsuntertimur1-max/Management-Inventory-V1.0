@@ -35,3 +35,10 @@ def test_bazar_documents_allow_bazar_operator_and_superadmin():
     _ensure_bazar_access({"role": "Administrator"})
     with pytest.raises(HTTPException):
         _ensure_bazar_access({"role": "QC"})
+
+
+def test_stack_code_normalizer_rejects_cross_scope_and_invalid_package_marker():
+    with pytest.raises(HTTPException):
+        normalize_consignment_stack_code("Gudang E-commerce", "BZR/A01")
+    with pytest.raises(HTTPException):
+        normalize_consignment_stack_code("Gudang Bazar", "BZR/PKT")

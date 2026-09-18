@@ -141,13 +141,6 @@ const ConsignmentLocationMap = ({ destination }) => {
     }
     setSaving(true);
     try {
-      if (form.editingId) {
-        const current = layouts.find((layout) => layout.id === form.editingId);
-        const nextCode = `${prefix}/${suffix}`;
-        if (current && current.stackCode !== nextCode) {
-          await deleteConsignmentLayout(current.id);
-        }
-      }
       await saveConsignmentLayout({
         destination,
         productId: form.productId,
@@ -208,7 +201,8 @@ const ConsignmentLocationMap = ({ destination }) => {
       <div className="grid grid-cols-1 md:grid-cols-[180px_1fr] gap-3">
         <div>
           <label className="text-xs text-[#8b93a1] block mb-1">Kode Tumpukan</label>
-          <div className="flex"><div className="rounded-l-lg border border-r-0 border-[#242f3d] bg-[#111827] px-3 py-2.5 text-sm font-mono text-[#93c5fd]">{prefix}/</div><input className={inputCls + ' rounded-l-none font-mono'} value={form.stackSuffix} onChange={(e) => setForm({ ...form, stackSuffix: e.target.value.toUpperCase() })} placeholder="A01"/></div>
+          <div className="flex"><div className="rounded-l-lg border border-r-0 border-[#242f3d] bg-[#111827] px-3 py-2.5 text-sm font-mono text-[#93c5fd]">{prefix}/</div><input disabled={Boolean(form.editingId)} className={inputCls + ' rounded-l-none font-mono disabled:opacity-60'} value={form.stackSuffix} onChange={(e) => setForm({ ...form, stackSuffix: e.target.value.toUpperCase() })} placeholder="A01"/></div>
+          {form.editingId && <div className="text-[10px] text-[#8b93a1] mt-1">Kode tumpukan dikunci saat edit agar histori dan reservasi muatan tetap konsisten.</div>}
         </div>
         <div>
           <label className="text-xs text-[#8b93a1] block mb-1">Komoditi</label>

@@ -117,6 +117,22 @@ async def _available(destination: str, product_id: str, exclude_kind: str = "", 
     return physical, reserved, max(physical - reserved, 0.0)
 
 
+async def _bazar_stack_reserved(product_id: str, stack_code: str, exclude_trip_id: str = "") -> float:
+    target = str(stack_code or "").strip().upper()
+    reserved = 0.0
+    trips = await db.bazar_trips.find({"status": "BERJALAN"}, {"_id": 0, "id": 1, "items": 1}).to_list(5000)
+    for trip in trips:
+        if exclude_trip_id and trip.get("id") == exclude_trip_id:
+            continue
+        for item in trip.get("items", []):
+            if (
+                item.get("productId") == product_id
+                and str(item.get("stackCode") or "").strip().upper() == target
+            ):
+                reserved += _n(item.get("loadedQty"))
+    return reserved
+
+
 async def _identity(destination: str, product_id: str) -> dict:
     rows = await adjusted_consignment_stock(destination)
     row = next((item for item in rows if item.get("productId") == product_id), None)
@@ -229,11 +245,14 @@ async def create_bazar_trip(body: BazarTripCreate, user: dict = Depends(get_curr
         )
         if product_layout_count and not selected_layout:
             raise HTTPException(status_code=400, detail=f"Tumpukan {stack_code} tidak memiliki perkalian aktif untuk {identity.get('name', '')}")
-        if selected_layout and qty > consignment_module._layout_primary_qty(selected_layout) + EPS:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Stok {identity.get('name', '')} pada {stack_code} hanya {consignment_module._layout_primary_qty(selected_layout):g} {identity.get('unit', '')}",
-            )
+        if selected_layout:
+            reserved_on_stack = await _bazar_stack_reserved(product_id, stack_code)
+            stack_available = max(consignment_module._layout_primary_qty(selected_layout) - reserved_on_stack, 0.0)
+            if qty > stack_available + EPS:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Stok tersedia {identity.get('name', '')} pada {stack_code} hanya {stack_available:g} {identity.get('unit', '')} setelah reservasi perjalanan aktif",
+                )
 
         items.append({
             "productId": product_id,
@@ -346,6 +365,7 @@ async def close_bazar_trip(trip_id: str, body: BazarTripClose, user: dict = Depe
                 consumed,
                 user.get("name", ""),
                 item.get("stackCode", ""),
+                strict_preferred=True,
             )
     await db.bazar_trips.update_one({"id": trip_id, "status": "BERJALAN"}, {"$set": {
         "status": "SELESAI", "resultItems": final_items, "closedAt": now, "closedBy": user.get("name", ""), "closeNote": body.note.strip(),
