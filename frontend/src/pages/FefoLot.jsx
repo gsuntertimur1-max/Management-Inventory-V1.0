@@ -67,7 +67,7 @@ const FefoLot = () => {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div><div className="label-mono mb-2">First Expired First Out</div><h1 className="font-display text-4xl font-bold">Lot & FEFO</h1><p className="text-[#8b93a1] mt-2 max-w-3xl">Penerimaan baru otomatis menjadi lot per tumpukan. Stok historis dan retur yang belum memiliki identitas batch/expired tetap diperlakukan sebagai legacy/untracked agar sistem tidak mengarang tanggal. Coverage sekarang ditampilkan sampai level tumpukan.</p></div>
+        <div><div className="label-mono mb-2">First Expired First Out</div><h1 className="font-display text-4xl font-bold">Lot & FEFO</h1></div>
         <button type="button" onClick={load} disabled={loading} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-[#242f3d] text-sm disabled:opacity-50"><RefreshCcw size={16} className={loading ? 'animate-spin' : ''} /> Periksa FEFO</button>
       </div>
 
