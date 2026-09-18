@@ -42,7 +42,12 @@ const NAV_GROUPS = [
       { to: '/supplier', label: 'Supplier', icon: Truck, permission: 'mainInventory' },
     ],
   },
-  { label: 'Riwayat', icon: History, to: '/riwayat', permission: 'mainInventory' },
+  {
+    label: 'Riwayat', icon: History, items: [
+      { to: '/riwayat', label: 'Riwayat Gudang', icon: History, permission: 'mainInventory' },
+      { to: '/riwayat-bazar-ecom', label: 'Riwayat Bazar/E-commerce', icon: ShoppingBag, permission: 'consignmentHistory' },
+    ],
+  },
   {
     label: 'Administrasi', icon: ShieldCheck, items: [
       { to: '/kontrol-integritas', label: 'Kontrol Integritas', icon: Activity, permission: 'masterWrite' },
