@@ -24,6 +24,7 @@ from backend.server import (
     require_master_write,
     ensure_channel_stock,
     normalize_channel,
+    get_operational_location,
 )
 from backend.stack_allocations import allocate_stock_to_stack, decrease_stack_allocation
 
@@ -130,16 +131,6 @@ def _number(value, default=0.0) -> float:
         return float(text)
     except ValueError:
         return default
-
-
-def _unloading_crew_group(location: str) -> str:
-    """Biaya bongkar hanya memakai dua mandor; RTR tidak termasuk biaya bongkar."""
-    text = str(location or "").upper()
-    if "RTR" in text:
-        return ""
-    if "MP1" in text or any(re.search(rf"(?:UNIT\\s*)?{unit}(?:/|\\b)", text) for unit in ("21", "22", "23", "24")):
-        return "MANDOR 2 - MP1/GBB 21-24"
-    return "MANDOR 1 - GBB 17-20"
 
 
 def _unloading_fee(product: dict, qty: float, at, charge_mode_override: str = "") -> dict:
@@ -437,13 +428,21 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
                     stock_changes.append({"productId": product["id"], "field": field, "qty": qty, "previousExp": previous_exp, "expChanged": bool(update_doc.get("$set")), "channel": channel})
 
             stack_code = item.stackCode.strip().upper()
+            location_source = stack_code or str(product.get("location", "") or "").strip()
+            location_config = await get_operational_location(location_source, "inbound") if location_source else None
+            if good_qty > 0 and not stack_code:
+                raise HTTPException(status_code=400, detail=f"Pilih tumpukan penerimaan untuk {product.get('name', '')}")
             if good_qty > 0 and stack_code:
                 from backend.stack_allocations import allocate_stock_to_stack
                 await allocate_stock_to_stack(product, stack_code, good_qty, user.get("name", ""))
                 stack_changes.append({"productId": product["id"], "stackCode": stack_code, "qty": good_qty})
 
-            unloading_group = _unloading_crew_group(item.stackCode or product.get("location", ""))
-            unloading_fee = _unloading_fee(product, total_qty, op_now, body.unloadingFeeChargeMode) if unloading_group else {}
+            unloading_group = ""
+            unloading_fee = {}
+            if location_config and bool(location_config.get("unloadingCostEnabled", False)):
+                unloading_group = str(location_config.get("unloadingGroup", "") or "")
+                if unloading_group:
+                    unloading_fee = _unloading_fee(product, total_qty, op_now, body.unloadingFeeChargeMode)
 
             def receipt_txn(kondisi: str, qty: float, loading_cost: dict, include_weighing: bool):
                 return {

@@ -21,6 +21,7 @@ from backend.server import (
     ensure_channel_stock,
     normalize_channel,
     channel_balance,
+    get_operational_location,
 )
 from backend.stack_allocations import valid_stack_codes, allocate_stock_to_stack, decrease_stack_allocation, reconcile_product_allocations
 from backend.fefo_selection import get_fefo_pick_guide, selection_requires_reason
@@ -92,13 +93,6 @@ class OutboundEditInput(BaseModel):
 class DailyLoadingSettlementInput(BaseModel):
     recipient: Literal["BURUH", "HARIAN"]
     note: str = ""
-
-
-def _crew_group(unit_loading: str) -> str:
-    text = str(unit_loading or "").upper()
-    if "RTR" in text: return "GRUP 3 - RTR"
-    if "MP1" in text or any(re.search(rf"(?:UNIT\\s*)?{x}(?:/|\\b)", text) for x in ("21", "22", "23", "24")): return "GRUP 2 - MP1/21-24"
-    return "GRUP 1 - GBB 17-20"
 
 
 def _loading_fee(product: dict, qty: float, when=None, apply_overtime=None, apply_holiday=None, charge_mode_override: str = "") -> dict:
@@ -213,12 +207,13 @@ def _loading_unit_from_products(products: List[dict]) -> tuple[str, str]:
 
 
 def loading_units_from_items(items: List[dict]) -> tuple[str, str]:
-    """Use each physical source; mixed GBB loads have their own queue series."""
+    """Gunakan kode lokasi/tumpukan aktual; lokasi baru dari master tidak perlu hard-code."""
     units = []
     for item in items:
         source = str(item.get("stackCode") or item.get("location") or "").strip().upper()
-        match = re.search(r"(?:^|\b)(MP1|(?:UNIT\s*)?(?:1[7-9]|2[0-4]))(?=/|\b)", source)
-        unit = match.group(1).replace("UNIT", "").strip() if match else ""
+        head = source.split("/", 1)[0].strip()
+        head = re.sub(r"^(?:UNIT|GBB)\s*", "", head).strip()
+        unit = head if head and re.fullmatch(r"[A-Z0-9-]+", head) else ""
         if unit and unit not in units:
             units.append(unit)
     if not units:
@@ -350,7 +345,14 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
                 raise HTTPException(status_code=400, detail=f"Tumpukan {stack_code} bukan prioritas {guide.get('mode', 'FEFO')} untuk {product.get('name', '')}. Prioritas: {priorities}. Isi alasan pengecualian.")
             selection_status = "EXCEPTION" if is_exception else ("PRIORITY" if stack_code in guide.get("recommendedStacks", []) else "NO_GUIDE")
         actual_location = stack_code or product.get("location", "")
-        load_items.append({"productId": item.productId, "documentNo": item_ref, "sku": product.get("sku", ""), "name": product.get("name", ""), "channel": channel, "qty": qty, "unit": product.get("unit", ""), "weight": weight, "measureUnit": product.get("measureUnit", "kg") or "kg", "berat": weight * qty, "secondary": product.get("secondary", ""), "secondaryQty": float(product.get("secondaryQty", 0) or 0), "location": product.get("location", ""), "stackCode": stack_code, "crewGroup": _crew_group(actual_location), "loadingFee": _loading_fee(product, qty, charge_mode_override=body.loadingFeeChargeMode), "fefoPolicy": guide.get("policy", "") if guide else "", "fefoMode": guide.get("mode", "") if guide else "", "fefoRecommendedStacks": guide.get("recommendedStacks", []) if guide else [], "fefoSelectionStatus": selection_status, "fefoExceptionReason": exception_reason if selection_status == "EXCEPTION" else ""})
+        location_config = await get_operational_location(actual_location, "outbound") if actual_location else None
+        crew_group = ""
+        loading_fee = {}
+        if location_config and bool(location_config.get("loadingCostEnabled", False)):
+            crew_group = str(location_config.get("loadingGroup", "") or "")
+            if crew_group:
+                loading_fee = _loading_fee(product, qty, charge_mode_override=body.loadingFeeChargeMode)
+        load_items.append({"productId": item.productId, "documentNo": item_ref, "sku": product.get("sku", ""), "name": product.get("name", ""), "channel": channel, "qty": qty, "unit": product.get("unit", ""), "weight": weight, "measureUnit": product.get("measureUnit", "kg") or "kg", "berat": weight * qty, "secondary": product.get("secondary", ""), "secondaryQty": float(product.get("secondaryQty", 0) or 0), "location": product.get("location", ""), "stackCode": stack_code, "locationCode": (location_config or {}).get("code", ""), "locationName": (location_config or {}).get("name", ""), "crewGroup": crew_group, "loadingFee": loading_fee, "fefoPolicy": guide.get("policy", "") if guide else "", "fefoMode": guide.get("mode", "") if guide else "", "fefoRecommendedStacks": guide.get("recommendedStacks", []) if guide else [], "fefoSelectionStatus": selection_status, "fefoExceptionReason": exception_reason if selection_status == "EXCEPTION" else ""})
 
     if body.kondisi == "BAIK":
         quantities_by_stack = defaultdict(float)
@@ -407,7 +409,7 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         "polisi": body.polisi.strip(),
         "pengambil": body.pengambil.strip(),
         "unit_loading": unit_loading,
-        "crew_groups": sorted({item.get("crewGroup", "GRUP 1 - GBB 17-20") for item in load_items}),
+        "crew_groups": sorted({item.get("crewGroup", "") for item in load_items if item.get("crewGroup")}),
         "kondisi": body.kondisi,
         "keterangan": body.keterangan.strip(),
         "document_type": body.documentType,

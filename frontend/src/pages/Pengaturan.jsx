@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Save, Building2, Bell, Palette, Database, Plus, Trash2, Warehouse, Link2 } from 'lucide-react';
+import { Save, Building2, Bell, Palette, Database, Plus, Trash2, Warehouse, Link2, MapPin } from 'lucide-react';
 import { DEFAULT_CATEGORIES } from '../mock';
 import { useData } from '../context/DataContext';
 import { apiError } from '../lib/api';
@@ -19,6 +19,17 @@ const Toggle = ({ on, onClick, disabled = false }) => (
   </button>
 );
 
+
+const DEFAULT_LOCATIONS = [
+  ...[17, 18, 19, 20].map((unit) => ({ code: String(unit), name: `GBB ${unit}`, type: 'GBB', loadingGroup: 'GRUP 1 - GBB 17-20', unloadingGroup: 'MANDOR 1 - GBB 17-20', allowInbound: true, allowOutbound: true, loadingCostEnabled: true, unloadingCostEnabled: true, active: true })),
+  { code: 'MP1', name: 'Multi Purpose 1', type: 'MP', loadingGroup: 'GRUP 2 - MP1/21-24', unloadingGroup: 'MANDOR 2 - MP1/GBB 21-24', allowInbound: true, allowOutbound: true, loadingCostEnabled: true, unloadingCostEnabled: true, active: true },
+  ...[21, 22, 23, 24].map((unit) => ({ code: String(unit), name: `GBB ${unit}`, type: 'GBB', loadingGroup: 'GRUP 2 - MP1/21-24', unloadingGroup: 'MANDOR 2 - MP1/GBB 21-24', allowInbound: true, allowOutbound: true, loadingCostEnabled: true, unloadingCostEnabled: true, active: true })),
+  { code: 'RTR', name: 'RTR', type: 'RTR', loadingGroup: 'GRUP 3 - RTR', unloadingGroup: '', allowInbound: true, allowOutbound: true, loadingCostEnabled: true, unloadingCostEnabled: false, active: true },
+  { code: 'BAZAR', name: 'Gudang Bazar', type: 'KONSINYASI', loadingGroup: '', unloadingGroup: '', allowInbound: true, allowOutbound: true, loadingCostEnabled: false, unloadingCostEnabled: false, active: true },
+  { code: 'ECOM', name: 'Gudang E-commerce', type: 'KONSINYASI', loadingGroup: '', unloadingGroup: '', allowInbound: true, allowOutbound: true, loadingCostEnabled: false, unloadingCostEnabled: false, active: true },
+  { code: 'RUSAK', name: 'AREA BARANG RUSAK', type: 'RUSAK', loadingGroup: '', unloadingGroup: '', allowInbound: true, allowOutbound: true, loadingCostEnabled: false, unloadingCostEnabled: false, active: true },
+];
+
 const Pengaturan = () => {
   const { user, settings, updateSettings, resetData, canManageSettings, theme, setTheme } = useData();
   const isAdmin = canManageSettings;
@@ -27,10 +38,12 @@ const Pengaturan = () => {
   const [warehouseHead, setWarehouseHead] = useState(settings?.warehouseHead || 'Irsa Maulian Nugraha');
   const [categories, setCategories] = useState(settings?.categories || DEFAULT_CATEGORIES);
   const [warehouses, setWarehouses] = useState(warehousesFromSettings(settings?.warehouses));
+  const [locations, setLocations] = useState(settings?.locations || DEFAULT_LOCATIONS);
   const [savingProfile, setSavingProfile] = useState(false);
   const [savingCategories, setSavingCategories] = useState(false);
   const [savingToggle, setSavingToggle] = useState('');
   const [savingWarehouses, setSavingWarehouses] = useState(false);
+  const [savingLocations, setSavingLocations] = useState(false);
 
   useEffect(() => {
     setWarehouse(settings?.warehouse || 'Gudang Sunter Timur I & II');
@@ -38,7 +51,8 @@ const Pengaturan = () => {
     setWarehouseHead(settings?.warehouseHead || 'Irsa Maulian Nugraha');
     setCategories(settings?.categories || DEFAULT_CATEGORIES);
     setWarehouses(warehousesFromSettings(settings?.warehouses));
-  }, [settings?.warehouse, settings?.address, settings?.warehouseHead, settings?.categories, settings?.warehouses]);
+    setLocations(settings?.locations || DEFAULT_LOCATIONS);
+  }, [settings?.warehouse, settings?.address, settings?.warehouseHead, settings?.categories, settings?.warehouses, settings?.locations]);
 
   const payload = (override = {}) => ({
     warehouse: settings?.warehouse || 'Gudang Sunter Timur I & II',
@@ -49,6 +63,7 @@ const Pengaturan = () => {
     expAlert: settings?.expAlert ?? true,
     autoQueue: settings?.autoQueue ?? true,
     warehouses: settings?.warehouses || DEFAULT_WAREHOUSES,
+    locations: settings?.locations || DEFAULT_LOCATIONS,
     ...override,
   });
 
@@ -112,6 +127,26 @@ const Pengaturan = () => {
     try { await updateSettings(payload({ warehouses: cleaned })); toast.success('Master gudang dan tumpukan tersimpan'); }
     catch (e) { toast.error(apiError(e)); }
     finally { setSavingWarehouses(false); }
+  };
+
+
+  const updateLocation = (index, patch) => setLocations((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item));
+  const addLocation = () => setLocations((items) => [...items, { code: '', name: '', type: 'LAINNYA', loadingGroup: '', unloadingGroup: '', allowInbound: true, allowOutbound: true, loadingCostEnabled: false, unloadingCostEnabled: false, active: true }]);
+  const removeLocation = (index) => setLocations((items) => items.filter((_, itemIndex) => itemIndex !== index));
+  const saveLocations = async () => {
+    const cleaned = locations.map((item) => ({ ...item, code: String(item.code || '').trim().toUpperCase(), name: String(item.name || '').trim() }));
+    if (!cleaned.length || cleaned.some((item) => !item.code || !item.name)) return toast.error('Kode dan nama lokasi wajib diisi');
+    if (cleaned.some((item) => item.loadingCostEnabled && !item.loadingGroup)) return toast.error('Pilih Grup Muat untuk lokasi dengan biaya muat aktif');
+    if (cleaned.some((item) => item.unloadingCostEnabled && !item.unloadingGroup)) return toast.error('Pilih Mandor Bongkar untuk lokasi dengan biaya bongkar aktif');
+    setSavingLocations(true);
+    try {
+      await updateSettings(payload({ locations: cleaned }));
+      toast.success('Master lokasi operasional tersimpan');
+    } catch (e) {
+      toast.error(apiError(e));
+    } finally {
+      setSavingLocations(false);
+    }
   };
 
   return (
@@ -182,6 +217,43 @@ const Pengaturan = () => {
             </div>)}
           </div>
           {isAdmin && <button onClick={saveWarehouses} disabled={savingWarehouses} className="btn-primary inline-flex items-center gap-2 text-sm font-semibold px-4 py-2.5 rounded-lg mt-4 disabled:opacity-60"><Save size={15} /> {savingWarehouses ? 'Menyimpan…' : 'Simpan Master Gudang'}</button>}
+        </div>
+
+
+        <div className="card-surface p-6 lg:col-span-2">
+          <div className="flex flex-wrap items-start justify-between gap-3 mb-5">
+            <div>
+              <div className="flex items-center gap-2"><MapPin size={18} className="text-[#f59e0b]" /><h2 className="font-display text-lg font-bold">Master Lokasi Operasional</h2></div>
+              <p className="text-xs text-[#6b7688] mt-1">Sumber resmi lokasi untuk penerimaan, pengeluaran, Grup Muat, dan Mandor Bongkar. Sistem tidak lagi menebak grup dari tulisan lokasi.</p>
+            </div>
+            {isAdmin && <button onClick={addLocation} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#2563eb] text-[#60a5fa]"><Plus size={14} /> Tambah Lokasi</button>}
+          </div>
+          <div className="space-y-3">
+            {locations.map((item, index) => (
+              <div key={`${item.code}-${index}`} className="rounded-xl border border-[#202a38] bg-[#0b0f17] p-3">
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-2 items-end">
+                  <div className="md:col-span-1"><label className="text-[10px] text-[#8b93a1]">Kode</label><input disabled={!isAdmin} value={item.code} onChange={(e) => updateLocation(index, { code: e.target.value })} className="w-full bg-transparent border-b border-[#242f3d] py-1.5 text-sm outline-none" placeholder="25" /></div>
+                  <div className="md:col-span-2"><label className="text-[10px] text-[#8b93a1]">Nama Lokasi</label><input disabled={!isAdmin} value={item.name} onChange={(e) => updateLocation(index, { name: e.target.value })} className="w-full bg-transparent border-b border-[#242f3d] py-1.5 text-sm outline-none" placeholder="GBB 25" /></div>
+                  <div className="md:col-span-2"><label className="text-[10px] text-[#8b93a1]">Jenis</label><select disabled={!isAdmin} value={item.type || 'LAINNYA'} onChange={(e) => updateLocation(index, { type: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2 text-xs"><option>GBB</option><option>MP</option><option>RTR</option><option>KONSINYASI</option><option>RUSAK</option><option>LAINNYA</option></select></div>
+                  <div className="md:col-span-3"><label className="text-[10px] text-[#8b93a1]">Grup Muat</label><select disabled={!isAdmin || !item.loadingCostEnabled} value={item.loadingGroup || ''} onChange={(e) => updateLocation(index, { loadingGroup: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2 text-xs disabled:opacity-50"><option value="">Tidak Ada</option><option>GRUP 1 - GBB 17-20</option><option>GRUP 2 - MP1/21-24</option><option>GRUP 3 - RTR</option></select></div>
+                  <div className="md:col-span-3"><label className="text-[10px] text-[#8b93a1]">Mandor Bongkar</label><select disabled={!isAdmin || !item.unloadingCostEnabled} value={item.unloadingGroup || ''} onChange={(e) => updateLocation(index, { unloadingGroup: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2 text-xs disabled:opacity-50"><option value="">Tidak Ada</option><option>MANDOR 1 - GBB 17-20</option><option>MANDOR 2 - MP1/GBB 21-24</option></select></div>
+                  <div className="md:col-span-1 flex justify-end">{isAdmin && <button type="button" onClick={() => removeLocation(index)} className="p-2 text-[#f87171]" title="Hapus lokasi"><Trash2 size={15} /></button>}</div>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {[
+                    ['allowInbound', 'Penerimaan'],
+                    ['allowOutbound', 'Pengeluaran'],
+                    ['loadingCostEnabled', 'Biaya Muat'],
+                    ['unloadingCostEnabled', 'Biaya Bongkar'],
+                    ['active', 'Aktif'],
+                  ].map(([key, label]) => (
+                    <button key={key} type="button" disabled={!isAdmin} onClick={() => updateLocation(index, { [key]: !item[key] })} className={`text-xs px-2.5 py-1.5 rounded-md border disabled:opacity-60 ${item[key] ? 'border-[#22c55e]/50 text-[#4ade80]' : 'border-[#4b5563] text-[#9ca3af]'}`}>{label}: {item[key] ? 'Ya' : 'Tidak'}</button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          {isAdmin && <button onClick={saveLocations} disabled={savingLocations} className="btn-primary inline-flex items-center gap-2 text-sm font-semibold px-4 py-2.5 rounded-lg mt-4 disabled:opacity-60"><Save size={15} /> {savingLocations ? 'Menyimpan…' : 'Simpan Master Lokasi'}</button>}
         </div>
 
         <div className="card-surface p-6">

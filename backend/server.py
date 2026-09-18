@@ -9,6 +9,7 @@ import io
 import csv
 import uuid
 import logging
+import re
 import bcrypt
 import jwt
 import httpx
@@ -507,6 +508,70 @@ def default_warehouses() -> list[WarehouseSetting]:
     ]]
 
 
+class LocationSetting(BaseModel):
+    code: str
+    name: str
+    type: Literal['GBB', 'MP', 'RTR', 'KONSINYASI', 'RUSAK', 'LAINNYA'] = 'LAINNYA'
+    loadingGroup: Literal['', 'GRUP 1 - GBB 17-20', 'GRUP 2 - MP1/21-24', 'GRUP 3 - RTR'] = ''
+    unloadingGroup: Literal['', 'MANDOR 1 - GBB 17-20', 'MANDOR 2 - MP1/GBB 21-24'] = ''
+    allowInbound: bool = True
+    allowOutbound: bool = True
+    loadingCostEnabled: bool = False
+    unloadingCostEnabled: bool = False
+    active: bool = True
+
+
+def default_locations() -> list[LocationSetting]:
+    rows = []
+    for unit in range(17, 21):
+        rows.append({
+            "code": str(unit), "name": f"GBB {unit}", "type": "GBB",
+            "loadingGroup": "GRUP 1 - GBB 17-20", "unloadingGroup": "MANDOR 1 - GBB 17-20",
+            "allowInbound": True, "allowOutbound": True,
+            "loadingCostEnabled": True, "unloadingCostEnabled": True, "active": True,
+        })
+    rows.append({
+        "code": "MP1", "name": "Multi Purpose 1", "type": "MP",
+        "loadingGroup": "GRUP 2 - MP1/21-24", "unloadingGroup": "MANDOR 2 - MP1/GBB 21-24",
+        "allowInbound": True, "allowOutbound": True,
+        "loadingCostEnabled": True, "unloadingCostEnabled": True, "active": True,
+    })
+    for unit in range(21, 25):
+        rows.append({
+            "code": str(unit), "name": f"GBB {unit}", "type": "GBB",
+            "loadingGroup": "GRUP 2 - MP1/21-24", "unloadingGroup": "MANDOR 2 - MP1/GBB 21-24",
+            "allowInbound": True, "allowOutbound": True,
+            "loadingCostEnabled": True, "unloadingCostEnabled": True, "active": True,
+        })
+    rows.extend([
+        {
+            "code": "RTR", "name": "RTR", "type": "RTR",
+            "loadingGroup": "GRUP 3 - RTR", "unloadingGroup": "",
+            "allowInbound": True, "allowOutbound": True,
+            "loadingCostEnabled": True, "unloadingCostEnabled": False, "active": True,
+        },
+        {
+            "code": "BAZAR", "name": "Gudang Bazar", "type": "KONSINYASI",
+            "loadingGroup": "", "unloadingGroup": "",
+            "allowInbound": True, "allowOutbound": True,
+            "loadingCostEnabled": False, "unloadingCostEnabled": False, "active": True,
+        },
+        {
+            "code": "ECOM", "name": "Gudang E-commerce", "type": "KONSINYASI",
+            "loadingGroup": "", "unloadingGroup": "",
+            "allowInbound": True, "allowOutbound": True,
+            "loadingCostEnabled": False, "unloadingCostEnabled": False, "active": True,
+        },
+        {
+            "code": "RUSAK", "name": "AREA BARANG RUSAK", "type": "RUSAK",
+            "loadingGroup": "", "unloadingGroup": "",
+            "allowInbound": True, "allowOutbound": True,
+            "loadingCostEnabled": False, "unloadingCostEnabled": False, "active": True,
+        },
+    ])
+    return [LocationSetting(**item) for item in rows]
+
+
 class SettingsBody(BaseModel):
     warehouse: str = 'Gudang Sunter Timur I & II'
     address: str = 'Jl. Sunter Agung, Jakarta Utara'
@@ -516,9 +581,53 @@ class SettingsBody(BaseModel):
     expAlert: bool = True
     autoQueue: bool = True
     warehouses: List[WarehouseSetting] = Field(default_factory=default_warehouses, max_length=50)
+    locations: List[LocationSetting] = Field(default_factory=default_locations, max_length=100)
 
 
 DEFAULT_SETTINGS = SettingsBody().model_dump()
+
+
+def _location_lookup_parts(value: str) -> tuple[str, str]:
+    text = str(value or "").strip().upper()
+    head = text.split("/", 1)[0].strip()
+    for prefix in ("UNIT ", "GBB "):
+        if head.startswith(prefix):
+            head = head[len(prefix):].strip()
+    return text, head
+
+
+def resolve_location_config(settings: dict, value: str) -> Optional[dict]:
+    text, head = _location_lookup_parts(value)
+    if not text:
+        return None
+    for item in settings.get("locations") or DEFAULT_SETTINGS["locations"]:
+        location = dict(item)
+        code = str(location.get("code", "")).strip().upper()
+        name = str(location.get("name", "")).strip().upper()
+        if head == code or text == code or text == name:
+            return location
+    return None
+
+
+async def get_operational_location(value: str, operation: str = "") -> dict:
+    text = str(value or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Lokasi operasional wajib dipilih")
+    stored = await db.settings.find_one({"_id": "app"}, {"_id": 0, "locations": 1}) or {}
+    settings = {**DEFAULT_SETTINGS, **stored}
+    location = resolve_location_config(settings, text)
+    if not location:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Lokasi {text} belum terdaftar di Master Lokasi. Periksa menu Pengaturan.",
+        )
+    if not bool(location.get("active", True)):
+        raise HTTPException(status_code=400, detail=f"Lokasi {location.get('name') or text} sedang nonaktif")
+    permission_key = {"inbound": "allowInbound", "outbound": "allowOutbound"}.get(operation)
+    if permission_key and not bool(location.get(permission_key, True)):
+        label = "penerimaan" if operation == "inbound" else "pengeluaran"
+        raise HTTPException(status_code=400, detail=f"Lokasi {location.get('name') or text} tidak diizinkan untuk {label}")
+    return location
 
 
 def build_xlsx(headers: list[str], rows: list[list], sheet_name: str) -> io.BytesIO:
@@ -706,6 +815,46 @@ async def update_settings(body: SettingsBody, admin: dict = Depends(require_admi
     if unavailable:
         raise HTTPException(status_code=400, detail=f"Tidak dapat menghapus atau mengurangi tumpukan yang sudah dipakai: {', '.join(unavailable[:5])}{'…' if len(unavailable) > 5 else ''}")
     payload["warehouses"] = normalized_warehouses
+    normalized_locations, location_codes = [], set()
+    for item in payload.get("locations", []):
+        code = str(item.get("code", "")).strip().upper()
+        name = str(item.get("name", "")).strip()
+        if not code or not code.replace("-", "").isalnum() or "/" in code:
+            raise HTTPException(status_code=400, detail="Kode lokasi hanya boleh huruf, angka, atau tanda hubung")
+        if not name:
+            raise HTTPException(status_code=400, detail=f"Nama lokasi {code or '-'} wajib diisi")
+        if code in location_codes:
+            raise HTTPException(status_code=400, detail=f"Kode lokasi {code} tercatat lebih dari sekali")
+        loading_group = str(item.get("loadingGroup", "") or "").strip()
+        unloading_group = str(item.get("unloadingGroup", "") or "").strip()
+        loading_enabled = bool(item.get("loadingCostEnabled", False))
+        unloading_enabled = bool(item.get("unloadingCostEnabled", False))
+        if loading_enabled and not loading_group:
+            raise HTTPException(status_code=400, detail=f"Grup muat lokasi {code} wajib dipilih saat biaya muat aktif")
+        if unloading_enabled and not unloading_group:
+            raise HTTPException(status_code=400, detail=f"Mandor bongkar lokasi {code} wajib dipilih saat biaya bongkar aktif")
+        location_codes.add(code)
+        normalized_locations.append({
+            "code": code,
+            "name": name,
+            "type": item.get("type", "LAINNYA"),
+            "loadingGroup": loading_group,
+            "unloadingGroup": unloading_group,
+            "allowInbound": bool(item.get("allowInbound", True)),
+            "allowOutbound": bool(item.get("allowOutbound", True)),
+            "loadingCostEnabled": loading_enabled,
+            "unloadingCostEnabled": unloading_enabled,
+            "active": bool(item.get("active", True)),
+        })
+    active_warehouse_codes = {item["code"] for item in normalized_warehouses if item.get("active", True)}
+    active_location_codes = {item["code"] for item in normalized_locations if item.get("active", True)}
+    missing_locations = sorted(active_warehouse_codes - active_location_codes)
+    if missing_locations:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Gudang aktif belum memiliki Master Lokasi: {', '.join(missing_locations)}",
+        )
+    payload["locations"] = normalized_locations
     payload["updated_at"] = now_iso()
     payload["updated_by"] = admin["name"]
     await db.settings.update_one({"_id": "app"}, {"$set": payload}, upsert=True)
