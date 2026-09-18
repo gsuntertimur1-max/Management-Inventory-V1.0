@@ -203,7 +203,7 @@ const OpnameGudang = () => {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div><div className="label-mono mb-2">Physical Stock Check</div><h1 className="font-display text-4xl font-bold">Stock Opname GBB / MP1</h1><p className="text-[#8b93a1] mt-2 max-w-3xl">Snapshot sistem dibandingkan dengan fisik per tumpukan. Selisih tidak mengubah stok sampai disetujui Superadmin/Kepala Gudang.</p></div>
+        <div><div className="label-mono mb-2">Physical Stock Check</div><h1 className="font-display text-4xl font-bold">Stock Opname GBB / MP1</h1></div>
         <button onClick={() => load()} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-[#242f3d] text-sm"><RefreshCcw size={16} /> Muat Ulang</button>
       </div>
 
