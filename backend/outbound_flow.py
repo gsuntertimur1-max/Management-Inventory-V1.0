@@ -26,6 +26,7 @@ from backend.server import (
 from backend.stack_allocations import valid_stack_codes, allocate_stock_to_stack, decrease_stack_allocation, reconcile_product_allocations
 from backend.fefo_selection import get_fefo_pick_guide, selection_requires_reason
 from backend.stack_reservations import available_stack_qty
+from backend.consignment_locations import normalize_consignment_stack_code
 
 router = APIRouter(prefix="/api")
 
@@ -263,6 +264,16 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         raise HTTPException(status_code=400, detail="Stok Gudang Bazar/E-commerce harus dicatat menggunakan Memo atau ND")
     if body.consignmentDestination and body.consignmentDestination not in {"Gudang Bazar", "Gudang E-commerce"}:
         raise HTTPException(status_code=400, detail="Tujuan konsinyasi tidak valid")
+    consignment_zone = ""
+    if body.consignmentDestination:
+        if not body.consignmentZone.strip():
+            raise HTTPException(status_code=400, detail="Pilih tumpukan tujuan Bazar/E-commerce di Unit 18")
+        consignment_zone = normalize_consignment_stack_code(body.consignmentDestination, body.consignmentZone)
+        expected_destination = {"BAZAR": "Gudang Bazar", "ECOMMERCE": "Gudang E-commerce"}.get(body.dispatchPurpose)
+        if expected_destination and expected_destination != body.consignmentDestination:
+            raise HTTPException(status_code=400, detail="Keperluan Memo/ND tidak sesuai dengan tujuan Bazar/E-commerce")
+    elif body.consignmentZone.strip():
+        raise HTTPException(status_code=400, detail="Tumpukan tujuan hanya boleh diisi untuk Gudang Bazar/E-commerce")
     # Setiap baris komoditas harus memiliki asal dokumen yang jelas.
     # Untuk satu dokumen, sistem boleh mengisinya otomatis; untuk multi-dokumen wajib dipilih per baris.
     item_document_refs = [str(item.documentNo or "").strip() for item in body.items]
@@ -429,7 +440,7 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         "request_document": body.requestDocument.strip(),
         "dispatch_purpose": body.dispatchPurpose if body.documentType in {"MEMO", "ND"} else "",
         "consignment_destination": body.consignmentDestination.strip(),
-        "consignment_zone": body.consignmentZone.strip(),
+        "consignment_zone": consignment_zone,
         "weighing_form": body.weighingForm,
         "gross_weight": float(body.grossWeight) if body.weighingForm else 0,
         "gross_min": float(body.grossMin) if body.weighingForm else 0,
