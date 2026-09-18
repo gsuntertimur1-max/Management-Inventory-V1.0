@@ -302,7 +302,7 @@ async def export_bon_muat_pdf(load_id: str, user: dict = Depends(get_current_use
     width = 80 * mm
     # Font besar dipertahankan. Jika item/SO bertambah, kertas thermal yang memanjang,
     # bukan ukuran font yang dikecilkan.
-    height = max(185 * mm, (148 + (len(grouped) * 36)) * mm)
+    height = max(210 * mm, (158 + (len(grouped) * 52)) * mm)
     c = canvas.Canvas(buffer, pagesize=(width, height))
     mid = width / 2
 
@@ -375,10 +375,14 @@ async def export_bon_muat_pdf(load_id: str, user: dict = Depends(get_current_use
     c.drawString(5 * mm, y, "BARANG YANG DIMUAT")
     y -= 6.5 * mm
 
-    table_left = 5 * mm
-    table_right = width - 5 * mm
+    # Tabel kuantum mengikuti format Bon Muat lama dari template Excel:
+    # Colly (2 baris: kemasan sekunder + sisa pack/pcs), Tonase, dan Pemuatan.
+    table_left = 4 * mm
+    table_right = width - 4 * mm
     table_width = table_right - table_left
-    col_widths = [25 * mm, 22 * mm, table_width - (47 * mm)]
+    label_w = 24 * mm
+    number_w = 28 * mm
+    unit_w = table_width - label_w - number_w
 
     for item in grouped.values():
         qty = float(item.get("qty", 0) or 0)
@@ -386,71 +390,103 @@ async def export_bon_muat_pdf(load_id: str, user: dict = Depends(get_current_use
         secondary_name = str(item.get("secondary") or "").strip()
         unit = str(item.get("unit") or "pcs").strip()
         measure_unit = str(item.get("measureUnit") or "kg").strip()
+        stack_code = str(item.get("stackCode") or item.get("location") or "").strip()
 
         full_secondary = int(qty // secondary_qty) if secondary_qty else 0
-        remaining_primary = qty - (full_secondary * secondary_qty) if secondary_qty else 0.0
-        secondary_value = f"{_num(full_secondary)} {secondary_name}" if secondary_qty and secondary_name else ("-" if not secondary_qty else _num(full_secondary))
+        remaining_primary = qty - (full_secondary * secondary_qty) if secondary_qty else qty
+        secondary_number = _num(full_secondary) if secondary_qty else "-"
+        secondary_unit = secondary_name if secondary_qty and secondary_name else "-"
+        primary_number = _num(remaining_primary)
+        primary_unit = unit
 
-        c.setFont("Helvetica-Bold", 10.5)
-        c.drawString(5 * mm, y, str(item.get("name", ""))[:36])
-        y -= 5.5 * mm
+        if "/" in stack_code:
+            loading_location = f"Unit {stack_code.split('/', 1)[0]}"
+        else:
+            loading_location = str(load.get("unit_loading") or stack_code or "-")
 
-        c.setFont("Helvetica-Bold", 8.5)
-        source_line = f"{item.get('documentNo') or load.get('ref', '-')} | Tumpukan: {item.get('stackCode') or item.get('location') or '-'}"
-        c.drawString(7 * mm, y, source_line[:52])
-        y -= 5.5 * mm
+        c.setFont("Helvetica-Bold", 12.5)
+        product_name = str(item.get("name", ""))
+        product_font = 12.5
+        while product_font > 9.5 and c.stringWidth(product_name, "Helvetica-Bold", product_font) > table_width:
+            product_font -= 0.5
+        c.setFont("Helvetica-Bold", product_font)
+        c.drawCentredString(mid, y, product_name)
+        y -= 6.2 * mm
 
-        header_h = 9 * mm
-        value_h = 10 * mm
+        c.setFont("Helvetica-Bold", 9.5)
+        source_line = f"{item.get('documentNo') or load.get('ref', '-')} | Tumpukan: {stack_code or '-'}"
+        source_font = 9.5
+        while source_font > 8 and c.stringWidth(source_line, "Helvetica-Bold", source_font) > table_width:
+            source_font -= 0.5
+        c.setFont("Helvetica-Bold", source_font)
+        c.drawCentredString(mid, y, source_line)
+        y -= 6.5 * mm
+
+        colly_row_h = 10 * mm
+        tonase_row_h = 11 * mm
+        loading_row_h = 14 * mm
+        table_h = (2 * colly_row_h) + tonase_row_h + loading_row_h
         table_top = y
-        table_bottom = y - header_h - value_h
+        table_bottom = table_top - table_h
 
-        c.setLineWidth(0.8)
-        c.rect(table_left, table_bottom, table_width, header_h + value_h, fill=0, stroke=1)
-        x1 = table_left + col_widths[0]
-        x2 = x1 + col_widths[1]
-        c.line(x1, table_bottom, x1, table_top)
-        c.line(x2, table_bottom, x2, table_top)
-        c.line(table_left, table_top - header_h, table_right, table_top - header_h)
+        x_label = table_left + label_w
+        x_number = x_label + number_w
 
-        centers = [
-            table_left + col_widths[0] / 2,
-            x1 + col_widths[1] / 2,
-            x2 + col_widths[2] / 2,
-        ]
-        headers = ["KEMASAN SEKUNDER", "PACK / PCS", "BERAT / FISIK"]
-        # Jika produk memiliki kemasan sekunder, kolom PACK/PCS menampilkan
-        # hanya sisa satuan primer di luar kemasan sekunder.
-        # Contoh Setra Ramos 5 kg: 803 pack = 100 karung x 8 pack + 3 pack.
-        loose_primary = remaining_primary if secondary_qty else qty
-        values = [
-            secondary_value,
-            f"{_num(loose_primary)} {unit}",
-            f"{_num(item.get('berat', 0))} {measure_unit}",
-        ]
+        c.setLineWidth(1.0)
+        c.rect(table_left, table_bottom, table_width, table_h, fill=0, stroke=1)
 
-        c.setFont("Helvetica-Bold", 7.5)
-        c.drawCentredString(centers[0], table_top - 3.7 * mm, "KEMASAN")
-        c.drawCentredString(centers[0], table_top - 6.6 * mm, "SEKUNDER")
-        c.drawCentredString(centers[1], table_top - 5.2 * mm, "PACK / PCS")
-        c.drawCentredString(centers[2], table_top - 5.2 * mm, "BERAT / FISIK")
+        # Garis vertikal: label | angka | satuan. Pada baris Pemuatan,
+        # kolom angka+satuan digabung seperti template Excel.
+        c.line(x_label, table_bottom, x_label, table_top)
+        c.line(x_number, table_bottom + loading_row_h, x_number, table_top)
 
-        value_y = table_bottom + 3.1 * mm
-        for center_x, value, cell_width in zip(centers, values, col_widths):
-            value_text = str(value)
-            font_size = 12.5
-            max_width = cell_width - (2.5 * mm)
-            while font_size > 9 and c.stringWidth(value_text, "Helvetica-Bold", font_size) > max_width:
-                font_size -= 0.5
-            c.setFont("Helvetica-Bold", font_size)
-            c.drawCentredString(center_x, value_y, value_text)
+        # Garis horizontal antar kelompok.
+        y_loading_top = table_bottom + loading_row_h
+        y_tonase_top = y_loading_top + tonase_row_h
+        y_colly_second_top = y_tonase_top + colly_row_h
+        c.line(table_left, y_loading_top, table_right, y_loading_top)
+        c.line(table_left, y_tonase_top, table_right, y_tonase_top)
+        # Pembagi dua baris Colly hanya dari kolom angka ke kanan,
+        # sehingga tulisan "Colly:" membentang dua baris.
+        c.line(x_label, y_colly_second_top, table_right, y_colly_second_top)
 
-        y = table_bottom
-        y -= 5 * mm
-        c.setDash(2, 2)
-        c.line(5 * mm, y, width - 5 * mm, y)
-        c.setDash()
-        y -= 6 * mm
+        # Label kiri besar.
+        c.setFont("Helvetica-Bold", 13.5)
+        c.drawString(table_left + 1.8 * mm, y_tonase_top + colly_row_h - 3.5 * mm, "Colly:")
+        c.drawString(table_left + 1.8 * mm, y_loading_top + 3.4 * mm, "Tonase:")
+        c.drawString(table_left + 1.8 * mm, table_bottom + 5.0 * mm, "Pemuatan:")
+
+        # Angka Colly / sisa Pack-PCS.
+        number_center = x_label + number_w / 2
+        unit_center = x_number + unit_w / 2
+
+        c.setFont("Helvetica-Bold", 18)
+        c.drawCentredString(number_center, table_top - 6.8 * mm, secondary_number)
+        c.drawCentredString(number_center, y_colly_second_top - 6.8 * mm, primary_number)
+
+        c.setFont("Helvetica-Bold", 13.5)
+        c.drawCentredString(unit_center, table_top - 6.5 * mm, secondary_unit)
+        c.drawCentredString(unit_center, y_colly_second_top - 6.5 * mm, primary_unit)
+
+        # Tonase/kuantum fisik.
+        physical_value = _num(item.get("berat", 0))
+        physical_font = 18
+        while physical_font > 13 and c.stringWidth(physical_value, "Helvetica-Bold", physical_font) > (number_w - 3 * mm):
+            physical_font -= 0.5
+        c.setFont("Helvetica-Bold", physical_font)
+        c.drawCentredString(number_center, y_tonase_top - 7.4 * mm, physical_value)
+        c.setFont("Helvetica-Bold", 13.5)
+        c.drawCentredString(unit_center, y_tonase_top - 7.0 * mm, measure_unit)
+
+        # Lokasi pemuatan dibuat besar pada sel gabungan.
+        loading_center = x_label + (number_w + unit_w) / 2
+        loading_font = 16
+        while loading_font > 11 and c.stringWidth(loading_location, "Helvetica-Bold", loading_font) > ((number_w + unit_w) - 4 * mm):
+            loading_font -= 0.5
+        c.setFont("Helvetica-Bold", loading_font)
+        c.drawCentredString(loading_center, table_bottom + 4.7 * mm, loading_location)
+
+        y = table_bottom - 7 * mm
 
     c.setFont("Helvetica-Bold", 9.5)
     c.drawCentredString(mid, y, "Serahkan bon ini kepada petugas pemuatan")
