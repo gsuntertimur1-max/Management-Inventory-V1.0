@@ -42,10 +42,16 @@ def test_superadmin_keeps_full_control_including_consignment():
         assert has_role_permission(ROLE_SUPERADMIN, permission)
 
 
-def test_warehouse_head_and_admin_keep_consignment_visibility_and_operations():
-    for role in (ROLE_WAREHOUSE_HEAD, ROLE_ADMIN):
-        for permission in ("inbound", "outbound", "bazarView", "bazarOps", "ecomView", "ecomOps"):
-            assert has_role_permission(role, permission)
+def test_warehouse_head_keeps_consignment_visibility_and_operations():
+    for permission in ("inbound", "outbound", "bazarView", "bazarOps", "ecomView", "ecomOps"):
+        assert has_role_permission(ROLE_WAREHOUSE_HEAD, permission)
+
+
+def test_admin_operasional_sees_consignment_stock_but_not_scoped_outbound_operations():
+    for permission in ("inbound", "outbound", "bazarView", "ecomView", "consignmentView"):
+        assert has_role_permission(ROLE_ADMIN, permission)
+    for permission in ("bazarOps", "ecomOps", "settings"):
+        assert not has_role_permission(ROLE_ADMIN, permission)
 
 
 def test_bazar_role_is_scoped_and_not_general_writer():
