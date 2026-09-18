@@ -58,7 +58,7 @@ def _provider_env(provider: str, *names: str) -> str:
 
 
 def _connection_env_status(provider: str) -> dict:
-    client_id = _provider_env(provider, "APP_ID", "CLIENT_ID", "PARTNER_ID")
+    client_id = _provider_env(provider, "APP_KEY", "APP_ID", "CLIENT_ID", "PARTNER_ID")
     client_secret = _provider_env(provider, "APP_SECRET", "CLIENT_SECRET", "PARTNER_KEY")
     access_token = _provider_env(provider, "ACCESS_TOKEN")
     refresh_token = _provider_env(provider, "REFRESH_TOKEN")
@@ -201,7 +201,7 @@ async def create_marketplace_account(body: MarketplaceAccountBody, user: dict = 
         "active": body.active,
         "note": body.note.strip(),
         "credentialSource": "RAILWAY_ENV",
-        "credentialEnvPrefix": f"MARKETPLACE_{_provider_key(provider)}",
+        "credentialEnvPrefix": f"MARKETPLACE_{_credential_env_key(provider)}",
         "lastSyncAt": "",
         "lastSyncStatus": "NEVER",
         "createdAt": now_iso(),
