@@ -106,14 +106,15 @@ async def export_bon_muat_multi_pdf(load_id: str, user: dict = Depends(get_curre
     table_h = (2 * colly_row_h) + tonase_row_h + loading_row_h
 
     # Hitung tinggi kertas dinamis. Font tidak dikecilkan saat SO/produk bertambah.
-    content_height_mm = 112.0
+    # Tambahkan ruang ekstra untuk jarak logo ke judul dan typography rincian yang diperbesar.
+    content_height_mm = 116.0
     for document_no, rows in grouped.items():
-        content_height_mm += 8.0
+        document_lines = wrap_text(f"Dokumen: {document_no}", "Helvetica-Bold", 8.5, content_width)
+        content_height_mm += (len(document_lines) * 4.0) + 2.0
         for item in rows.values():
-            product_lines = wrap_text(str(item.get("name", "")), "Helvetica-Bold", 6.5, content_width)
-            source_line = f"SO: {document_no} | Tumpukan: {item.get('stack', '-')}"
-            source_lines = wrap_text(source_line, "Helvetica", 6.0, content_width)
-            content_height_mm += (len(product_lines) * 3.6) + (len(source_lines) * 3.5) + (table_h / mm) + 6.0
+            product_lines = wrap_text(str(item.get("name", "")), "Helvetica-Bold", 8.5, content_width)
+            stack_lines = wrap_text(f"Tumpukan: {item.get('stack', '-')}", "Helvetica-Bold", 8.0, content_width)
+            content_height_mm += (len(product_lines) * 4.2) + (len(stack_lines) * 4.0) + (table_h / mm) + 6.0
 
     fields_preview = [
         ("Tanggal", _date(load.get("started_at") or load.get("created_at"), True)),
@@ -144,7 +145,7 @@ async def export_bon_muat_multi_pdf(load_id: str, user: dict = Depends(get_curre
             mask="auto",
         )
 
-    y = height - 24 * mm
+    y = height - 27 * mm
 
     # Header sampai nomor antrian rata tengah.
     c.setFont("Helvetica-Bold", 10)
@@ -203,13 +204,13 @@ async def export_bon_muat_multi_pdf(load_id: str, user: dict = Depends(get_curre
     weight_totals = OrderedDict()
 
     for document_no, rows in grouped.items():
-        c.setFillColor(colors.HexColor("#E6EFF2"))
-        c.rect(left, y - 5 * mm, content_width, 5 * mm, fill=1, stroke=0)
-        c.setFillColor(colors.HexColor("#244B63"))
-        c.setFont("Helvetica-Bold", 6.5)
-        c.drawString(left + 0.5 * mm, y - 3.5 * mm, f"DOKUMEN: {document_no}")
+        # Thermal-friendly: tanpa blok warna. "Dokumen: ..." diperbesar 2 pt dan wrap bila perlu.
         c.setFillColor(colors.black)
-        y -= 7.0 * mm
+        c.setFont("Helvetica-Bold", 8.5)
+        for line in wrap_text(f"Dokumen: {document_no}", "Helvetica-Bold", 8.5, content_width):
+            c.drawString(left, y, line)
+            y -= 4.0 * mm
+        y -= 1.2 * mm
 
         for item in rows.values():
             qty = float(item.get("qty", 0) or 0)
@@ -218,17 +219,17 @@ async def export_bon_muat_multi_pdf(load_id: str, user: dict = Depends(get_curre
             weight_value = float(item.get("berat", 0) or 0)
             weight_totals[measure] = weight_totals.get(measure, 0.0) + weight_value
 
-            # Nama komoditi/merk wrap ke bawah, tidak dipotong.
-            c.setFont("Helvetica-Bold", 6.5)
-            for line in wrap_text(str(item.get("name", "")), "Helvetica-Bold", 6.5, content_width):
+            # Nama komoditi/merk diperbesar 2 pt dan tetap wrap ke bawah.
+            c.setFont("Helvetica-Bold", 8.5)
+            for line in wrap_text(str(item.get("name", "")), "Helvetica-Bold", 8.5, content_width):
                 c.drawString(left, y, line)
-                y -= 3.6 * mm
+                y -= 4.2 * mm
 
-            source_line = f"SO: {document_no} | Tumpukan: {item.get('stack', '-')}"
-            c.setFont("Helvetica", 6.0)
-            for line in wrap_text(source_line, "Helvetica", 6.0, content_width):
+            # Hapus pengulangan "SO: ... |"; cukup tampilkan lokasi tumpukan, +2 pt.
+            c.setFont("Helvetica-Bold", 8.0)
+            for line in wrap_text(f"Tumpukan: {item.get('stack', '-')}", "Helvetica-Bold", 8.0, content_width):
                 c.drawString(left, y, line)
-                y -= 3.5 * mm
+                y -= 4.0 * mm
             y -= 1.0 * mm
 
             secondary_qty = float(item.get("secondaryQty", 0) or 0)
