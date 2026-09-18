@@ -216,3 +216,66 @@ html[data-theme='dark'] .btn-primary { background: #3b82f6; }
 html[data-theme='dark'] .btn-primary:hover { background: #2563eb; }
 html[data-theme='light'] .btn-primary { background: #2563eb; }
 html[data-theme='light'] .btn-primary:hover { background: #1d4ed8; }
+
+
+/* Light desktop parity for newer operational panels. */
+html[data-theme='light'] .bg-\[\#0d1c19\] { background-color: #ecfdf5 !important; }
+html[data-theme='light'] .bg-\[\#102044\] { background-color: #dbeafe !important; }
+html[data-theme='light'] .bg-\[\#1a1208\],
+html[data-theme='light'] .bg-\[\#191307\],
+html[data-theme='light'] .bg-\[\#1f1408\],
+html[data-theme='light'] .bg-\[\#160f05\] { background-color: #fffbeb !important; }
+html[data-theme='light'] .bg-\[\#2a0f14\] { background-color: #fff1f2 !important; }
+
+html[data-theme='light'] .border-\[\#131a24\],
+html[data-theme='light'] .border-\[\#171e29\],
+html[data-theme='light'] .border-\[\#171f2b\],
+html[data-theme='light'] .border-\[\#1f2937\],
+html[data-theme='light'] .border-\[\#243044\],
+html[data-theme='light'] .border-\[\#263244\],
+html[data-theme='light'] .border-\[\#294263\],
+html[data-theme='light'] .border-\[\#2b3545\],
+html[data-theme='light'] .border-\[\#2b3b52\],
+html[data-theme='light'] .border-\[\#1f3657\] { border-color: #cbd5e1 !important; }
+
+html[data-theme='light'] .border-\[\#59431f\],
+html[data-theme='light'] .border-\[\#7c5a1f\],
+html[data-theme='light'] .border-\[\#5b421b\],
+html[data-theme='light'] .border-\[\#4b3b1c\],
+html[data-theme='light'] .border-\[\#6b4b1c\],
+html[data-theme='light'] .border-\[\#92400e\],
+html[data-theme='light'] .border-\[\#794b1c\] { border-color: #e5b94f !important; }
+
+html[data-theme='light'] .border-\[\#7f1d1d\],
+html[data-theme='light'] .border-\[\#5b2430\] { border-color: #f0a3ad !important; }
+html[data-theme='light'] .border-\[\#1f6f45\],
+html[data-theme='light'] .border-\[\#166534\] { border-color: #86efac !important; }
+
+html[data-theme='light'] .text-\[\#8fb8ef\],
+html[data-theme='light'] .text-\[\#93c5fd\],
+html[data-theme='light'] .text-\[\#60a5fa\] { color: #1d4ed8 !important; }
+html[data-theme='light'] .text-\[\#fecaca\],
+html[data-theme='light'] .text-\[\#fca5a5\],
+html[data-theme='light'] .text-\[\#f87171\] { color: #b42318 !important; }
+html[data-theme='light'] .text-\[\#fde68a\],
+html[data-theme='light'] .text-\[\#fcd34d\],
+html[data-theme='light'] .text-\[\#fbbf24\],
+html[data-theme='light'] .text-\[\#a99675\],
+html[data-theme='light'] .text-\[\#d6b77c\],
+html[data-theme='light'] .text-\[\#d8c995\] { color: #8a5a00 !important; }
+html[data-theme='light'] .text-\[\#4ade80\],
+html[data-theme='light'] .text-\[\#86efac\],
+html[data-theme='light'] .text-\[\#22c55e\] { color: #047857 !important; }
+html[data-theme='light'] .text-\[\#c084fc\] { color: #7e22ce !important; }
+
+html[data-theme='light'] .focus\:bg-\[\#172033\]:focus,
+html[data-theme='light'] .focus\:bg-\[\#172033\][data-highlighted] { background-color: #e2e8f0 !important; }
+html[data-theme='light'] .focus\:text-white:focus,
+html[data-theme='light'] .focus\:text-white[data-highlighted] { color: #0f172a !important; }
+
+/* Radix popovers/dropdowns and dialog surfaces should follow the active light palette on desktop. */
+html[data-theme='light'] [role='menu'],
+html[data-theme='light'] [role='listbox'],
+html[data-theme='light'] [data-radix-popper-content-wrapper] > * {
+  color: #0f172a;
+}
