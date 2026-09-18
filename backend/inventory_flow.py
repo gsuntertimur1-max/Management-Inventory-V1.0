@@ -4,7 +4,7 @@ from openpyxl import load_workbook
 import random
 import re
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import List, Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -27,6 +27,7 @@ from backend.server import (
     get_operational_location,
 )
 from backend.stack_allocations import allocate_stock_to_stack, decrease_stack_allocation
+from backend.work_time_costs import handling_fee, work_split
 
 router = APIRouter(prefix="/api")
 
@@ -54,6 +55,7 @@ class ReceiptItemInput(BaseModel):
     qty: float = Field(default=0, ge=0)
     goodQty: float = Field(default=0, ge=0)
     damagedQty: float = Field(default=0, ge=0)
+    normalQtyBefore1600: float | None = Field(default=None, ge=0)
     exp: str = ""
     stackCode: str = ""
     channel: str = ""
@@ -73,6 +75,7 @@ class ReceiptInput(BaseModel):
     grossMax: float = Field(default=0, ge=0)
     # PENGIRIM ditagihkan pada pengirim; TERMAKSUK berarti sudah masuk harga/dokumen.
     unloadingFeeChargeMode: Literal["", "PENGIRIM", "TERMASUK"] = ""
+    unloadingStartTime: str = ""
 
 
 def receipt_condition_quantities(item: ReceiptItemInput, kondisi: str) -> tuple[float, float]:
@@ -133,22 +136,35 @@ def _number(value, default=0.0) -> float:
         return default
 
 
-def _unloading_fee(product: dict, qty: float, at, charge_mode_override: str = "") -> dict:
-    holiday = at.weekday() >= 5
-    overtime = at.hour >= 16
-    parts = {}
-    for target, suffix in (("labor", "Labor"), ("daily", "Daily"), ("warehouse", "Warehouse")):
-        value = float(product.get(f"unloadingFee{suffix}", 0) or 0)
-        if overtime:
-            value += float(product.get(f"unloadingOvertime{suffix}", 0) or 0)
-        if holiday:
-            value += float(product.get(f"unloadingHoliday{suffix}", 0) or 0)
-        if holiday and overtime:
-            value += float(product.get(f"unloadingHolidayOvertime{suffix}", 0) or 0)
-        parts[target] = value * qty
-    total = sum(parts.values())
-    mode = str(charge_mode_override or product.get("unloadingFeeChargeMode") or "TIDAK_ADA").upper()
-    return {**parts, "total": total, "mode": mode, "chargeable": total if mode == "PENGIRIM" else 0.0, "overtime": overtime, "holiday": holiday}
+def _unloading_fee(product: dict, qty: float, at, charge_mode_override: str = "", overtime_qty: float | None = None) -> dict:
+    if overtime_qty is None:
+        overtime_qty = float(qty or 0) if at.hour >= 16 else 0.0
+    return handling_fee(
+        product,
+        qty,
+        overtime_qty,
+        at,
+        "unloading",
+        "PENGIRIM",
+        charge_mode_override,
+    )
+
+
+def _unloading_started_at(value: str, completed_at: datetime) -> datetime:
+    text = str(value or "").strip()
+    if not text:
+        return completed_at
+    try:
+        hour_text, minute_text = text.split(":", 1)
+        hour, minute = int(hour_text), int(minute_text)
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Waktu mulai bongkar harus HH:MM") from exc
+    started = completed_at.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if started > completed_at:
+        started -= timedelta(days=1)
+    return started
 
 
 def _validate_exp(value: str) -> str:
@@ -391,6 +407,7 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
                 )
 
     op_now = operational_now()
+    unloading_started_at = _unloading_started_at(body.unloadingStartTime, op_now)
     operation_id = new_id()
     transaction_ref = po.get("no") if po else (body.ref.strip() or f"IN-{op_now.strftime('%Y%m%d%H%M%S%f')}")
     time = now_iso()
@@ -439,10 +456,28 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
 
             unloading_group = ""
             unloading_fee = {}
+            unloading_split = work_split(
+                unloading_started_at,
+                op_now,
+                total_qty,
+                item.normalQtyBefore1600 if body.unloadingStartTime else None,
+            )
             if location_config and bool(location_config.get("unloadingCostEnabled", False)):
                 unloading_group = str(location_config.get("unloadingGroup", "") or "")
                 if unloading_group:
-                    unloading_fee = _unloading_fee(product, total_qty, op_now, body.unloadingFeeChargeMode)
+                    unloading_fee = _unloading_fee(
+                        product,
+                        total_qty,
+                        op_now,
+                        body.unloadingFeeChargeMode,
+                        overtime_qty=unloading_split["overtimeQty"],
+                    )
+                    unloading_fee.update({
+                        **unloading_split,
+                        "startedAt": unloading_started_at.isoformat(),
+                        "completedAt": op_now.isoformat(),
+                        "cutoff": "16:00",
+                    })
 
             def receipt_txn(kondisi: str, qty: float, loading_cost: dict, include_weighing: bool):
                 return {
@@ -479,6 +514,14 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
                 "weighing_entries": _weighing_entries(float(body.grossWeight), float(body.grossMin), float(body.grossMax)) if body.weighingForm and include_weighing else [],
                 "unloading_group": unloading_group,
                 "unloading_cost": loading_cost,
+                "unloading_work": ({
+                    "regularQty": loading_cost.get("regularQty", 0),
+                    "overtimeQty": loading_cost.get("overtimeQty", 0),
+                    "workStatus": loading_cost.get("workStatus", ""),
+                    "startedAt": loading_cost.get("startedAt", ""),
+                    "completedAt": loading_cost.get("completedAt", ""),
+                    "cutoff": loading_cost.get("cutoff", "16:00"),
+                } if loading_cost else {}),
             }
 
             if good_qty > 0:
