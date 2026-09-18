@@ -27,6 +27,7 @@ from backend.stack_allocations import valid_stack_codes, allocate_stock_to_stack
 from backend.fefo_selection import get_fefo_pick_guide, selection_requires_reason
 from backend.stack_reservations import available_stack_qty
 from backend.consignment_locations import normalize_consignment_stack_code
+from backend.work_time_costs import handling_fee, local_datetime, work_split
 
 router = APIRouter(prefix="/api")
 
@@ -79,6 +80,15 @@ class LoadingFeePaymentInput(BaseModel):
     note: str = ""
 
 
+class LoadingCompletionItemInput(BaseModel):
+    index: int = Field(ge=0)
+    normalQtyBefore1600: float = Field(ge=0)
+
+
+class LoadingCompletionInput(BaseModel):
+    items: List[LoadingCompletionItemInput] = Field(default_factory=list, max_length=200)
+
+
 class DocumentCancelInput(BaseModel):
     documentNo: str = ""
     reason: str = Field(min_length=3, max_length=500)
@@ -108,25 +118,37 @@ def _crew_group(unit_loading: str) -> str:
     return ""
 
 
-def _loading_fee(product: dict, qty: float, when=None, apply_overtime=None, apply_holiday=None, charge_mode_override: str = "") -> dict:
+def _loading_fee(
+    product: dict,
+    qty: float,
+    when=None,
+    apply_overtime=None,
+    apply_holiday=None,
+    charge_mode_override: str = "",
+    overtime_qty: float | None = None,
+) -> dict:
     current = when or operational_now()
     if isinstance(current, str):
         current = datetime.fromisoformat(current.replace("Z", "+00:00")).astimezone(operational_now().tzinfo)
-    is_holiday = current.weekday() >= 5
-    is_overtime = current.hour >= 16
-    if apply_overtime is not None: is_overtime = bool(apply_overtime)
-    if apply_holiday is not None: is_holiday = bool(apply_holiday)
-    components = {"labor": 0.0, "daily": 0.0, "warehouse": 0.0}
-    keys = {"labor": "Labor", "daily": "Daily", "warehouse": "Warehouse"}
-    for target, suffix in keys.items():
-        value = float(product.get(f"loadingFee{suffix}", 0) or 0)
-        if is_overtime: value += float(product.get(f"loadingOvertime{suffix}", 0) or 0)
-        if is_holiday: value += float(product.get(f"loadingHoliday{suffix}", 0) or 0)
-        if is_holiday and is_overtime: value += float(product.get(f"loadingHolidayOvertime{suffix}", 0) or 0)
-        components[target] = value * qty
-    mode = str(charge_mode_override or product.get("loadingFeeChargeMode") or "TIDAK_ADA").strip().upper()
-    total = sum(components.values())
-    return {"mode": mode, **components, "total": total, "chargeable": total if mode == "PENGAMBIL" else 0.0, "overtime": is_overtime, "holiday": is_holiday}
+    if overtime_qty is None:
+        is_overtime = current.hour >= 16
+        if apply_overtime is not None:
+            is_overtime = bool(apply_overtime)
+        overtime_qty = float(qty or 0) if is_overtime else 0.0
+    result = handling_fee(
+        product,
+        qty,
+        overtime_qty,
+        current,
+        "loading",
+        "PENGAMBIL",
+        charge_mode_override,
+    )
+    if apply_holiday is not None:
+        # Legacy compatibility: callers that explicitly override holiday retain
+        # the old behavior. Final completion uses the actual operational day.
+        result["holiday"] = bool(apply_holiday)
+    return result
 
 class ReturnPlacementInput(BaseModel):
     goodQty: float = Field(gt=0)
@@ -737,7 +759,7 @@ async def start_outbound_load(load_id: str, user: dict = Depends(require_write))
 
 
 @router.post("/outbound-loads/{load_id}/complete")
-async def complete_outbound_load(load_id: str, user: dict = Depends(require_write)):
+async def complete_outbound_load(load_id: str, body: LoadingCompletionInput | None = None, user: dict = Depends(require_write)):
     load = await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
     if not load:
         raise HTTPException(status_code=404, detail="Data pemuatan tidak ditemukan")
@@ -754,14 +776,34 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
     operation_id = new_id()
     completed_at = now_iso()
     completed_local = operational_now()
+    started_local = local_datetime(load.get("started_at"), completed_local.tzinfo) or completed_local
+    split_inputs = {row.index: float(row.normalQtyBefore1600) for row in (body.items if body else [])}
     final_items = []
-    for original in load.get("items", []):
+    for index, original in enumerate(load.get("items", [])):
         item = dict(original)
+        qty = float(item.get("qty", 0) or 0)
+        normal_before_cutoff = split_inputs.get(index)
+        split = work_split(started_local, completed_local, qty, normal_before_cutoff)
         product_for_fee = await db.products.find_one({"id": item.get("productId")}, {"_id": 0}) or item
-        item["loadingFee"] = _loading_fee(product_for_fee, float(item.get("qty", 0) or 0), completed_local, charge_mode_override=(item.get("loadingFee") or {}).get("mode", ""))
+        item["loadingFee"] = _loading_fee(
+            product_for_fee,
+            qty,
+            completed_local,
+            charge_mode_override=(item.get("loadingFee") or {}).get("mode", ""),
+            overtime_qty=split["overtimeQty"],
+        )
+        item["loadingWork"] = {
+            **split,
+            "startedAt": load.get("started_at", ""),
+            "completedAt": completed_at,
+            "cutoff": "16:00",
+        }
         item["crewGroup"] = item.get("crewGroup") or _crew_group(item.get("stackCode") or item.get("location") or load.get("unit_loading"))
         final_items.append(item)
     final_loading_cost = {key: sum(float(item.get("loadingFee", {}).get(key, 0) or 0) for item in final_items) for key in ("labor", "daily", "warehouse", "total", "chargeable")}
+    total_regular = sum(float((item.get("loadingWork") or {}).get("regularQty", 0) or 0) for item in final_items)
+    total_overtime = sum(float((item.get("loadingWork") or {}).get("overtimeQty", 0) or 0) for item in final_items)
+    work_status = "NORMAL" if total_overtime <= 1e-9 else "LEMBUR_PENUH" if total_regular <= 1e-9 else "LEMBUR_PARSIAL"
     stock_changes = []
     stack_changes = []
     transactions = []
@@ -902,7 +944,18 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
                 "completed_at": completed_at,
                 "completed_by": user.get("name", ""),
                 "items": final_items,
-                "loading_cost": {**final_loading_cost, "group": _crew_group(load.get("unit_loading", "")), "overtime": completed_local.hour >= 16, "holiday": completed_local.weekday() >= 5},
+                "loading_cost": {
+                    **final_loading_cost,
+                    "group": _crew_group(load.get("unit_loading", "")),
+                    "overtime": total_overtime > 1e-9,
+                    "holiday": completed_local.weekday() >= 5,
+                    "regularQty": total_regular,
+                    "overtimeQty": total_overtime,
+                    "workStatus": work_status,
+                    "startedAt": load.get("started_at", ""),
+                    "completedAt": completed_at,
+                    "cutoff": "16:00",
+                },
                 "surat_jalan_id": sj_id,
                 "surat_jalan_no": sj_no,
                 "document_status": "Menunggu CR/SO" if load.get("document_type") == "CT" else "Menunggu SO/Retur" if load.get("document_type") in {"MEMO", "ND"} else "Selesai",
