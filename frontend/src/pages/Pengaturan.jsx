@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Save, Building2, Bell, Palette, Database, Plus, Trash2, Warehouse } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Save, Building2, Bell, Palette, Database, Plus, Trash2, Warehouse, Link2 } from 'lucide-react';
 import { DEFAULT_CATEGORIES } from '../mock';
 import { useData } from '../context/DataContext';
 import { apiError } from '../lib/api';
@@ -251,6 +252,26 @@ const Pengaturan = () => {
             />
           </div>
           <p className="text-xs text-[#6b7688] mt-4">Pilihan ini disimpan di browser ini dan tidak mengubah tampilan pengguna lain.</p>
+        </div>
+
+
+        <div className="card-surface p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Link2 size={18} className="text-[#60a5fa]" />
+            <h2 className="font-display text-lg font-bold">Integrasi Marketplace</h2>
+          </div>
+          <p className="text-sm text-[#8b93a1]">
+            Kelola akun Shopee, Tokopedia & Shop, TikTok Shop, mapping SKU, status koneksi, preview stok, serta log webhook dari halaman pengaturan khusus.
+          </p>
+          <p className="text-xs text-[#6b7688] mt-2">
+            App ID, secret, partner key, access token, dan webhook key tetap disimpan aman di Railway Variables dan tidak ditulis ke source code.
+          </p>
+          <Link
+            to="/pengaturan/marketplace"
+            className="btn-primary inline-flex items-center gap-2 text-sm font-semibold px-4 py-2.5 rounded-lg mt-4"
+          >
+            <Link2 size={15} /> Buka Pengaturan Marketplace
+          </Link>
         </div>
 
         <div className="card-surface p-6">
