@@ -25,6 +25,20 @@ const EcomOperasional = () => {
   };
 
   useEffect(() => { load().catch(() => {}); }, []);
+
+  useEffect(() => {
+    const ECOM_AUTO_REFRESH_INTERVAL = 15000;
+    const sync = () => {
+      if (document.visibilityState === 'visible' && navigator.onLine) load().catch(() => {});
+    };
+    const intervalId = window.setInterval(sync, ECOM_AUTO_REFRESH_INTERVAL);
+    const handleVisibility = () => { if (document.visibilityState === 'visible') sync(); };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, []);
   const selected = useMemo(() => availability.find((x) => x.productId === form.productId), [availability, form.productId]);
 
   const addOrderItem = () => {
