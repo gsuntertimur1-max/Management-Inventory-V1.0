@@ -955,7 +955,7 @@ async def create_transaction(body: TxnBody, user: dict = Depends(require_write))
             sj_items.append({"name": prod["name"], "qty": it.qty, "unit": prod.get("unit", ""), "berat": berat, "sec": ""})
         sj = {
             "id": new_id(), "operation_id": operation_id,
-            "no": f"{month_prefix}{sj_number:03d}", "antrian": antrian,
+            "no": f"{month_prefix}{sj_number:04d}", "antrian": antrian,
             "operational_date": operational_date,
             "time": time, "penerima": body.party or "-", "polisi": body.polisi, "operator": user["name"],
             "status": "Menunggu", "ref": body.ref, "items": sj_items, "berat": total_berat, "unit": total_unit,
