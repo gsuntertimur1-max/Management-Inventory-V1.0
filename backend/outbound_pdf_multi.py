@@ -66,7 +66,7 @@ def _loading_route(load: dict) -> str:
     return " -> ".join(seen) or str(load.get("unit_loading") or "-")
 
 
-@router.get("/export/bon-muat/{load_id}.pdf")
+@router.get("/export/bon-muat-v2/{load_id}.pdf")
 async def export_bon_muat_multi_pdf(load_id: str, user: dict = Depends(get_current_user)):
     load = await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
     if not load:
@@ -270,7 +270,7 @@ async def export_bon_muat_multi_pdf(load_id: str, user: dict = Depends(get_curre
     c.drawCentredString(mid, y, f"Dicetak: {_date(operational_now().isoformat(), True)}")
 
     c.save()
-    return _pdf_response(buffer, f"bon_pemuatan_{load.get('bon_no', load_id)}.pdf")
+    return _pdf_response(buffer, f"bon_pemuatan_{load.get('bon_no', load_id)}_72mm.pdf")
 
 
 def _sj_item_rows(sj: dict):
