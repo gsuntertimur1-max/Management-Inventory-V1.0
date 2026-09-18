@@ -88,7 +88,7 @@ const EcomOperasional = () => {
   };
 
   return <div className="space-y-6">
-    <div><div className="label-mono mb-2">Operasional E-commerce</div><h1 className="font-display text-3xl sm:text-4xl font-bold">Pesanan & Fulfillment E-commerce</h1><p className="text-[#8b93a1] mt-2 text-sm">Order → Reserved → Packing → Dikirim / Batal / Retur. Stok fisik baru berkurang ketika pesanan dikirim.</p></div>
+    <div><div className="label-mono mb-2">Operasional E-commerce</div><h1 className="font-display text-3xl sm:text-4xl font-bold">Pesanan & Fulfillment E-commerce</h1></div>
 
     <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
       <div className="card-surface p-5 space-y-3">
