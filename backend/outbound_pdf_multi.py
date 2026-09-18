@@ -7,6 +7,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
+from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.platypus import Paragraph, Table, TableStyle
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 
@@ -18,7 +19,16 @@ router = APIRouter(prefix="/api")
 
 def _pdf_response(buffer: io.BytesIO, filename: str) -> StreamingResponse:
     buffer.seek(0)
-    return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+    return StreamingResponse(
+        buffer,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 def _group_items(load: dict) -> OrderedDict:
@@ -56,32 +66,98 @@ def _loading_route(load: dict) -> str:
     return " -> ".join(seen) or str(load.get("unit_loading") or "-")
 
 
-@router.get("/export/bon-muat-legacy/{load_id}.pdf", include_in_schema=False)
+@router.get("/export/bon-muat/{load_id}.pdf")
 async def export_bon_muat_multi_pdf(load_id: str, user: dict = Depends(get_current_user)):
     load = await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
     if not load:
         raise HTTPException(status_code=404, detail="Bon Muat tidak ditemukan")
 
     grouped = _group_items(load)
-    rows_count = sum(len(rows) for rows in grouped.values())
-    height = max(170 * mm, (140 + rows_count * 18 + len(grouped) * 10) * mm)
-    width = 80 * mm
+    width = 72 * mm
+    left = 4 * mm
+    right = width - 4 * mm
+    content_width = right - left
+
+    def wrap_text(text: str, font_name: str, font_size: float, max_width: float) -> list[str]:
+        words = str(text or "").split()
+        if not words:
+            return [""]
+        lines = []
+        current = words[0]
+        for word in words[1:]:
+            candidate = f"{current} {word}"
+            if stringWidth(candidate, font_name, font_size) <= max_width:
+                current = candidate
+            else:
+                lines.append(current)
+                current = word
+        lines.append(current)
+        return lines
+
+    # Hitung tinggi thermal berdasarkan jumlah SO, produk, dan wrapping nama/detail.
+    detail_lines = 0
+    product_count = 0
+    for _, rows in grouped.items():
+        for item in rows.values():
+            product_count += 1
+            product_name = str(item.get("name", ""))
+            detail = (
+                f"Tumpukan {item.get('stack', '-')} | SKU {item.get('sku', '-')} | "
+                f"Primer: {_num(item.get('qty', 0))} {item.get('unit','pcs')} | "
+                f"Fisik: {_num(item.get('berat', 0))} {_measure_unit(item)}"
+            )
+            detail_lines += max(1, len(wrap_text(product_name, "Helvetica-Bold", 6.5, content_width)))
+            detail_lines += max(1, len(wrap_text(detail, "Helvetica", 6.0, content_width - 2 * mm)))
+            detail_lines += max(1, len(wrap_text(f"Sekunder: {_secondary_text(item)}", "Helvetica-Bold", 6.0, content_width - 2 * mm)))
+
+    height = max(
+        170 * mm,
+        (124 + len(grouped) * 10 + product_count * 8 + detail_lines * 4.0) * mm,
+    )
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=(width, height))
     mid = width / 2
 
     if THERMAL_LOGO.exists():
-        c.drawImage(str(THERMAL_LOGO), (width - 34 * mm) / 2, height - 20 * mm, width=34 * mm, height=15 * mm, preserveAspectRatio=True, mask="auto")
-    y = height - 26 * mm
-    c.setFont("Helvetica-Bold", 10); c.drawCentredString(mid, y, "BON PEMUATAN")
-    y -= 5 * mm; c.setFont("Helvetica", 6.5); c.drawCentredString(mid, y, "GBB SUNTER TIMUR I & II")
-    y -= 6 * mm; c.setDash(2, 2); c.line(4 * mm, y, width - 4 * mm, y); c.setDash(); y -= 5 * mm
+        c.drawImage(
+            str(THERMAL_LOGO),
+            (width - 30 * mm) / 2,
+            height - 17 * mm,
+            width=30 * mm,
+            height=13 * mm,
+            preserveAspectRatio=True,
+            mask="auto",
+        )
 
-    c.setFont("Helvetica", 6.5); c.drawCentredString(mid, y, "NOMOR BON MUAT")
-    y -= 5 * mm; c.setFont("Helvetica-Bold", 10); c.drawCentredString(mid, y, load.get("bon_no", "-"))
-    y -= 6 * mm; c.setFont("Helvetica", 6.5); c.drawCentredString(mid, y, "NOMOR ANTRIAN")
-    y -= 10 * mm; c.setFont("Helvetica-Bold", 24); c.drawCentredString(mid, y, load.get("antrian", "-"))
-    y -= 7 * mm
+    y = height - 23 * mm
+
+    # Ukuran font mengikuti file acuan bon_pemuatan_BM-20260918-002.xlsx.
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(left, y, "BON PEMUATAN")
+    y -= 4.2 * mm
+    c.setFont("Helvetica", 6.5)
+    c.drawString(left, y, "GBB SUNTER TIMUR I & II")
+
+    y -= 5.5 * mm
+    c.setDash(2, 2)
+    c.line(left, y, right, y)
+    c.setDash()
+    y -= 4.5 * mm
+
+    c.setFont("Helvetica", 6.5)
+    c.drawString(left, y, "NOMOR BON MUAT")
+    y -= 4.6 * mm
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(left, y, str(load.get("bon_no", "-")))
+
+    y -= 4.8 * mm
+    c.setFont("Helvetica", 6.5)
+    c.drawString(left, y, "NOMOR ANTRIAN")
+    y -= 8.8 * mm
+    c.setFont("Helvetica-Bold", 24)
+    c.drawString(left, y, str(load.get("antrian", "-")))
+
+    y -= 6.0 * mm
 
     docs = ", ".join(load.get("documents") or [load.get("ref", "-")])
     fields = [
@@ -93,32 +169,106 @@ async def export_bon_muat_multi_pdf(load_id: str, user: dict = Depends(get_curre
         ("Unit", load.get("unit_loading", "-")),
         ("Rute", _loading_route(load)),
     ]
+    value_x = 22 * mm
     for label, value in fields:
-        c.setFont("Helvetica", 6.2); c.drawString(5 * mm, y, label)
-        c.setFont("Helvetica-Bold", 6.2); c.drawString(20 * mm, y, str(value)[:56]); y -= 4.5 * mm
+        c.setFont("Helvetica", 6.0)
+        c.drawString(left, y, label)
+        c.setFont("Helvetica-Bold", 6.0)
+        value_text = str(value)
+        value_font = 6.0
+        while value_font > 5.0 and stringWidth(value_text, "Helvetica-Bold", value_font) > (right - value_x):
+            value_font -= 0.25
+        c.setFont("Helvetica-Bold", value_font)
+        c.drawString(value_x, y, value_text)
+        y -= 3.7 * mm
 
-    y -= 1 * mm; c.setDash(2, 2); c.line(4 * mm, y, width - 4 * mm, y); c.setDash(); y -= 5 * mm
-    c.setFont("Helvetica-Bold", 7); c.drawString(5 * mm, y, "RINCIAN PEMUATAN PER DOKUMEN"); y -= 5 * mm
+    y -= 1.0 * mm
+    c.setDash(2, 2)
+    c.line(left, y, right, y)
+    c.setDash()
+    y -= 4.5 * mm
+
+    c.setFont("Helvetica-Bold", 7.0)
+    c.drawString(left, y, "RINCIAN PEMUATAN PER DOKUMEN")
+    y -= 5.0 * mm
 
     grand_qty = 0.0
     weight_totals = OrderedDict()
-    for document_no, rows in grouped.items():
-        c.setFillColor(colors.HexColor("#E7EFF3")); c.rect(4 * mm, y - 5 * mm, width - 8 * mm, 5 * mm, fill=1, stroke=0)
-        c.setFillColor(colors.HexColor("#244B63")); c.setFont("Helvetica-Bold", 6.5); c.drawString(5 * mm, y - 3.5 * mm, f"DOKUMEN: {document_no}"[:64]); c.setFillColor(colors.black); y -= 7 * mm
-        for item in rows.values():
-            qty = float(item.get("qty", 0) or 0); grand_qty += qty
-            measure = _measure_unit(item); weight_totals[measure] = weight_totals.get(measure, 0.0) + float(item.get("berat", 0) or 0)
-            c.setFont("Helvetica-Bold", 6.5); c.drawString(5 * mm, y, str(item.get("name", ""))[:48]); y -= 4 * mm
-            c.setFont("Helvetica", 6); c.drawString(7 * mm, y, f"Tumpukan {item.get('stack', '-')} | SKU {item.get('sku', '-')}"[:68]); y -= 4 * mm
-            c.drawString(7 * mm, y, f"Primer: {_num(qty)} {item.get('unit','pcs')} | Fisik: {_num(item.get('berat',0))} {measure}"[:72]); y -= 4 * mm
-            c.setFont("Helvetica-Bold", 6); c.drawString(7 * mm, y, f"Sekunder: {_secondary_text(item)}"[:72]); y -= 6 * mm
 
-    c.setDash(2, 2); c.line(4 * mm, y, width - 4 * mm, y); c.setDash(); y -= 5 * mm
-    c.setFont("Helvetica-Bold", 7); c.drawString(5 * mm, y, "TOTAL PEMUATAN"); y -= 4 * mm
-    c.setFont("Helvetica", 6.2); c.drawString(7 * mm, y, f"Primer: {_num(grand_qty)} unit/pack/pcs"); y -= 4 * mm
-    c.drawString(7 * mm, y, "Fisik: " + " + ".join(f"{_num(value)} {unit}" for unit, value in weight_totals.items())[:65]); y -= 6 * mm
-    c.setFont("Helvetica-Bold", 6.7); c.drawCentredString(mid, y, "Serahkan bon ini kepada petugas pemuatan")
-    y -= 5 * mm; c.setFont("Helvetica", 5.8); c.drawCentredString(mid, y, f"Dicetak: {_date(operational_now().isoformat(), True)}")
+    for document_no, rows in grouped.items():
+        # Header per SO/dokumen sama seperti file acuan.
+        c.setFillColor(colors.HexColor("#E6EFF2"))
+        c.rect(left, y - 5 * mm, content_width, 5 * mm, fill=1, stroke=0)
+        c.setFillColor(colors.HexColor("#244B63"))
+        c.setFont("Helvetica-Bold", 6.5)
+        doc_text = f"DOKUMEN: {document_no}"
+        c.drawString(left + 0.5 * mm, y - 3.5 * mm, doc_text)
+        c.setFillColor(colors.black)
+        y -= 7.0 * mm
+
+        for item in rows.values():
+            qty = float(item.get("qty", 0) or 0)
+            grand_qty += qty
+            measure = _measure_unit(item)
+            weight_totals[measure] = weight_totals.get(measure, 0.0) + float(item.get("berat", 0) or 0)
+
+            # Nama komoditi/merk selalu wrap, tidak dipotong.
+            product_lines = wrap_text(str(item.get("name", "")), "Helvetica-Bold", 6.5, content_width)
+            c.setFont("Helvetica-Bold", 6.5)
+            for line in product_lines:
+                c.drawString(left, y, line)
+                y -= 3.6 * mm
+
+            detail = (
+                f"Tumpukan {item.get('stack', '-')} | SKU {item.get('sku', '-')} | "
+                f"Primer: {_num(qty)} {item.get('unit','pcs')} | "
+                f"Fisik: {_num(item.get('berat',0))} {measure}"
+            )
+            detail_lines_wrapped = wrap_text(detail, "Helvetica", 6.0, content_width - 2 * mm)
+            c.setFont("Helvetica", 6.0)
+            for line in detail_lines_wrapped:
+                c.drawString(left + 1.5 * mm, y, line)
+                y -= 3.4 * mm
+
+            secondary_lines = wrap_text(
+                f"Sekunder: {_secondary_text(item)}",
+                "Helvetica-Bold",
+                6.0,
+                content_width - 2 * mm,
+            )
+            c.setFont("Helvetica-Bold", 6.0)
+            for line in secondary_lines:
+                c.drawString(left + 1.5 * mm, y, line)
+                y -= 3.4 * mm
+
+            # Jarak antar produk. Multi-produk tetap ukuran font yang sama.
+            y -= 2.0 * mm
+
+    c.setDash(2, 2)
+    c.line(left, y, right, y)
+    c.setDash()
+    y -= 4.5 * mm
+
+    c.setFont("Helvetica-Bold", 7.0)
+    c.drawCentredString(mid, y, "TOTAL PEMUATAN")
+    y -= 3.8 * mm
+    c.setFont("Helvetica", 6.0)
+    c.drawCentredString(mid, y, f"Primer: {_num(grand_qty)} unit/pack/pcs")
+    y -= 3.6 * mm
+
+    physical_text = "Fisik: " + " + ".join(f"{_num(value)} {unit}" for unit, value in weight_totals.items())
+    physical_lines = wrap_text(physical_text, "Helvetica", 6.0, content_width)
+    for line in physical_lines:
+        c.drawCentredString(mid, y, line)
+        y -= 3.6 * mm
+
+    y -= 1.5 * mm
+    c.setFont("Helvetica-Bold", 6.5)
+    c.drawCentredString(mid, y, "Serahkan bon ini kepada petugas pemuatan")
+    y -= 4.2 * mm
+    c.setFont("Helvetica", 5.5)
+    c.drawCentredString(mid, y, f"Dicetak: {_date(operational_now().isoformat(), True)}")
+
     c.save()
     return _pdf_response(buffer, f"bon_pemuatan_{load.get('bon_no', load_id)}.pdf")
 
