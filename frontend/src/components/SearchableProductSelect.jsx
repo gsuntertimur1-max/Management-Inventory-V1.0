@@ -70,9 +70,10 @@ const SearchableProductSelect = ({
             if (selectedLabel) event.currentTarget.select();
           }}
           onChange={(event) => {
-            setQuery(event.target.value);
+            const nextQuery = event.target.value;
+            setQuery(nextQuery);
             setOpen(true);
-            if (!event.target.value && value) onChange?.('');
+            if (value && nextQuery !== selectedLabel) onChange?.('');
           }}
           onKeyDown={(event) => {
             if (event.key === 'Escape') setOpen(false);
