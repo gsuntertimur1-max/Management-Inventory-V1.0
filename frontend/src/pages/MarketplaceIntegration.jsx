@@ -10,7 +10,7 @@ const tabs = ['Akun', 'Mapping SKU', 'Sinkron Stok', 'Log'];
 
 const MarketplaceIntegration = () => {
   const { user } = useData();
-  const canManage = hasPermission(user?.role, 'ecomOps');
+  const canManage = hasPermission(user?.role, 'settings');
   const [activeTab, setActiveTab] = useState('Akun');
   const [accounts, setAccounts] = useState([]);
   const [products, setProducts] = useState([]);
@@ -67,6 +67,33 @@ const MarketplaceIntegration = () => {
     } catch (e) { toast.error(apiError(e)); }
   };
 
+  const connectAccount = async (account) => {
+    try {
+      const res = await api.post('/marketplace/accounts/' + account.id + '/connect');
+      const data = res.data || {};
+      await loadAll();
+      if (data.authorizationUrl) {
+        toast.success('Membuka halaman otorisasi resmi marketplace…');
+        window.location.assign(data.authorizationUrl);
+        return;
+      }
+      if (data.status === 'CONNECTED' || data.status === 'CONNECTED_MANUAL') {
+        toast.success(account.provider + ' berhasil ditandai terhubung');
+        return;
+      }
+      toast.info(data.message || ('Status koneksi: ' + (data.status || 'CREDENTIALS_READY')));
+    } catch (e) { toast.error(apiError(e)); }
+  };
+
+  const disconnectAccount = async (account) => {
+    if (!window.confirm('Putuskan koneksi ' + account.provider + ' / ' + account.shopName + ' dari Inventory? Secret di Railway tidak akan dihapus.')) return;
+    try {
+      await api.post('/marketplace/accounts/' + account.id + '/disconnect');
+      toast.success('Koneksi marketplace diputuskan dari Inventory');
+      await loadAll();
+    } catch (e) { toast.error(apiError(e)); }
+  };
+
   const saveMapping = async () => {
     if (!mappingForm.accountId || !mappingForm.productId || !mappingForm.marketplaceSku.trim()) {
       return toast.error('Akun, produk internal dan SKU marketplace wajib diisi');
@@ -106,7 +133,7 @@ const MarketplaceIntegration = () => {
 
   return <div className="space-y-6">
     <div>
-      <div className="label-mono mb-2">E-commerce · Integrasi Marketplace</div>
+      <div className="label-mono mb-2">Pengaturan · Integrasi Marketplace</div>
       <h1 className="font-display text-3xl sm:text-4xl font-bold">Marketplace Integration</h1>
       <p className="text-[#8b93a1] mt-2 text-sm">
         Inventory E-commerce tetap menjadi master stock. Kredensial API tidak disimpan di source code; konektor eksternal memakai environment Railway dan Marketplace Gateway.
@@ -152,12 +179,19 @@ const MarketplaceIntegration = () => {
                 <div className="text-xs text-[#8b93a1] mt-1">{account.connectionStatus || 'NOT_CONNECTED'}</div>
               </div>
             </div>
-            <div className="mt-3 text-xs text-[#94a3b8]">
-              Credential source: <span className="font-mono">{account.credentialSource}</span> · prefix <span className="font-mono">{account.credentialEnvPrefix}</span>
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-[#94a3b8]">
+              <div>Credential source: <span className="font-mono">{account.credentialSource}</span></div>
+              <div>Prefix: <span className="font-mono">{account.credentialEnvPrefix}</span></div>
+              <div>App/Client ID: <b className={account.clientConfigured ? 'text-[#86efac]' : 'text-[#fbbf24]'}>{account.clientConfigured ? 'Tersedia' : 'Belum'}</b></div>
+              <div>Secret/Key: <b className={account.secretConfigured ? 'text-[#86efac]' : 'text-[#fbbf24]'}>{account.secretConfigured ? 'Tersedia' : 'Belum'}</b></div>
+              <div>Access Token: <b className={account.tokenConfigured ? 'text-[#86efac]' : 'text-[#94a3b8]'}>{account.tokenConfigured ? 'Tersimpan' : 'Belum'}</b></div>
+              <div>Webhook: <b className={account.gatewayConfigured ? 'text-[#86efac]' : 'text-[#fbbf24]'}>{account.gatewayConfigured ? 'Siap' : 'Belum'}</b></div>
             </div>
             <div className="flex flex-wrap gap-2 mt-3">
               <button onClick={() => { setSelectedAccount(account.id); setActiveTab('Mapping SKU'); setMappingForm((p) => ({ ...p, accountId: account.id })); }} className="px-3 py-2 rounded-lg border border-[#3b82f6]/40 text-[#93c5fd] text-xs font-semibold">Mapping SKU</button>
               <button onClick={() => { setActiveTab('Sinkron Stok'); loadPreview(account.id, false); }} className="px-3 py-2 rounded-lg border border-[#22c55e]/40 text-[#86efac] text-xs font-semibold">Preview Stok</button>
+              {canManage && !['CONNECTED','CONNECTED_MANUAL'].includes(account.connectionStatus) && <button onClick={() => connectAccount(account)} className="px-3 py-2 rounded-lg border border-[#22c55e]/40 text-[#86efac] text-xs font-semibold">Hubungkan</button>}
+              {canManage && ['CONNECTED','CONNECTED_MANUAL'].includes(account.connectionStatus) && <button onClick={() => disconnectAccount(account)} className="px-3 py-2 rounded-lg border border-[#ef4444]/40 text-[#fca5a5] text-xs font-semibold">Putuskan</button>}
               {canManage && <button onClick={() => toggleAccount(account)} className="px-3 py-2 rounded-lg border border-[#64748b]/40 text-[#cbd5e1] text-xs font-semibold">{account.active ? 'Nonaktifkan' : 'Aktifkan'}</button>}
             </div>
           </div>)}
@@ -258,7 +292,7 @@ const MarketplaceIntegration = () => {
 
     <section className="card-surface p-5 text-xs text-[#94a3b8]">
       <div className="font-semibold text-[#e2e8f0] mb-2">Status integrasi</div>
-      Fondasi gateway, akun, mapping SKU, stock preview, event idempotency dan log sudah tersedia. Koneksi langsung ke API marketplace tetap berstatus <b>NOT_CONNECTED</b> sampai App ID/secret/token resmi dipasang sebagai environment Railway dan adapter provider diaktifkan.
+      Pengaturan akun, mapping SKU, stock preview, tombol Hubungkan/Putuskan, event idempotency dan log tersedia di web. Nilai App ID/Secret/Token tidak pernah dikirim kembali ke browser; halaman ini hanya menampilkan apakah variabel aman di Railway sudah tersedia.
     </section>
   </div>;
 };
