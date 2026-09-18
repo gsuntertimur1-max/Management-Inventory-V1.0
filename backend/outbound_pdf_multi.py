@@ -56,7 +56,7 @@ def _loading_route(load: dict) -> str:
     return " -> ".join(seen) or str(load.get("unit_loading") or "-")
 
 
-@router.get("/export/bon-muat/{load_id}.pdf")
+@router.get("/export/bon-muat-legacy/{load_id}.pdf", include_in_schema=False)
 async def export_bon_muat_multi_pdf(load_id: str, user: dict = Depends(get_current_user)):
     load = await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
     if not load:
