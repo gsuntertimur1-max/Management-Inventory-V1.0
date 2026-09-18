@@ -118,7 +118,6 @@ const KoreksiOperasional = () => {
         <div>
           <div className="label-mono mb-2">SUPERADMIN · AUDIT CONTROL</div>
           <h1 className="font-display text-3xl sm:text-4xl font-bold">Koreksi Operasional</h1>
-          <p className="text-[#8b93a1] mt-2 max-w-3xl">Koreksi tidak menghapus transaksi. Penerimaan dibalik dengan reversal, sedangkan pengeluaran selesai hanya dapat mengubah metadata dokumen. Perubahan kuantitas pengeluaran tetap melalui Retur/CR.</p>
         </div>
         <button onClick={loadCorrections} disabled={loading} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-[#242f3d] text-sm hover:bg-[#141a24] disabled:opacity-50">
           <RefreshCcw size={16} className={loading ? 'animate-spin' : ''} /> Muat Ulang
