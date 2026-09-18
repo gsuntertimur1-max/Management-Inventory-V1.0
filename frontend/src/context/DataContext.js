@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import api, { setToken, apiError } from '../lib/api';
-import { hasPermission, roleLabel } from '../lib/permissions';
+import { hasPermission, roleDestination, roleLabel } from '../lib/permissions';
 import { DEFAULT_CATEGORIES } from '../mock';
 
 const DataContext = createContext(null);
@@ -54,6 +54,29 @@ export const DataProvider = ({ children }) => {
 
   const fetchAll = useCallback(async () => {
     try {
+      const scopedDestination = roleDestination(user?.role);
+      if (scopedDestination) {
+        const [p, consignmentStockRes, consignmentLayoutsRes, consignmentHistoryRes, consignmentOpnamesRes, monitoringStockRes, settingsRes] = await Promise.all([
+          api.get('/products'),
+          api.get('/consignment-stock'),
+          api.get('/consignment-layouts'),
+          api.get('/consignment-layout-history'),
+          api.get('/consignment-opnames'),
+          api.get('/monitoring-stock'),
+          api.get('/settings'),
+        ]);
+        setState({
+          ...EMPTY,
+          products: p.data,
+          consignmentStock: consignmentStockRes.data,
+          consignmentLayouts: consignmentLayoutsRes.data,
+          consignmentLayoutHistory: consignmentHistoryRes.data,
+          consignmentOpnames: consignmentOpnamesRes.data,
+          monitoringStock: monitoringStockRes.data,
+          settings: { ...DEFAULT_SETTINGS, ...settingsRes.data },
+        });
+        return;
+      }
       const [p, suppliersRes, sj, loads, po, t, stacks, treatments, consignmentStockRes, consignmentLayoutsRes, consignmentHistoryRes, consignmentOpnamesRes, monitoringStockRes, supplierReturnsRes, settingsRes, usersRes] = await Promise.all([
         api.get('/products'),
         api.get('/suppliers'),

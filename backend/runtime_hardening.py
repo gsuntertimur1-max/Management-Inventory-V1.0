@@ -23,6 +23,26 @@ def blocks_legacy_direct_transaction(method: str, path: str) -> bool:
     return str(method or "").upper() == "POST" and str(path or "").rstrip("/") == "/api/transactions"
 
 
+def blocks_legacy_po_or_import(method: str, path: str) -> bool:
+    method = str(method or "").upper()
+    normalized = str(path or "").rstrip("/")
+    return method == "POST" and normalized in {"/api/purchase-orders", "/api/import/csv"}
+
+
+def scoped_role_blocks_main_read(role: str | None, path: str) -> bool:
+    if str(role or "").strip() not in {"Operator", "Petugas Bazar", "QC", "Petugas E-commerce", "Petugas Ecom"}:
+        return False
+    normalized = str(path or "").rstrip("/")
+    prefixes = (
+        "/api/transactions", "/api/surat-jalan", "/api/purchase-orders",
+        "/api/outbound-loads", "/api/stack-allocations", "/api/stack-treatments",
+        "/api/stock-opnames", "/api/integrity-control", "/api/operational-corrections",
+        "/api/supplier-returns", "/api/damaged-stock-area", "/api/stock-transfers",
+        "/api/loading-costs", "/api/unloading-costs", "/api/cost-settlements",
+    )
+    return any(normalized == prefix or normalized.startswith(prefix + "/") for prefix in prefixes)
+
+
 def measure_unit(value: str | None) -> str:
     candidate = str(value or "kg").strip().lower()
     return candidate if candidate in {"kg", "liter", "pcs"} else "kg"
@@ -86,11 +106,13 @@ async def _export_products_xlsx(request: Request):
 
 async def _cleanup_new_operational_collections() -> None:
     for collection in (
-        db.stock_opnames,
-        db.stack_lots,
-        db.stack_lot_movements,
-        db.operation_requests,
-        db.operation_locks,
+        db.stock_opnames, db.stack_lots, db.stack_lot_movements,
+        db.operation_requests, db.operation_locks,
+        db.consignment_movements, db.consignment_operation_history,
+        db.bazar_trips, db.ecom_orders,
+        db.bazar_package_templates, db.bazar_package_batches, db.bazar_package_loads,
+        db.unloading_cost_settlements,
+        db.marketplace_sync_logs, db.marketplace_auth_sessions, db.marketplace_webhook_events,
     ):
         await collection.delete_many({})
 
@@ -100,6 +122,15 @@ async def hardening_middleware(request: Request, call_next: Callable[[Request], 
         return JSONResponse(status_code=409, content={"detail": "Endpoint master produk lama dinonaktifkan untuk mencegah perubahan stok langsung. Gunakan /api/products-master dan transaksi stok."})
     if blocks_legacy_direct_transaction(request.method, request.url.path):
         return JSONResponse(status_code=409, content={"detail": "Transaksi stok langsung versi lama dinonaktifkan. Gunakan penerimaan /api/receipts atau proses pemuatan /api/outbound-loads agar tumpukan, saluran, Bon Muat, dan antrian tetap konsisten."})
+    if blocks_legacy_po_or_import(request.method, request.url.path):
+        return JSONResponse(status_code=409, content={"detail": "Endpoint versi lama dinonaktifkan. Gunakan Purchase Order V2 dan alur import master PEPEG terbaru."})
+    if request.method.upper() == "GET":
+        try:
+            scoped_user = await get_current_user(request)
+        except HTTPException:
+            scoped_user = None
+        if scoped_user and scoped_role_blocks_main_read(scoped_user.get("role"), request.url.path):
+            return JSONResponse(status_code=403, content={"detail": "Peran ini hanya dapat mengakses data Bazar/E-commerce sesuai ruang lingkupnya."})
     if request.method.upper() == "GET" and request.url.path.rstrip("/") == "/api/export/products.xlsx":
         return await _export_products_xlsx(request)
 
