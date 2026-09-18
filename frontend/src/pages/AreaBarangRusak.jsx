@@ -32,7 +32,6 @@ const AreaBarangRusak = () => {
         <div>
           <div className="label-mono mb-2">Damaged Stock Subledger</div>
           <h1 className="font-display text-4xl font-bold">Area Barang Rusak</h1>
-          <p className="text-[#8b93a1] mt-2 max-w-3xl">Saldo fisik barang rusak dipisahkan dari tumpukan stok Baik. Halaman ini menggabungkan saldo master, PSO/KOM, retur pemasok, dan audit pergerakan rusak.</p>
         </div>
         <button type="button" onClick={load} disabled={loading} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-[#242f3d] text-sm disabled:opacity-50"><RefreshCcw size={16} className={loading ? 'animate-spin' : ''} /> Periksa Ulang</button>
       </div>
