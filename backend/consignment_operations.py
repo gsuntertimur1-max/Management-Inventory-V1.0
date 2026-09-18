@@ -366,6 +366,7 @@ async def close_bazar_trip(trip_id: str, body: BazarTripClose, user: dict = Depe
                 user.get("name", ""),
                 item.get("stackCode", ""),
                 strict_preferred=True,
+                operation_key=f"bazar-close:{trip_id}:{item.get('productId', '')}:{item.get('stackCode', '')}",
             )
     await db.bazar_trips.update_one({"id": trip_id, "status": "BERJALAN"}, {"$set": {
         "status": "SELESAI", "resultItems": final_items, "closedAt": now, "closedBy": user.get("name", ""), "closeNote": body.note.strip(),
@@ -481,6 +482,7 @@ async def update_ecom_status(order_id: str, body: EcomStatusBody, user: dict = D
                 item.get("productId", ""),
                 _n(item.get("qty")),
                 user.get("name", ""),
+                operation_key=f"ecom-ship:{order_id}:{item.get('productId', '')}",
             )
 
     patch = {"status": body.status, "updatedAt": now, "updatedBy": user.get("name", ""), "statusNote": body.note.strip()}

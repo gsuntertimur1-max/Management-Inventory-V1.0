@@ -421,6 +421,7 @@ async def decrease_consignment_layouts(
     operator: str,
     preferred_stack: str = "",
     strict_preferred: bool = False,
+    operation_key: str = "",
 ) -> None:
     remaining = max(float(qty or 0), 0.0)
     if remaining <= 1e-9:
@@ -443,23 +444,37 @@ async def decrease_consignment_layouts(
     for layout in layouts:
         if remaining <= 1e-9:
             break
+        if operation_key:
+            applied = next((row for row in (layout.get("appliedOperations") or []) if row.get("key") == operation_key), None)
+            if applied:
+                remaining = max(remaining - float(applied.get("qty", 0) or 0), 0.0)
+                continue
         current = _layout_primary_qty(layout)
         if current <= 1e-9:
             continue
         take = min(current, remaining)
         next_qty = current - take
         now = now_iso()
-        if next_qty <= 1e-9:
+        patch = {"primaryQty": next_qty, "arrangementAdjusted": True, "updatedAt": now, "updatedBy": operator}
+        if operation_key:
+            result = await db.consignment_layouts.update_one(
+                {"id": layout["id"], "appliedOperations.key": {"$ne": operation_key}},
+                {"$set": patch, "$push": {"appliedOperations": {"$each": [{"key": operation_key, "qty": take, "time": now}], "$slice": -500}}},
+            )
+            if result.matched_count == 0:
+                refreshed = await db.consignment_layouts.find_one({"id": layout["id"]}, {"_id": 0}) or {}
+                applied = next((row for row in (refreshed.get("appliedOperations") or []) if row.get("key") == operation_key), None)
+                if applied:
+                    remaining = max(remaining - float(applied.get("qty", 0) or 0), 0.0)
+                    continue
+                raise HTTPException(status_code=409, detail="Perkalian tumpukan berubah. Muat ulang lalu coba kembali.")
+            after = {**layout, **patch}
+            action = "PENGELUARAN_HABIS" if next_qty <= 1e-9 else "PENGELUARAN_OTOMATIS"
+        elif next_qty <= 1e-9:
             await db.consignment_layouts.delete_one({"id": layout["id"]})
             after = {**layout, "primaryQty": 0, "arrangementAdjusted": True, "updatedAt": now}
             action = "PENGELUARAN_HABIS"
         else:
-            patch = {
-                "primaryQty": next_qty,
-                "arrangementAdjusted": True,
-                "updatedAt": now,
-                "updatedBy": operator,
-            }
             await db.consignment_layouts.update_one({"id": layout["id"]}, {"$set": patch})
             after = {**layout, **patch}
             action = "PENGELUARAN_OTOMATIS"
@@ -473,6 +488,7 @@ async def decrease_consignment_layouts(
             "before": layout,
             "after": after,
             "operator": operator,
+            "operationKey": operation_key,
             "note": f"Pengurangan otomatis {take:g} {layout.get('unit', '')}",
         })
         remaining -= take

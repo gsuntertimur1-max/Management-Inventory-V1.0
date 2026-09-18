@@ -424,6 +424,7 @@ async def close_package_load(load_id: str, body: PackageLoadClose, user: dict = 
                     component["productId"],
                     qty_component,
                     user.get("name", ""),
+                    operation_key=event_key,
                 )
         final_items.append({
             **loaded, "deliveredQty": delivered, "returnedGoodQty": returned_good,
