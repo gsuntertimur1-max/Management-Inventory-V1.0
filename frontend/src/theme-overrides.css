@@ -331,3 +331,8 @@ html[data-theme='light'] .text-\[\#3b82f6\] { color: #1d4ed8 !important; }
 
 html[data-theme='light'] .hover\:border-\[\#ef4444\]:hover { border-color: #ef4444 !important; }
 html[data-theme='light'] .hover\:border-\[\#3b82f6\]:hover { border-color: #3b82f6 !important; }
+
+
+/* Final light fixes for stack allocation mini-cards. */
+html[data-theme='light'] .bg-\[\#0f172a\] { background-color: #f8fafc !important; }
+html[data-theme='light'] .bg-\[\#2a1111\] { background-color: #fff1f2 !important; }
