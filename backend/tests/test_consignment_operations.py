@@ -43,9 +43,9 @@ def test_bazar_close_item_keeps_stack_identity():
     from backend.consignment_operations import BazarCloseItem
     row = BazarCloseItem(
         productId="p1",
-        stackCode="BZR/A02",
+        stackCode="18/A02-BAZAR",
         soldQty=5,
         returnedGoodQty=1,
         returnedDamagedQty=0,
     )
-    assert row.stackCode == "BZR/A02"
+    assert row.stackCode == "18/A02-BAZAR"
