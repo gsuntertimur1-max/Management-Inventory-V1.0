@@ -545,6 +545,12 @@ class CategorySetting(BaseModel):
     active: bool = True
 
 
+class HolidaySetting(BaseModel):
+    date: str
+    name: str = ''
+    active: bool = True
+
+
 class WarehouseZoneSetting(BaseModel):
     code: str
     count: int = Field(ge=1, le=99)
@@ -644,6 +650,7 @@ class SettingsBody(BaseModel):
     lowAlert: bool = True
     expAlert: bool = True
     autoQueue: bool = True
+    holidays: List[HolidaySetting] = Field(default_factory=list, max_length=500)
     warehouses: List[WarehouseSetting] = Field(default_factory=default_warehouses, max_length=50)
     locations: List[LocationSetting] = Field(default_factory=default_locations, max_length=100)
 
@@ -848,6 +855,20 @@ async def update_settings(body: SettingsBody, admin: dict = Depends(require_admi
     if missing:
         raise HTTPException(status_code=400, detail=f"Kategori masih dipakai produk dan tidak dapat dihapus: {', '.join(sorted(missing))}")
     payload["categories"] = normalized_categories
+    normalized_holidays = []
+    holiday_dates = set()
+    for item in payload.get("holidays", []):
+        date = str(item.get("date", "")).strip()
+        name = str(item.get("name", "")).strip()
+        try:
+            datetime.strptime(date, "%Y-%m-%d")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Tanggal hari libur {date or '-'} harus YYYY-MM-DD") from exc
+        if date in holiday_dates:
+            raise HTTPException(status_code=400, detail=f"Tanggal hari libur {date} tercatat lebih dari sekali")
+        holiday_dates.add(date)
+        normalized_holidays.append({"date": date, "name": name, "active": bool(item.get("active", True))})
+    payload["holidays"] = sorted(normalized_holidays, key=lambda row: row["date"])
     normalized_warehouses = []
     warehouse_codes, stack_codes = set(), set()
     for item in payload.get("warehouses", []):

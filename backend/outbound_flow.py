@@ -27,7 +27,7 @@ from backend.stack_allocations import valid_stack_codes, allocate_stock_to_stack
 from backend.fefo_selection import get_fefo_pick_guide, selection_requires_reason
 from backend.stack_reservations import available_stack_qty
 from backend.consignment_locations import normalize_consignment_stack_code
-from backend.work_time_costs import handling_fee, local_datetime, work_split
+from backend.work_time_costs import handling_fee, holiday_from_settings, local_datetime, work_split
 
 router = APIRouter(prefix="/api")
 
@@ -126,6 +126,7 @@ def _loading_fee(
     apply_holiday=None,
     charge_mode_override: str = "",
     overtime_qty: float | None = None,
+    holiday_override: bool | None = None,
 ) -> dict:
     current = when or operational_now()
     if isinstance(current, str):
@@ -143,11 +144,8 @@ def _loading_fee(
         "loading",
         "PENGAMBIL",
         charge_mode_override,
+        holiday_override if apply_holiday is None else bool(apply_holiday),
     )
-    if apply_holiday is not None:
-        # Legacy compatibility: callers that explicitly override holiday retain
-        # the old behavior. Final completion uses the actual operational day.
-        result["holiday"] = bool(apply_holiday)
     return result
 
 class ReturnPlacementInput(BaseModel):
@@ -776,6 +774,8 @@ async def complete_outbound_load(load_id: str, body: LoadingCompletionInput | No
     operation_id = new_id()
     completed_at = now_iso()
     completed_local = operational_now()
+    fee_settings = await db.settings.find_one({"_id": "app"}, {"_id": 0, "holidays": 1}) or {}
+    loading_holiday = holiday_from_settings(completed_local, fee_settings.get("holidays") or [])
     started_local = local_datetime(load.get("started_at"), completed_local.tzinfo) or completed_local
     split_inputs = {row.index: float(row.normalQtyBefore1600) for row in (body.items if body else [])}
     final_items = []
@@ -791,6 +791,7 @@ async def complete_outbound_load(load_id: str, body: LoadingCompletionInput | No
             completed_local,
             charge_mode_override=(item.get("loadingFee") or {}).get("mode", ""),
             overtime_qty=split["overtimeQty"],
+            holiday_override=loading_holiday,
         )
         item["loadingWork"] = {
             **split,
@@ -948,7 +949,7 @@ async def complete_outbound_load(load_id: str, body: LoadingCompletionInput | No
                     **final_loading_cost,
                     "group": _crew_group(load.get("unit_loading", "")),
                     "overtime": total_overtime > 1e-9,
-                    "holiday": completed_local.weekday() >= 5,
+                    "holiday": loading_holiday,
                     "regularQty": total_regular,
                     "overtimeQty": total_overtime,
                     "workStatus": work_status,

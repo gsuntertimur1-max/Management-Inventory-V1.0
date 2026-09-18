@@ -5,6 +5,13 @@ from datetime import datetime
 from fastapi import HTTPException
 
 
+def holiday_from_settings(when: datetime, holidays: list[dict] | None = None) -> bool:
+    if when.weekday() >= 5:
+        return True
+    target = when.strftime("%Y-%m-%d")
+    return any(bool(row.get("active", True)) and str(row.get("date") or "").strip() == target for row in (holidays or []))
+
+
 def local_datetime(value, tzinfo):
     if isinstance(value, datetime):
         return value.astimezone(tzinfo) if value.tzinfo else value.replace(tzinfo=tzinfo)
@@ -60,11 +67,12 @@ def handling_fee(
     prefix: str,
     payer_mode: str,
     charge_mode_override: str = "",
+    holiday_override: bool | None = None,
 ) -> dict:
     qty = float(qty or 0)
     overtime_qty = min(max(float(overtime_qty or 0), 0.0), qty)
     regular_qty = max(qty - overtime_qty, 0.0)
-    holiday = when.weekday() >= 5
+    holiday = bool(holiday_override) if holiday_override is not None else when.weekday() >= 5
 
     components = {"labor": 0.0, "daily": 0.0, "warehouse": 0.0}
     keys = {"labor": "Labor", "daily": "Daily", "warehouse": "Warehouse"}

@@ -27,7 +27,7 @@ from backend.server import (
     get_operational_location,
 )
 from backend.stack_allocations import allocate_stock_to_stack, decrease_stack_allocation
-from backend.work_time_costs import handling_fee, work_split
+from backend.work_time_costs import handling_fee, holiday_from_settings, work_split
 
 router = APIRouter(prefix="/api")
 
@@ -136,18 +136,10 @@ def _number(value, default=0.0) -> float:
         return default
 
 
-def _unloading_fee(product: dict, qty: float, at, charge_mode_override: str = "", overtime_qty: float | None = None) -> dict:
+def _unloading_fee(product: dict, qty: float, at, charge_mode_override: str = "", overtime_qty: float | None = None, holiday_override: bool | None = None) -> dict:
     if overtime_qty is None:
         overtime_qty = float(qty or 0) if at.hour >= 16 else 0.0
-    return handling_fee(
-        product,
-        qty,
-        overtime_qty,
-        at,
-        "unloading",
-        "PENGIRIM",
-        charge_mode_override,
-    )
+    return handling_fee(product, qty, overtime_qty, at, "unloading", "PENGIRIM", charge_mode_override, holiday_override)
 
 
 def _unloading_started_at(value: str, completed_at: datetime) -> datetime:
@@ -408,6 +400,8 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
 
     op_now = operational_now()
     unloading_started_at = _unloading_started_at(body.unloadingStartTime, op_now)
+    fee_settings = await db.settings.find_one({"_id": "app"}, {"_id": 0, "holidays": 1}) or {}
+    unloading_holiday = holiday_from_settings(op_now, fee_settings.get("holidays") or [])
     operation_id = new_id()
     transaction_ref = po.get("no") if po else (body.ref.strip() or f"IN-{op_now.strftime('%Y%m%d%H%M%S%f')}")
     time = now_iso()
@@ -471,6 +465,7 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
                         op_now,
                         body.unloadingFeeChargeMode,
                         overtime_qty=unloading_split["overtimeQty"],
+                        holiday_override=unloading_holiday,
                     )
                     unloading_fee.update({
                         **unloading_split,
