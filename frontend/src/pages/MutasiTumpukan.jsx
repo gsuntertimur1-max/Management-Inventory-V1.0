@@ -84,7 +84,6 @@ const MutasiTumpukan = () => {
     <div>
       <div className="label-mono mb-2">Operasional Gudang</div>
       <h1 className="font-display text-4xl font-bold">Mutasi Tumpukan</h1>
-      <p className="text-[#8b93a1] mt-2 max-w-3xl">Pindahkan komoditi antar tumpukan dalam GBB yang sama atau antar GBB/MP1. Mutasi tidak mengubah total stok produk.</p>
     </div>
 
     <div className="card-surface p-5 md:p-6">
