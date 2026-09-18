@@ -373,7 +373,6 @@ const Riwayat = () => {
               <div>
                 <div className="label-mono text-[10px] text-[#93c5fd]">History Pengeluaran</div>
                 <h2 className="font-display text-xl font-bold mt-1">Rekap Biaya Muat</h2>
-                <p className="text-xs text-[#8b93a1] mt-1">3 mandor pemuatan: GBB 17–20, MP1/GBB 21–24, dan RTR.</p>
               </div>
               <div className="flex items-start gap-3">
                 <div className="text-right"><div className="text-[10px] text-[#8b93a1]">Total tercatat</div><div className="font-mono font-bold text-[#93c5fd]">{formatRp(loadingGrandTotal)}</div></div>
@@ -457,7 +456,6 @@ const Riwayat = () => {
               <div>
                 <div className="label-mono text-[10px] text-[#fbbf24]">History Penerimaan</div>
                 <h2 className="font-display text-xl font-bold mt-1">Rekap Biaya Bongkar</h2>
-                <p className="text-xs text-[#8b93a1] mt-1">Hanya 2 mandor bongkar: GBB 17–20 dan MP1/GBB 21–24. RTR tidak masuk rekap bongkar.</p>
               </div>
               <div className="flex items-start gap-3">
                 <div className="text-right"><div className="text-[10px] text-[#8b93a1]">Total tercatat</div><div className="font-mono font-bold text-[#fbbf24]">{formatRp(unloadingGrandTotal)}</div></div>
