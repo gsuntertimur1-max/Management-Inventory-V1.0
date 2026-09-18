@@ -276,6 +276,340 @@ async def authorize_marketplace(account_id: str, request: Request, user: dict = 
     return {"status": "AUTHORIZATION_PENDING", "authorizationUrl": authorization_url, "callbackUrl": callback_url}
 
 
+
+def _tiktok_sign(path: str, query: dict, body_text: str, secret: str) -> str:
+    filtered = {str(k): str(v) for k, v in query.items() if k not in {"sign", "access_token"} and v not in (None, "")}
+    base = secret + path + "".join(key + filtered[key] for key in sorted(filtered))
+    if body_text:
+        base += body_text
+    base += secret
+    return hmac.new(secret.encode("utf-8"), base.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+async def _tiktok_api(
+    provider: str,
+    access_token: str,
+    method: str,
+    path: str,
+    *,
+    shop_cipher: str = "",
+    query: dict | None = None,
+    body: dict | None = None,
+) -> dict:
+    app_key = _env(provider, "APP_KEY", "APP_ID", "CLIENT_ID")
+    app_secret = _env(provider, "APP_SECRET", "CLIENT_SECRET")
+    if not app_key or not app_secret:
+        raise HTTPException(status_code=409, detail="TikTok Shop App Key/App Secret belum lengkap")
+
+    params = dict(query or {})
+    params["app_key"] = app_key
+    params["timestamp"] = int(time.time())
+    if shop_cipher:
+        params["shop_cipher"] = shop_cipher
+    body_text = json.dumps(body, separators=(",", ":"), ensure_ascii=False) if body is not None else ""
+    params["sign"] = _tiktok_sign(path, params, body_text, app_secret)
+
+    host = _env(provider, "API_HOST") or "https://open-api.tiktokglobalshop.com"
+    headers = {
+        "content-type": "application/json",
+        "x-tts-access-token": access_token,
+    }
+    async with httpx.AsyncClient(timeout=25.0) as client:
+        response = await client.request(
+            method.upper(),
+            host.rstrip("/") + path,
+            params=params,
+            content=body_text.encode("utf-8") if body is not None else None,
+            headers=headers,
+        )
+    try:
+        data = response.json()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Respons TikTok Shop Open API tidak valid") from exc
+    if response.status_code >= 400 or int(data.get("code", -1)) != 0:
+        raise HTTPException(status_code=502, detail=f"TikTok Shop API gagal: {data.get('message') or response.status_code}")
+    return data.get("data") or {}
+
+
+async def _tiktok_authorized_shops(provider: str, access_token: str) -> list[dict]:
+    data = await _tiktok_api(provider, access_token, "GET", "/authorization/202309/shops")
+    return list(data.get("shops") or [])
+
+
+async def _setup_tiktok_after_connect(account: dict, bundle: dict, request: Request) -> dict:
+    access_token = str(bundle.get("access_token") or "")
+    shops = await _tiktok_authorized_shops(account.get("provider", ""), access_token)
+    if not shops:
+        raise HTTPException(status_code=409, detail="Tidak ada shop TikTok/Tokopedia yang terotorisasi")
+
+    configured_shop_id = str(account.get("shopId") or "")
+    selected = next((shop for shop in shops if str(shop.get("id") or shop.get("shop_id") or "") == configured_shop_id), None) if configured_shop_id else None
+    selected = selected or shops[0]
+    shop_id = str(selected.get("id") or selected.get("shop_id") or "")
+    shop_cipher = str(selected.get("cipher") or selected.get("shop_cipher") or "")
+    shop_name = str(selected.get("name") or selected.get("shop_name") or account.get("shopName") or "")
+
+    patch = {
+        "shopId": shop_id or account.get("shopId", ""),
+        "shopCipher": shop_cipher,
+        "authorizedShops": [{
+            "id": str(shop.get("id") or shop.get("shop_id") or ""),
+            "name": str(shop.get("name") or shop.get("shop_name") or ""),
+            "cipher": str(shop.get("cipher") or shop.get("shop_cipher") or ""),
+            "region": str(shop.get("region") or ""),
+            "sellerType": str(shop.get("seller_type") or ""),
+        } for shop in shops],
+        "authorizedShopCount": len(shops),
+        "updatedAt": now_iso(),
+    }
+    if shop_name:
+        patch["resolvedShopName"] = shop_name
+    await db.marketplace_accounts.update_one({"id": account["id"]}, {"$set": patch})
+
+    webhook_url = f"{_base_url(request)}/api/marketplace/webhooks/tiktok-shop/{account['id']}"
+    webhook_status = "NOT_CONFIGURED"
+    webhook_error = ""
+    if shop_cipher:
+        try:
+            await _tiktok_api(
+                account.get("provider", ""),
+                access_token,
+                "PUT",
+                "/event/202309/webhooks",
+                shop_cipher=shop_cipher,
+                body={"address": webhook_url, "event_type": "ORDER_STATUS_CHANGE"},
+            )
+            webhook_status = "ACTIVE"
+        except HTTPException as exc:
+            webhook_status = "FAILED"
+            webhook_error = str(exc.detail)
+            await _log(
+                level="ERROR",
+                event_type="WEBHOOK_SETUP_FAILED",
+                provider=account.get("provider", ""),
+                account_id=account["id"],
+                reference=shop_name,
+                message=webhook_error,
+            )
+
+    await db.marketplace_accounts.update_one(
+        {"id": account["id"]},
+        {"$set": {
+            "webhookUrl": webhook_url,
+            "webhookStatus": webhook_status,
+            "webhookError": webhook_error,
+            "updatedAt": now_iso(),
+        }},
+    )
+    return {"shopId": shop_id, "shopCipher": shop_cipher, "webhookUrl": webhook_url, "webhookStatus": webhook_status}
+
+
+def _verify_tiktok_shop_webhook(provider: str, raw_body: bytes, authorization: str) -> bool:
+    app_key = _env(provider, "APP_KEY", "APP_ID", "CLIENT_ID")
+    app_secret = _env(provider, "APP_SECRET", "CLIENT_SECRET")
+    if not app_key or not app_secret or not authorization:
+        return False
+    expected = hmac.new(
+        app_secret.encode("utf-8"),
+        app_key.encode("utf-8") + raw_body,
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(expected.lower(), authorization.strip().lower())
+
+
+async def _tiktok_order_detail(account: dict, order_id: str) -> dict:
+    bundle = await _token_bundle(account["id"])
+    access_token = str(bundle.get("access_token") or "")
+    if not access_token:
+        raise HTTPException(status_code=409, detail="Access token TikTok Shop tidak tersedia")
+    shop_cipher = str(account.get("shopCipher") or "")
+    if not shop_cipher:
+        raise HTTPException(status_code=409, detail="Shop cipher TikTok Shop belum tersimpan")
+    data = await _tiktok_api(
+        account.get("provider", ""),
+        access_token,
+        "GET",
+        "/order/202507/orders",
+        shop_cipher=shop_cipher,
+        query={"ids": order_id},
+    )
+    orders = list(data.get("orders") or [])
+    if not orders:
+        raise HTTPException(status_code=404, detail=f"Order TikTok Shop {order_id} tidak ditemukan")
+    return orders[0]
+
+
+def _extract_tiktok_items(order: dict) -> list[dict]:
+    candidates = order.get("line_items") or order.get("items") or order.get("order_line_list") or []
+    items = []
+    for line in candidates:
+        marketplace_sku = str(
+            line.get("seller_sku")
+            or line.get("seller_sku_name")
+            or line.get("sku_id")
+            or ""
+        ).strip()
+        if not marketplace_sku:
+            continue
+        qty = line.get("quantity") or line.get("quantity_purchased") or line.get("qty") or 1
+        try:
+            qty = float(qty)
+        except (TypeError, ValueError):
+            qty = 1.0
+        if qty <= 0:
+            continue
+        items.append({
+            "marketplaceSku": marketplace_sku,
+            "qty": qty,
+            "skuId": str(line.get("sku_id") or ""),
+            "productName": str(line.get("product_name") or ""),
+            "skuName": str(line.get("sku_name") or ""),
+        })
+    return items
+
+
+def _normalize_tiktok_status(status: str) -> str:
+    value = str(status or "").upper()
+    if value in {"CANCELLED", "CANCELED"}:
+        return "ORDER_CANCELLED"
+    if value in {
+        "PARTIALLY_SHIPPING", "AWAITING_COLLECTION", "IN_TRANSIT", "SHIPPED",
+        "DELIVERED", "COMPLETED",
+    }:
+        return "ORDER_SHIPPED"
+    if value in {"PACKING", "READY_TO_SHIP"}:
+        return "ORDER_PACKING"
+    return "ORDER_CREATED"
+
+
+async def _ingest_tiktok_order(account: dict, order: dict, notification_id: str) -> dict:
+    from backend.marketplace_integration import (
+        NormalizedMarketplaceEvent,
+        NormalizedMarketplaceItem,
+        _apply_order_created,
+        _apply_status_event,
+    )
+
+    order_id = str(order.get("id") or order.get("order_id") or "")
+    status = str(order.get("status") or "")
+    extracted = _extract_tiktok_items(order)
+    event_type = _normalize_tiktok_status(status)
+    existing = await db.ecom_orders.find_one(
+        {"marketplaceAccountId": account["id"], "orderNo": order_id},
+        {"_id": 0},
+    )
+
+    if not existing:
+        if not extracted:
+            raise HTTPException(status_code=409, detail=f"Order {order_id} tidak memiliki SKU yang dapat dipetakan")
+        create_event = NormalizedMarketplaceEvent(
+            eventId=f"{notification_id}:create",
+            eventType="ORDER_CREATED",
+            accountId=account["id"],
+            orderNo=order_id,
+            buyer=str((order.get("recipient_address") or {}).get("name") or ""),
+            trackingNo=str(order.get("tracking_number") or ""),
+            items=[NormalizedMarketplaceItem(marketplaceSku=item["marketplaceSku"], qty=item["qty"]) for item in extracted],
+            raw={"providerStatus": status},
+        )
+        existing = await _apply_order_created(account, create_event)
+
+    if event_type == "ORDER_CREATED":
+        return existing
+
+    status_event = NormalizedMarketplaceEvent(
+        eventId=f"{notification_id}:{event_type}",
+        eventType=event_type,
+        accountId=account["id"],
+        orderNo=order_id,
+        trackingNo=str(order.get("tracking_number") or ""),
+        items=[],
+        raw={"providerStatus": status},
+    )
+    return await _apply_status_event(account, status_event)
+
+
+@router.post("/marketplace/webhooks/tiktok-shop/{account_id}")
+async def tiktok_shop_webhook(account_id: str, request: Request):
+    account = await db.marketplace_accounts.find_one({"id": account_id}, {"_id": 0})
+    if not account or _credential_key(account.get("provider", "")) != "TIKTOK_SHOP":
+        raise HTTPException(status_code=404, detail="Akun TikTok Shop tidak ditemukan")
+
+    raw_body = await request.body()
+    authorization = request.headers.get("Authorization", "")
+    if not _verify_tiktok_shop_webhook(account.get("provider", ""), raw_body, authorization):
+        raise HTTPException(status_code=401, detail="Signature webhook TikTok Shop tidak valid")
+
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Payload webhook TikTok Shop tidak valid") from exc
+
+    notification_id = str(payload.get("tts_notification_id") or payload.get("id") or "")
+    if not notification_id:
+        raise HTTPException(status_code=400, detail="Webhook TikTok Shop tidak memiliki notification id")
+
+    event_key = f"tiktok-shop:{account_id}:{notification_id}"
+    existing_event = await db.marketplace_webhook_events.find_one({"eventKey": event_key}, {"_id": 0})
+    if existing_event and existing_event.get("status") == "PROCESSED":
+        return {}
+
+    data = payload.get("data") or {}
+    order_id = str(data.get("order_id") or data.get("id") or "")
+    event_doc = {
+        "id": (existing_event or {}).get("id") or new_id(),
+        "eventKey": event_key,
+        "provider": account.get("provider", ""),
+        "accountId": account_id,
+        "eventId": notification_id,
+        "eventType": "TIKTOK_ORDER_STATUS_CHANGE",
+        "orderNo": order_id,
+        "receivedAt": now_iso(),
+        "status": "RECEIVED",
+        "payload": payload,
+    }
+    await db.marketplace_webhook_events.update_one({"eventKey": event_key}, {"$set": event_doc}, upsert=True)
+
+    if not order_id:
+        await db.marketplace_webhook_events.update_one(
+            {"eventKey": event_key},
+            {"$set": {"status": "IGNORED", "processedAt": now_iso(), "error": "Event bukan order status atau order_id tidak tersedia"}},
+        )
+        return {}
+
+    try:
+        order = await _tiktok_order_detail(account, order_id)
+        result = await _ingest_tiktok_order(account, order, notification_id)
+        await db.marketplace_webhook_events.update_one(
+            {"eventKey": event_key},
+            {"$set": {"status": "PROCESSED", "processedAt": now_iso(), "resultId": result.get("id", "")}},
+        )
+        await _log(
+            level="INFO",
+            event_type="TIKTOK_ORDER_SYNC",
+            provider=account.get("provider", ""),
+            account_id=account_id,
+            reference=order_id,
+            message=f"Order TikTok/Tokopedia disinkronkan otomatis. Status {order.get('status', '')}.",
+        )
+        return {}
+    except HTTPException as exc:
+        await db.marketplace_webhook_events.update_one(
+            {"eventKey": event_key},
+            {"$set": {"status": "FAILED", "failedAt": now_iso(), "error": str(exc.detail)}},
+        )
+        await _log(
+            level="ERROR",
+            event_type="TIKTOK_ORDER_SYNC_FAILED",
+            provider=account.get("provider", ""),
+            account_id=account_id,
+            reference=order_id,
+            message=str(exc.detail),
+        )
+        # Return 200 so a business mapping issue does not trigger repeated platform webhook retries.
+        return {}
+
+
 async def _exchange_tiktok(provider: str, auth_code: str) -> dict:
     app_key = _env(provider, "APP_KEY", "APP_ID", "CLIENT_ID")
     app_secret = _env(provider, "APP_SECRET", "CLIENT_SECRET")
@@ -372,7 +706,10 @@ async def marketplace_oauth_callback(
             raise HTTPException(status_code=501, detail="Token adapter provider ini belum tersedia")
 
         await _save_tokens(account, bundle)
-        patch = {"lastConnectionError": "", "updatedAt": now_iso()}
+        post_connect = {}
+        if _credential_key(provider) == "TIKTOK_SHOP":
+            post_connect = await _setup_tiktok_after_connect(account, bundle, request)
+        patch = {"lastConnectionError": "", "updatedAt": now_iso(), **post_connect}
         resolved_shop = str(bundle.get("shop_id") or shop_id or account.get("shopId", ""))
         if resolved_shop:
             patch["shopId"] = resolved_shop
