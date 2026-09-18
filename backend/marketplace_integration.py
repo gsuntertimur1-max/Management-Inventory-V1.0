@@ -41,6 +41,37 @@ def _webhook_secret(provider: str) -> str:
     return os.getenv(f"MARKETPLACE_WEBHOOK_KEY_{provider_key}", "") or os.getenv("MARKETPLACE_WEBHOOK_KEY", "")
 
 
+def _provider_env(provider: str, *names: str) -> str:
+    prefix = f"MARKETPLACE_{_provider_key(provider)}"
+    for name in names:
+        value = os.getenv(f"{prefix}_{name}", "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _connection_env_status(provider: str) -> dict:
+    client_id = _provider_env(provider, "APP_ID", "CLIENT_ID", "PARTNER_ID")
+    client_secret = _provider_env(provider, "APP_SECRET", "CLIENT_SECRET", "PARTNER_KEY")
+    access_token = _provider_env(provider, "ACCESS_TOKEN")
+    refresh_token = _provider_env(provider, "REFRESH_TOKEN")
+    auth_url = _provider_env(provider, "AUTH_URL", "AUTH_URL_TEMPLATE")
+    return {
+        "clientConfigured": bool(client_id),
+        "secretConfigured": bool(client_secret),
+        "tokenConfigured": bool(access_token),
+        "refreshTokenConfigured": bool(refresh_token),
+        "authUrlConfigured": bool(auth_url),
+        "gatewayConfigured": bool(_webhook_secret(provider)),
+        "readyForAuthorization": bool(client_id and client_secret),
+    }
+
+
+def _ensure_marketplace_settings(user: dict) -> None:
+    if not has_role_permission(user.get("role"), "settings"):
+        raise HTTPException(status_code=403, detail="Hanya Superadmin yang dapat mengubah Integrasi Marketplace")
+
+
 async def _log(
     *,
     level: str,
@@ -108,21 +139,21 @@ class NormalizedMarketplaceEvent(BaseModel):
 
 @router.get("/marketplace/accounts")
 async def list_marketplace_accounts(user: dict = Depends(get_current_user)):
-    _ensure_ecom_access(user, write=False)
+    _ensure_marketplace_settings(user)
     rows = await db.marketplace_accounts.find({}, {"_id": 0}).sort([("provider", 1), ("shopName", 1)]).to_list(5000)
-    return [{**row, "gatewayConfigured": bool(_webhook_secret(row.get("provider", "")))} for row in rows]
+    return [{**row, **_connection_env_status(row.get("provider", ""))} for row in rows]
 
 
 @router.get("/marketplace/products")
 async def marketplace_products(user: dict = Depends(get_current_user)):
-    _ensure_ecom_access(user, write=False)
+    _ensure_marketplace_settings(user)
     rows = await db.products.find({}, {"_id": 0, "id": 1, "sku": 1, "name": 1, "unit": 1, "channel": 1}).sort("name", 1).to_list(20000)
     return rows
 
 
 @router.post("/marketplace/accounts")
 async def create_marketplace_account(body: MarketplaceAccountBody, user: dict = Depends(get_current_user)):
-    _ensure_ecom_access(user, write=True)
+    _ensure_marketplace_settings(user)
     shop_name = body.shopName.strip()
     if not shop_name:
         raise HTTPException(status_code=400, detail="Nama toko wajib diisi")
@@ -164,7 +195,7 @@ async def create_marketplace_account(body: MarketplaceAccountBody, user: dict = 
 
 @router.patch("/marketplace/accounts/{account_id}")
 async def update_marketplace_account(account_id: str, body: MarketplaceAccountUpdate, user: dict = Depends(get_current_user)):
-    _ensure_ecom_access(user, write=True)
+    _ensure_marketplace_settings(user)
     current = await db.marketplace_accounts.find_one({"id": account_id}, {"_id": 0})
     if not current:
         raise HTTPException(status_code=404, detail="Akun marketplace tidak ditemukan")
@@ -183,16 +214,93 @@ async def update_marketplace_account(account_id: str, body: MarketplaceAccountUp
     return await db.marketplace_accounts.find_one({"id": account_id}, {"_id": 0})
 
 
+
+@router.post("/marketplace/accounts/{account_id}/connect")
+async def connect_marketplace_account(account_id: str, user: dict = Depends(get_current_user)):
+    _ensure_marketplace_settings(user)
+    account = await db.marketplace_accounts.find_one({"id": account_id}, {"_id": 0})
+    if not account:
+        raise HTTPException(status_code=404, detail="Akun marketplace tidak ditemukan")
+    if not account.get("active", True):
+        raise HTTPException(status_code=409, detail="Aktifkan akun marketplace terlebih dahulu")
+
+    provider = account.get("provider", "")
+    env_status = _connection_env_status(provider)
+    now = now_iso()
+
+    if account.get("connectionMode") == "Manual":
+        await db.marketplace_accounts.update_one(
+            {"id": account_id},
+            {"$set": {"connectionStatus": "CONNECTED_MANUAL", "connectedAt": now, "updatedAt": now, "updatedBy": user.get("name", "")}},
+        )
+        await _log(level="INFO", event_type="ACCOUNT_CONNECTED_MANUAL", provider=provider, account_id=account_id,
+                   reference=account.get("shopName", ""), message="Akun ditandai terhubung dalam mode Manual.")
+        return {"status": "CONNECTED_MANUAL", "authorizationUrl": "", "env": env_status}
+
+    if not env_status["readyForAuthorization"]:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Kredensial {provider} belum lengkap di Railway Variables. App/Client/Partner ID dan Secret/Key wajib tersedia.",
+        )
+
+    if env_status["tokenConfigured"]:
+        await db.marketplace_accounts.update_one(
+            {"id": account_id},
+            {"$set": {"connectionStatus": "CONNECTED", "connectedAt": now, "updatedAt": now, "updatedBy": user.get("name", "")}},
+        )
+        await _log(level="INFO", event_type="ACCOUNT_CONNECTED", provider=provider, account_id=account_id,
+                   reference=account.get("shopName", ""), message="Token marketplace terdeteksi dari Railway environment.")
+        return {"status": "CONNECTED", "authorizationUrl": "", "env": env_status}
+
+    auth_template = _provider_env(provider, "AUTH_URL_TEMPLATE", "AUTH_URL")
+    if auth_template:
+        authorization_url = auth_template.replace("{account_id}", account_id).replace("{shop_id}", str(account.get("shopId", "")))
+        await db.marketplace_accounts.update_one(
+            {"id": account_id},
+            {"$set": {"connectionStatus": "AUTHORIZATION_REQUIRED", "updatedAt": now, "updatedBy": user.get("name", "")}},
+        )
+        await _log(level="INFO", event_type="AUTHORIZATION_STARTED", provider=provider, account_id=account_id,
+                   reference=account.get("shopName", ""), message="Authorization URL disiapkan dari Railway environment.")
+        return {"status": "AUTHORIZATION_REQUIRED", "authorizationUrl": authorization_url, "env": env_status}
+
+    await db.marketplace_accounts.update_one(
+        {"id": account_id},
+        {"$set": {"connectionStatus": "CREDENTIALS_READY", "updatedAt": now, "updatedBy": user.get("name", "")}},
+    )
+    return {
+        "status": "CREDENTIALS_READY",
+        "authorizationUrl": "",
+        "env": env_status,
+        "message": "Kredensial dasar sudah tersedia. Tambahkan AUTH_URL_TEMPLATE atau ACCESS_TOKEN pada Railway untuk menyelesaikan koneksi.",
+    }
+
+
+@router.post("/marketplace/accounts/{account_id}/disconnect")
+async def disconnect_marketplace_account(account_id: str, user: dict = Depends(get_current_user)):
+    _ensure_marketplace_settings(user)
+    account = await db.marketplace_accounts.find_one({"id": account_id}, {"_id": 0})
+    if not account:
+        raise HTTPException(status_code=404, detail="Akun marketplace tidak ditemukan")
+    now = now_iso()
+    await db.marketplace_accounts.update_one(
+        {"id": account_id},
+        {"$set": {"connectionStatus": "NOT_CONNECTED", "disconnectedAt": now, "updatedAt": now, "updatedBy": user.get("name", "")}},
+    )
+    await _log(level="INFO", event_type="ACCOUNT_DISCONNECTED", provider=account.get("provider", ""), account_id=account_id,
+               reference=account.get("shopName", ""), message="Koneksi marketplace dinonaktifkan di Inventory. Secret Railway tidak dihapus.")
+    return {"status": "NOT_CONNECTED"}
+
+
 @router.get("/marketplace/sku-mappings")
 async def list_sku_mappings(accountId: str = "", user: dict = Depends(get_current_user)):
-    _ensure_ecom_access(user, write=False)
+    _ensure_marketplace_settings(user)
     query = {"accountId": accountId} if accountId else {}
     return await db.marketplace_sku_mappings.find(query, {"_id": 0}).sort([("accountId", 1), ("marketplaceSku", 1)]).to_list(20000)
 
 
 @router.post("/marketplace/sku-mappings")
 async def upsert_sku_mapping(body: SkuMappingBody, user: dict = Depends(get_current_user)):
-    _ensure_ecom_access(user, write=True)
+    _ensure_marketplace_settings(user)
     account = await db.marketplace_accounts.find_one({"id": body.accountId}, {"_id": 0})
     if not account:
         raise HTTPException(status_code=404, detail="Akun marketplace tidak ditemukan")
@@ -244,7 +352,7 @@ async def upsert_sku_mapping(body: SkuMappingBody, user: dict = Depends(get_curr
 
 @router.get("/marketplace/stock-preview")
 async def marketplace_stock_preview(accountId: str = "", user: dict = Depends(get_current_user)):
-    _ensure_ecom_access(user, write=False)
+    _ensure_marketplace_settings(user)
     query = {"active": True}
     if accountId:
         query["accountId"] = accountId
@@ -264,7 +372,7 @@ async def marketplace_stock_preview(accountId: str = "", user: dict = Depends(ge
 
 @router.post("/marketplace/accounts/{account_id}/sync-preview")
 async def create_sync_preview(account_id: str, user: dict = Depends(get_current_user)):
-    _ensure_ecom_access(user, write=True)
+    _ensure_marketplace_settings(user)
     account = await db.marketplace_accounts.find_one({"id": account_id}, {"_id": 0})
     if not account:
         raise HTTPException(status_code=404, detail="Akun marketplace tidak ditemukan")
@@ -303,7 +411,7 @@ async def create_sync_preview(account_id: str, user: dict = Depends(get_current_
 
 @router.get("/marketplace/sync-logs")
 async def list_sync_logs(accountId: str = "", limit: int = 500, user: dict = Depends(get_current_user)):
-    _ensure_ecom_access(user, write=False)
+    _ensure_marketplace_settings(user)
     query = {"accountId": accountId} if accountId else {}
     safe_limit = min(max(int(limit or 500), 1), 5000)
     return await db.marketplace_sync_logs.find(query, {"_id": 0}).sort("time", -1).to_list(safe_limit)
@@ -536,7 +644,7 @@ async def marketplace_gateway_event(
 
 @router.get("/marketplace/webhook-events")
 async def list_webhook_events(accountId: str = "", status: str = "", user: dict = Depends(get_current_user)):
-    _ensure_ecom_access(user, write=False)
+    _ensure_marketplace_settings(user)
     query = {}
     if accountId:
         query["accountId"] = accountId
