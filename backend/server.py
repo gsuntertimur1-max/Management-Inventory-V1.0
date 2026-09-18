@@ -92,7 +92,9 @@ async def max_suffix(collection, field: str, prefix: str, query: Optional[dict] 
     if not doc:
         return 0
     try:
-        return int(str(doc[field]).rsplit("-", 1)[-1])
+        value = str(doc[field])
+        tail = value[len(prefix):] if value.startswith(prefix) else value.rsplit("-", 1)[-1]
+        return int(tail)
     except (KeyError, TypeError, ValueError):
         return 0
 
@@ -939,9 +941,10 @@ async def create_transaction(body: TxnBody, user: dict = Depends(require_write))
             queue_number = await next_sequence(f"queue:{operational_date}", queue_floor)
             antrian = f"A-{queue_number:03d}"
 
-        month_prefix = op_now.strftime("SJ-%Y%m")
-        sj_floor = await max_suffix(db.surat_jalan, "no", f"{month_prefix}-")
-        sj_number = await next_sequence(f"surat-jalan:{op_now.strftime('%Y%m')}", sj_floor)
+        month_key = op_now.strftime("%Y%m")
+        month_prefix = f"SJ/09100-09200/{month_key}/"
+        sj_floor = await max_suffix(db.surat_jalan, "no", month_prefix)
+        sj_number = await next_sequence(f"surat-jalan:{month_key}", sj_floor)
         sj_items = []
         total_berat = 0.0
         total_unit = 0.0
@@ -952,7 +955,7 @@ async def create_transaction(body: TxnBody, user: dict = Depends(require_write))
             sj_items.append({"name": prod["name"], "qty": it.qty, "unit": prod.get("unit", ""), "berat": berat, "sec": ""})
         sj = {
             "id": new_id(), "operation_id": operation_id,
-            "no": f"{month_prefix}-{sj_number:03d}", "antrian": antrian,
+            "no": f"{month_prefix}{sj_number:03d}", "antrian": antrian,
             "operational_date": operational_date,
             "time": time, "penerima": body.party or "-", "polisi": body.polisi, "operator": user["name"],
             "status": "Menunggu", "ref": body.ref, "items": sj_items, "berat": total_berat, "unit": total_unit,
