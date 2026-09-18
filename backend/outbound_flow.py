@@ -516,7 +516,17 @@ async def settle_loading_cost(date: str, body: DailyLoadingSettlementInput, user
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Tanggal harus YYYY-MM-DD") from exc
     key = "labor" if body.recipient == "BURUH" else "daily"
-    loads = await db.outbound_loads.find({"status": "Selesai", "operational_date": date}, {"_id": 0, "loading_cost": 1, "items": 1}).to_list(5000)
+    loads = await db.outbound_loads.find(
+        {
+            "status": "Selesai",
+            "$or": [
+                {"operational_date": date},
+                {"operational_date": {"$in": ["", None]}, "completed_at": {"$regex": f"^{date}"}},
+                {"operational_date": {"$in": ["", None]}, "created_at": {"$regex": f"^{date}"}},
+            ],
+        },
+        {"_id": 0, "loading_cost": 1, "items": 1},
+    ).to_list(5000)
     amount = 0.0
     for load in loads:
         cost = load.get("loading_cost") or {}
@@ -524,7 +534,11 @@ async def settle_loading_cost(date: str, body: DailyLoadingSettlementInput, user
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Tidak ada biaya yang perlu dibayarkan untuk tanggal ini")
     doc = {"date": date, "recipient": body.recipient, "amount": amount, "settledAt": now_iso(), "settledBy": user.get("name", ""), "note": body.note.strip()}
-    await db.loading_cost_settlements.update_one({"date": date, "recipient": body.recipient}, {"$set": doc}, upsert=True)
+    await db.loading_cost_settlements.update_one(
+        {"date": date, "recipient": body.recipient},
+        {"$set": doc, "$push": {"history": dict(doc)}},
+        upsert=True,
+    )
     return doc
 
 

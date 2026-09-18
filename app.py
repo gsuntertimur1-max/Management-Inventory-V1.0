@@ -44,6 +44,7 @@ from backend.fefo_selection import router as fefo_selection_router
 from backend.lot_corrections import router as lot_corrections_router
 from backend.damaged_stock_area import router as damaged_stock_area_router
 from backend.damaged_outbound import router as damaged_outbound_router
+from backend.cost_payments import router as cost_payments_router, ensure_cost_payment_indexes
 import backend.opname_lot_atomic  # noqa: F401 - installs compensated lot reducer for opname engines
 
 # QC state is authoritative for explicit QC-linked receipts. PENDING/REJECTED must
@@ -87,6 +88,7 @@ app.include_router(operational_guards_router)
 app.include_router(inventory_flow_router)
 app.include_router(master_products_router)
 app.include_router(outbound_flow_router)
+app.include_router(cost_payments_router)
 # Bazar/E-commerce operations patch consignment balances before the public consignment routes execute.
 app.include_router(consignment_operations_router)
 app.include_router(bazar_packages_router)
@@ -126,6 +128,7 @@ async def hardened_lifespan(application):
         await ensure_bazar_package_indexes()
         await ensure_marketplace_indexes()
         await ensure_marketplace_oauth_indexes()
+        await ensure_cost_payment_indexes()
         yield
 
 

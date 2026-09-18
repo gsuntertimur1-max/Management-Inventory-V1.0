@@ -1,8 +1,8 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, Download, DollarSign, Printer, X } from 'lucide-react';
+import { Search, Download, DollarSign, Printer, X, CheckCircle2, AlertTriangle, CreditCard } from 'lucide-react';
 import { useData } from '../context/DataContext';
-import { apiError, downloadApiFile } from '../lib/api';
+import api, { apiError, downloadApiFile } from '../lib/api';
 import { formatNum, formatDate, formatRp } from '../mock';
 import { toast } from 'sonner';
 import { packagingText, totalWeight } from '../lib/packaging';
@@ -34,7 +34,7 @@ const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => 
 }[char]));
 
 const Riwayat = () => {
-  const { transactions, outboundLoads } = useData();
+  const { transactions, outboundLoads, fetchAll, canWrite } = useData();
   const [q, setQ] = useState('');
   const [type, setType] = useState('SEMUA');
   const [kondisi, setKondisi] = useState('SEMUA');
@@ -42,6 +42,23 @@ const Riwayat = () => {
   const [exporting, setExporting] = useState(false);
   const [unloadingOpen, setUnloadingOpen] = useState(false);
   const [loadingOpen, setLoadingOpen] = useState(false);
+  const [costSettlements, setCostSettlements] = useState({ loading: [], unloading: [] });
+  const [feePayment, setFeePayment] = useState(null);
+  const [settlementModal, setSettlementModal] = useState(null);
+  const [savingPayment, setSavingPayment] = useState(false);
+
+  const loadCostSettlements = useCallback(async () => {
+    try {
+      const { data } = await api.get('/cost-settlements');
+      setCostSettlements({ loading: data.loading || [], unloading: data.unloading || [] });
+    } catch (error) {
+      console.error('cost settlements failed', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadCostSettlements();
+  }, [loadCostSettlements]);
 
   const filtered = transactions.filter((t) => {
     const query = q.toLowerCase();
@@ -112,7 +129,7 @@ const Riwayat = () => {
         day.totals.outstanding += Math.max(Number(load.loading_cost?.chargeable || 0) - Number(load.loading_fee_payment_total || 0), 0);
 
         (load.items || []).forEach((item, index) => {
-          const group = item.crewGroup || 'GRUP 1 - GBB 17-20';
+          const group = item.crewGroup || 'TANPA GRUP BIAYA';
           const fee = item.loadingFee || {};
           const groupTotals = day.groups[group] || { labor: 0, daily: 0, warehouse: 0, total: 0, chargeable: 0 };
           ['labor', 'daily', 'warehouse', 'total', 'chargeable'].forEach((key) => {
@@ -136,6 +153,8 @@ const Riwayat = () => {
             pengambil: load.pengambil || load.party || '',
             paymentStatus: load.loading_fee_payment_status || (Number(load.loading_cost?.chargeable || 0) > 0 ? 'BELUM_DIBAYAR' : 'TIDAK_DITAGIH'),
             outstanding: Math.max(Number(load.loading_cost?.chargeable || 0) - Number(load.loading_fee_payment_total || 0), 0),
+            payments: load.loading_fee_payments || [],
+            isFirstLoadItem: index === 0,
           });
         });
 
@@ -146,6 +165,103 @@ const Riwayat = () => {
   }, [outboundLoads]);
 
   const loadingGrandTotal = loadingDays.reduce((sum, day) => sum + Number(day.totals.total || 0), 0);
+
+  const settlementIndex = useMemo(() => {
+    const index = { loading: {}, unloading: {} };
+    ['loading', 'unloading'].forEach((kind) => {
+      (costSettlements[kind] || []).forEach((row) => {
+        index[kind][`${row.date}:${row.recipient}`] = row;
+      });
+    });
+    return index;
+  }, [costSettlements]);
+
+  const getSettlementInfo = (kind, date, recipient, total) => {
+    const row = settlementIndex[kind]?.[`${date}:${recipient}`] || null;
+    const paid = Math.min(Number(row?.amount || 0), Number(total || 0));
+    const outstanding = Math.max(Number(total || 0) - paid, 0);
+    return { row, paid, outstanding, settled: Number(total || 0) > 0 && outstanding <= 1e-9 };
+  };
+
+  const accumulatedUnpaid = (kind, days, recipient, key) => days.reduce(
+    (sum, day) => sum + getSettlementInfo(kind, day.date, recipient, day.totals[key]).outstanding,
+    0,
+  );
+
+  const loadingLaborUnpaid = accumulatedUnpaid('loading', loadingDays, 'BURUH', 'labor');
+  const loadingDailyUnpaid = accumulatedUnpaid('loading', loadingDays, 'HARIAN', 'daily');
+  const unloadingLaborUnpaid = accumulatedUnpaid('unloading', unloadingDays, 'BURUH', 'labor');
+  const unloadingDailyUnpaid = accumulatedUnpaid('unloading', unloadingDays, 'HARIAN', 'daily');
+
+  const renderSettlementCard = (kind, day, recipient, amount) => {
+    const label = recipient === 'BURUH' ? 'Buruh' : 'Harian / UH';
+    const info = getSettlementInfo(kind, day.date, recipient, amount);
+    if (Number(amount || 0) <= 0) return null;
+    return (
+      <div className={`rounded-lg border px-3 py-2 text-xs ${info.settled ? 'border-[#166534] bg-[#14532d]/10' : 'border-[#7f1d1d] bg-[#7f1d1d]/10'}`}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="font-semibold flex items-center gap-1.5">{info.settled ? <CheckCircle2 size={13} className="text-[#4ade80]" /> : <AlertTriangle size={13} className="text-[#f87171]" />} {label}</div>
+            <div className={info.settled ? 'text-[#4ade80] mt-1' : 'text-[#f87171] mt-1'}>{info.settled ? 'Sudah dibayar' : `Belum dibayar ${formatRp(info.outstanding)}`}</div>
+            {info.row && <div className="text-[10px] text-[#8b93a1] mt-1">{formatDate(info.row.settledAt)} · {info.row.settledBy || '—'}{info.row.note ? ` · ${info.row.note}` : ''}</div>}
+          </div>
+          {canWrite && info.outstanding > 0 && (
+            <button
+              type="button"
+              onClick={() => setSettlementModal({ kind, date: day.date, recipient, label, total: Number(amount || 0), outstanding: info.outstanding, note: '' })}
+              className="px-2.5 py-1.5 rounded-lg border border-[#2563eb] text-[#93c5fd] hover:bg-[#2563eb]/10"
+            >
+              Tandai dibayar
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const saveFeePayment = async () => {
+    if (!feePayment || savingPayment) return;
+    const amount = Number(feePayment.amount || 0);
+    if (!(amount > 0) || amount > Number(feePayment.max || 0) + 1e-9) {
+      toast.error('Nominal pembayaran harus lebih dari 0 dan tidak boleh melebihi sisa tagihan.');
+      return;
+    }
+    setSavingPayment(true);
+    try {
+      await api.post(`/outbound-loads/${feePayment.loadId}/loading-fee-payment`, {
+        amount,
+        method: feePayment.method,
+        payer: feePayment.payer,
+        note: feePayment.note,
+      });
+      await fetchAll();
+      toast.success('Pembayaran biaya muat berhasil dicatat');
+      setFeePayment(null);
+    } catch (error) {
+      toast.error(apiError(error));
+    } finally {
+      setSavingPayment(false);
+    }
+  };
+
+  const saveSettlement = async () => {
+    if (!settlementModal || savingPayment) return;
+    setSavingPayment(true);
+    try {
+      const prefix = settlementModal.kind === 'loading' ? 'loading-costs' : 'unloading-costs';
+      await api.post(`/${prefix}/${settlementModal.date}/settle`, {
+        recipient: settlementModal.recipient,
+        note: settlementModal.note || '',
+      });
+      await loadCostSettlements();
+      toast.success(`Pembayaran ${settlementModal.label} tanggal ${settlementModal.date} ditandai sudah dibayar`);
+      setSettlementModal(null);
+    } catch (error) {
+      toast.error(apiError(error));
+    } finally {
+      setSavingPayment(false);
+    }
+  };
 
   const printLoadingDay = (day, group, recipient) => {
     const key = recipient === 'BURUH' ? 'labor' : 'daily';
@@ -256,6 +372,17 @@ const Riwayat = () => {
               </div>
             </div>
 
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+              <div className={`rounded-lg border p-3 ${loadingLaborUnpaid > 0 ? 'border-[#7f1d1d] bg-[#7f1d1d]/10' : 'border-[#166534] bg-[#14532d]/10'}`}>
+                <div className="text-[10px] text-[#8b93a1]">Akumulasi Buruh belum dibayar</div>
+                <div className={`font-mono font-bold mt-1 ${loadingLaborUnpaid > 0 ? 'text-[#f87171]' : 'text-[#4ade80]'}`}>{formatRp(loadingLaborUnpaid)}</div>
+              </div>
+              <div className={`rounded-lg border p-3 ${loadingDailyUnpaid > 0 ? 'border-[#7f1d1d] bg-[#7f1d1d]/10' : 'border-[#166534] bg-[#14532d]/10'}`}>
+                <div className="text-[10px] text-[#8b93a1]">Akumulasi Harian / UH belum dibayar</div>
+                <div className={`font-mono font-bold mt-1 ${loadingDailyUnpaid > 0 ? 'text-[#f87171]' : 'text-[#4ade80]'}`}>{formatRp(loadingDailyUnpaid)}</div>
+              </div>
+            </div>
+
             <div className="space-y-4">
               {loadingDays.length === 0 ? <div className="rounded-lg border border-[#242f3d] p-6 text-center text-sm text-[#6b7688]">Belum ada pemuatan selesai dengan biaya muat.</div> : loadingDays.map((day) => (
                 <div key={day.date} className="rounded-xl border border-[#2b3545] bg-[#0b0f17] p-4">
@@ -268,6 +395,11 @@ const Riwayat = () => {
                       <div>Tagihan pengambil <b className="text-[#fbbf24]">{formatRp(day.totals.chargeable)}</b></div>
                       <div className="mt-1">Diterima <b className="text-[#4ade80]">{formatRp(day.totals.collected)}</b> · Belum dibayar <b className="text-[#f87171]">{formatRp(day.totals.outstanding)}</b></div>
                     </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                    {renderSettlementCard('loading', day, 'BURUH', day.totals.labor)}
+                    {renderSettlementCard('loading', day, 'HARIAN', day.totals.daily)}
                   </div>
 
                   <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
@@ -295,7 +427,10 @@ const Riwayat = () => {
                   <div className="overflow-x-auto mt-4">
                     <table className="w-full text-xs">
                       <thead><tr className="text-left border-b border-[#242f3d]"><th className="py-2 pr-3">Dokumen / Bon</th><th className="py-2 pr-3">Produk</th><th className="py-2 pr-3">Tumpukan</th><th className="py-2 pr-3">Mandor</th><th className="py-2 pr-3">Pengambil</th><th className="py-2 pr-3">Status Tagihan</th><th className="py-2 text-right">Biaya</th></tr></thead>
-                      <tbody>{day.items.map((item) => <tr key={item.id} className="border-b border-[#171e29]"><td className="py-2 pr-3 font-mono"><div>{item.documentNo || '—'}</div><div className="text-[10px] text-[#6b7688]">{item.bonNo || item.antrian || '—'}{item.suratJalanNo ? ` · ${item.suratJalanNo}` : ''}</div></td><td className="py-2 pr-3"><div className="font-medium">{item.product}</div><div className="text-[10px] text-[#6b7688]">{formatNum(item.qty)} {item.unit}{item.fee?.overtime ? ' · Lembur' : ''}{item.fee?.holiday ? ' · Hari Libur' : ''}</div></td><td className="py-2 pr-3 font-mono">{item.stackCode || '—'}</td><td className="py-2 pr-3">{item.crewGroup}</td><td className="py-2 pr-3">{item.pengambil || '—'}</td><td className="py-2 pr-3"><span className={item.paymentStatus === 'LUNAS' ? 'text-[#4ade80]' : item.paymentStatus === 'SEBAGIAN' ? 'text-[#fbbf24]' : item.paymentStatus === 'TIDAK_DITAGIH' ? 'text-[#8b93a1]' : 'text-[#f87171]'}>{item.paymentStatus === 'LUNAS' ? 'Sudah dibayar' : item.paymentStatus === 'SEBAGIAN' ? 'Dibayar sebagian' : item.paymentStatus === 'TIDAK_DITAGIH' ? 'Tidak ditagihkan' : 'Belum dibayar'}</span>{item.outstanding > 0 && <div className="font-mono text-[10px] mt-1">{formatRp(item.outstanding)}</div>}</td><td className="py-2 text-right font-mono">{formatRp(item.fee?.total || 0)}</td></tr>)}</tbody>
+                      <tbody>{day.items.map((item) => {
+                        const latestPayment = item.payments?.length ? item.payments[item.payments.length - 1] : null;
+                        return <tr key={item.id} className="border-b border-[#171e29]"><td className="py-2 pr-3 font-mono"><div>{item.documentNo || '—'}</div><div className="text-[10px] text-[#6b7688]">{item.bonNo || item.antrian || '—'}{item.suratJalanNo ? ` · ${item.suratJalanNo}` : ''}</div></td><td className="py-2 pr-3"><div className="font-medium">{item.product}</div><div className="text-[10px] text-[#6b7688]">{formatNum(item.qty)} {item.unit}{item.fee?.overtime ? ' · Lembur' : ''}{item.fee?.holiday ? ' · Hari Libur' : ''}</div></td><td className="py-2 pr-3 font-mono">{item.stackCode || '—'}</td><td className="py-2 pr-3">{item.crewGroup}</td><td className="py-2 pr-3">{item.pengambil || '—'}</td><td className="py-2 pr-3"><span className={item.paymentStatus === 'LUNAS' ? 'text-[#4ade80]' : item.paymentStatus === 'SEBAGIAN' ? 'text-[#fbbf24]' : item.paymentStatus === 'TIDAK_DITAGIH' ? 'text-[#8b93a1]' : 'text-[#f87171]'}>{item.paymentStatus === 'LUNAS' ? 'Sudah dibayar' : item.paymentStatus === 'SEBAGIAN' ? 'Dibayar sebagian' : item.paymentStatus === 'TIDAK_DITAGIH' ? 'Tidak ditagihkan' : 'Belum dibayar'}</span>{item.outstanding > 0 && <div className="font-mono text-[10px] mt-1">{formatRp(item.outstanding)}</div>}{item.isFirstLoadItem && latestPayment && <div className="text-[10px] text-[#8b93a1] mt-1">Terakhir {formatDate(latestPayment.time)} · {latestPayment.method}{latestPayment.payer ? ` · ${latestPayment.payer}` : ''}</div>}{canWrite && item.isFirstLoadItem && item.outstanding > 0 && item.paymentStatus !== 'TIDAK_DITAGIH' && <button type="button" onClick={() => setFeePayment({ loadId: item.loadId, max: item.outstanding, amount: String(item.outstanding), method: 'TUNAI', payer: item.pengambil || '', note: '' })} className="mt-2 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[#2563eb] text-[#93c5fd] hover:bg-[#2563eb]/10"><CreditCard size={12} /> Catat pembayaran</button>}</td><td className="py-2 text-right font-mono">{formatRp(item.fee?.total || 0)}</td></tr>;
+                      })}</tbody>
                     </table>
                   </div>
                 </div>
@@ -321,6 +456,17 @@ const Riwayat = () => {
               </div>
             </div>
 
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+              <div className={`rounded-lg border p-3 ${unloadingLaborUnpaid > 0 ? 'border-[#7f1d1d] bg-[#7f1d1d]/10' : 'border-[#166534] bg-[#14532d]/10'}`}>
+                <div className="text-[10px] text-[#8b93a1]">Akumulasi Buruh belum dibayar</div>
+                <div className={`font-mono font-bold mt-1 ${unloadingLaborUnpaid > 0 ? 'text-[#f87171]' : 'text-[#4ade80]'}`}>{formatRp(unloadingLaborUnpaid)}</div>
+              </div>
+              <div className={`rounded-lg border p-3 ${unloadingDailyUnpaid > 0 ? 'border-[#7f1d1d] bg-[#7f1d1d]/10' : 'border-[#166534] bg-[#14532d]/10'}`}>
+                <div className="text-[10px] text-[#8b93a1]">Akumulasi Harian / UH belum dibayar</div>
+                <div className={`font-mono font-bold mt-1 ${unloadingDailyUnpaid > 0 ? 'text-[#f87171]' : 'text-[#4ade80]'}`}>{formatRp(unloadingDailyUnpaid)}</div>
+              </div>
+            </div>
+
             <div className="space-y-4">
               {unloadingDays.length === 0 ? <div className="rounded-lg border border-[#242f3d] p-6 text-center text-sm text-[#6b7688]">Belum ada penerimaan dengan biaya bongkar.</div> : unloadingDays.map((day) => (
                 <div key={day.date} className="rounded-xl border border-[#2b3545] bg-[#0b0f17] p-4">
@@ -330,6 +476,11 @@ const Riwayat = () => {
                       <div className="text-xs text-[#8b93a1] mt-1">Buruh {formatRp(day.totals.labor)} · UH {formatRp(day.totals.daily)} · Gudang {formatRp(day.totals.warehouse)} · Total <b className="text-[#fbbf24]">{formatRp(day.totals.total)}</b></div>
                     </div>
                     {Number(day.totals.chargeable || 0) > 0 && <div className="text-xs rounded-lg border border-[#8a5a16] px-3 py-2 text-[#fbbf24]">Tagihan Pengirim {formatRp(day.totals.chargeable)}</div>}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                    {renderSettlementCard('unloading', day, 'BURUH', day.totals.labor)}
+                    {renderSettlementCard('unloading', day, 'HARIAN', day.totals.daily)}
                   </div>
 
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
@@ -363,6 +514,35 @@ const Riwayat = () => {
                 </div>
               ))}
             </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {feePayment && createPortal(
+        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/80 p-4">
+          <div className="card-surface w-full max-w-md p-5">
+            <div className="flex items-center justify-between mb-4"><h3 className="font-display text-lg font-bold">Catat Pembayaran Biaya Muat</h3><button onClick={() => setFeePayment(null)} disabled={savingPayment} className="text-[#8b93a1] hover:text-white"><X size={18} /></button></div>
+            <div className="rounded-lg border border-[#242f3d] p-3 mb-4 text-xs"><span className="text-[#8b93a1]">Sisa tagihan:</span> <b className="font-mono text-[#fbbf24]">{formatRp(feePayment.max)}</b></div>
+            <div className="space-y-3">
+              <div><label className="text-xs text-[#8b93a1] block mb-1">Nominal pembayaran</label><input type="number" min="0" max={feePayment.max} value={feePayment.amount} onChange={(e) => setFeePayment((prev) => ({ ...prev, amount: e.target.value }))} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" /></div>
+              <div><label className="text-xs text-[#8b93a1] block mb-1">Metode</label><select value={feePayment.method} onChange={(e) => setFeePayment((prev) => ({ ...prev, method: e.target.value }))} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none"><option value="TUNAI">Tunai</option><option value="TRANSFER">Transfer</option><option value="PIUTANG">Piutang</option></select></div>
+              <div><label className="text-xs text-[#8b93a1] block mb-1">Pembayar</label><input value={feePayment.payer} onChange={(e) => setFeePayment((prev) => ({ ...prev, payer: e.target.value }))} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" /></div>
+              <div><label className="text-xs text-[#8b93a1] block mb-1">Catatan</label><textarea rows={2} value={feePayment.note} onChange={(e) => setFeePayment((prev) => ({ ...prev, note: e.target.value }))} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" /></div>
+            </div>
+            <div className="flex justify-end gap-2 mt-5"><button onClick={() => setFeePayment(null)} disabled={savingPayment} className="px-4 py-2 rounded-lg border border-[#242f3d] text-sm">Batal</button><button onClick={saveFeePayment} disabled={savingPayment} className="btn-primary px-4 py-2 rounded-lg text-sm font-semibold">{savingPayment ? 'Menyimpan…' : 'Simpan pembayaran'}</button></div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {settlementModal && createPortal(
+        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/80 p-4">
+          <div className="card-surface w-full max-w-md p-5">
+            <div className="flex items-center justify-between mb-4"><h3 className="font-display text-lg font-bold">Tandai Pembayaran {settlementModal.label}</h3><button onClick={() => setSettlementModal(null)} disabled={savingPayment} className="text-[#8b93a1] hover:text-white"><X size={18} /></button></div>
+            <div className="rounded-lg border border-[#242f3d] p-3 mb-4 text-xs"><div>Tanggal <b>{settlementModal.date}</b></div><div className="mt-1">Sisa belum dibayar <b className="font-mono text-[#f87171]">{formatRp(settlementModal.outstanding)}</b></div><div className="mt-1 text-[#8b93a1]">Setelah disimpan, status tanggal ini tercatat sebagai sudah dibayar. Jika kemudian ada biaya tambahan pada tanggal yang sama, sisa tambahan akan muncul lagi sebagai tunggakan.</div></div>
+            <div><label className="text-xs text-[#8b93a1] block mb-1">Catatan pembayaran (opsional)</label><textarea rows={3} value={settlementModal.note} onChange={(e) => setSettlementModal((prev) => ({ ...prev, note: e.target.value }))} placeholder="Contoh: Dibayar transfer / diterima koordinator buruh" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" /></div>
+            <div className="flex justify-end gap-2 mt-5"><button onClick={() => setSettlementModal(null)} disabled={savingPayment} className="px-4 py-2 rounded-lg border border-[#242f3d] text-sm">Batal</button><button onClick={saveSettlement} disabled={savingPayment} className="btn-primary px-4 py-2 rounded-lg text-sm font-semibold">{savingPayment ? 'Menyimpan…' : 'Tandai sudah dibayar'}</button></div>
           </div>
         </div>,
         document.body
