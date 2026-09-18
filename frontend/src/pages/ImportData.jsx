@@ -44,7 +44,6 @@ const ImportData = () => {
       <div>
         <div className="label-mono mb-2">Master Data</div>
         <h1 className="font-display text-4xl font-bold">Import Master SKU</h1>
-        <p className="text-[#8b93a1] mt-2 max-w-2xl">Unggah XLSX untuk menambah atau memperbarui master produk. Import ini tidak mengubah jumlah stok fisik.</p>
       </div>
 
       <div className="rounded-xl border border-[#1f3657] bg-[#0d1728] p-4 flex items-start gap-3 text-sm text-[#93c5fd]">
