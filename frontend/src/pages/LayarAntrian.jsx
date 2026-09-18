@@ -154,8 +154,7 @@ const LayarAntrian = () => {
         <div>
           <div className="label-mono mb-2">Monitor Pemuatan</div>
           <h1 className="font-display text-4xl font-bold">Layar Antrian Pemuatan</h1>
-          <p className="text-[#8b93a1] mt-2">Nomor antrian reset setiap hari, dipisahkan menurut unit pemuatan, dan hanya menampilkan proses aktif.</p>
-        </div>
+          </div>
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
           <button type="button" onClick={toggleVoice} className="queue-action inline-flex min-h-11 items-center gap-2 rounded-xl border border-[#242f3d] px-3.5 py-2.5 text-sm text-[#c7d0dc] hover:bg-[#141a24]">
             {voiceEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
