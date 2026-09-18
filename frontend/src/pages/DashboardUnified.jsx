@@ -21,9 +21,8 @@ const formatTotals = (totals) => {
   return rows.length ? rows.map(([unit, qty]) => `${formatNum(qty)} ${unit}`).join(' + ') : '0';
 };
 
-const SummaryCard = ({ icon: Icon, label, value, note, accent }) => <div className="card-surface p-5">
+const SummaryCard = ({ icon: Icon, label, value, accent }) => <div className="card-surface p-5">
   <div className="flex items-start justify-between gap-3"><div><div className="label-mono">{label}</div><div className="font-display text-2xl font-bold mt-2 leading-tight">{value}</div></div><div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: `${accent}1f`, color: accent }}><Icon size={20} /></div></div>
-  <div className="text-xs text-[#8b93a1] mt-3">{note}</div>
 </div>;
 
 const DashboardUnified = () => {
@@ -66,8 +65,8 @@ const DashboardUnified = () => {
       <section>
         <div className="flex flex-wrap items-center justify-between gap-3 mb-2"><div className="label-mono">Area Kerja</div><SyncStatus /></div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <SummaryCard icon={isBazar ? ShoppingBag : Boxes} label={isBazar ? 'Stok Bazar' : 'Stok E-commerce'} value={formatTotals(own)} note={`Saldo aktif yang menjadi tanggung jawab ${isBazar ? 'Petugas Bazar' : 'Petugas E-commerce'}.`} accent={isBazar ? '#f59e0b' : '#0ea5e9'} />
-          <SummaryCard icon={Layers3} label="Ruang Lingkup Akses" value={isBazar ? 'BAZAR' : 'E-COM'} note="Akun ini tidak memiliki hak mengubah stok GBB/MP1 atau lokasi konsinyasi lain." accent="#22c55e" />
+          <SummaryCard icon={isBazar ? ShoppingBag : Boxes} label={isBazar ? 'Stok Bazar' : 'Stok E-commerce'} value={formatTotals(own)} accent={isBazar ? '#f59e0b' : '#0ea5e9'} />
+          <SummaryCard icon={Layers3} label="Ruang Lingkup Akses" value={isBazar ? 'BAZAR' : 'E-COM'} accent="#22c55e" />
         </div>
       </section>
       <section className="card-surface p-6">
@@ -81,10 +80,10 @@ const DashboardUnified = () => {
     <section>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-2"><div className="label-mono">Posisi Persediaan Fisik</div><SyncStatus /></div>
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        <SummaryCard icon={Warehouse} label="Stok Gudang Utama" value={formatTotals(totals.main)} note="Saldo yang masih berada di GBB/MP1." accent="#3b82f6" />
-        <SummaryCard icon={ShoppingBag} label="Stok Bazar" value={formatTotals(totals.bazar)} note="Saldo fisik sub-ledger Gudang Bazar." accent="#f59e0b" />
-        <SummaryCard icon={Boxes} label="Stok E-commerce" value={formatTotals(totals.ecommerce)} note="Saldo fisik sub-ledger Gudang E-commerce." accent="#0ea5e9" />
-        <SummaryCard icon={Layers3} label="Total Stok Fisik" value={formatTotals(totals.physical)} note="Gudang Utama + Bazar + E-commerce. Perpindahan lokasi tidak menambah total." accent="#22c55e" />
+        <SummaryCard icon={Warehouse} label="Stok Gudang Utama" value={formatTotals(totals.main)} accent="#3b82f6" />
+        <SummaryCard icon={ShoppingBag} label="Stok Bazar" value={formatTotals(totals.bazar)} accent="#f59e0b" />
+        <SummaryCard icon={Boxes} label="Stok E-commerce" value={formatTotals(totals.ecommerce)} accent="#0ea5e9" />
+        <SummaryCard icon={Layers3} label="Total Stok Fisik" value={formatTotals(totals.physical)} accent="#22c55e" />
       </div>
     </section>
     <Dashboard />
