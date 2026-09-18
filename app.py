@@ -19,6 +19,7 @@ from backend.outbound_completion_hardening import router as outbound_completion_
 from backend.consignment import router as consignment_router
 from backend.consignment_operations import router as consignment_operations_router, ensure_consignment_operation_indexes
 from backend.bazar_packages import router as bazar_packages_router, ensure_bazar_package_indexes
+from backend.marketplace_integration import router as marketplace_integration_router, ensure_marketplace_indexes
 from backend.stack_allocations import router as stack_allocations_router
 from backend.stock_transfer import router as stock_transfer_router
 from backend.outbound_pdf_multi import router as outbound_pdf_multi_router
@@ -88,6 +89,7 @@ app.include_router(outbound_flow_router)
 # Bazar/E-commerce operations patch consignment balances before the public consignment routes execute.
 app.include_router(consignment_operations_router)
 app.include_router(bazar_packages_router)
+app.include_router(marketplace_integration_router)
 app.include_router(consignment_router)
 app.include_router(stack_allocations_router)
 # Dedicated internal mutation changes only physical location/subledger. It never changes product.stock.
@@ -120,6 +122,7 @@ async def hardened_lifespan(application):
         await ensure_stack_lot_indexes()
         await ensure_consignment_operation_indexes()
         await ensure_bazar_package_indexes()
+        await ensure_marketplace_indexes()
         yield
 
 
