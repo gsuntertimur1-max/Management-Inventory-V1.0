@@ -224,7 +224,7 @@ def loading_units_from_items(items: List[dict]) -> tuple[str, str]:
     for item in items:
         source = str(item.get("stackCode") or item.get("location") or "").strip().upper()
         head = source.split("/", 1)[0].strip()
-        head = re.sub(r"^(?:UNIT|GBB)\s*", "", head).strip()
+        head = re.sub(r"^(?:UNIT|GBB|GUDANG)\s*", "", head).strip()
         unit = head if head and re.fullmatch(r"[A-Z0-9-]+", head) else ""
         if unit and unit not in units:
             units.append(unit)
