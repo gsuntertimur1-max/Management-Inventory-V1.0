@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { History, PackageCheck, PackagePlus, RefreshCcw, RotateCcw, Truck } from 'lucide-react';
+import { History, PackageCheck, PackagePlus, Plus, RefreshCcw, RotateCcw, Truck } from 'lucide-react';
 import api, { apiError } from '../lib/api';
 import { toast } from 'sonner';
 
@@ -11,6 +11,7 @@ const EcomOperasional = () => {
   const [history, setHistory] = useState([]);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ marketplace: 'Manual', orderNo: '', buyer: '', productId: '', qty: '', note: '' });
+  const [orderItems, setOrderItems] = useState([]);
   const [returnOrder, setReturnOrder] = useState(null);
   const [returnRows, setReturnRows] = useState({});
 
@@ -24,13 +25,26 @@ const EcomOperasional = () => {
   useEffect(() => { load().catch(() => {}); }, []);
   const selected = useMemo(() => availability.find((x) => x.productId === form.productId), [availability, form.productId]);
 
+  const addOrderItem = () => {
+    if (!form.productId || Number(form.qty) <= 0) return toast.error('Pilih produk dan isi jumlah');
+    const row = availability.find((x) => x.productId === form.productId);
+    if (!row) return;
+    setOrderItems((prev) => {
+      const found = prev.find((x) => x.productId === row.productId);
+      if (found) return prev.map((x) => x.productId === row.productId ? { ...x, qty: Number(x.qty) + Number(form.qty) } : x);
+      return [...prev, { productId: row.productId, name: row.name, unit: row.unit, qty: Number(form.qty) }];
+    });
+    setForm((p) => ({ ...p, productId: '', qty: '' }));
+  };
+
   const createOrder = async () => {
-    if (!form.orderNo.trim() || !form.productId || Number(form.qty) <= 0) return toast.error('Nomor pesanan, produk dan jumlah wajib diisi');
+    if (!form.orderNo.trim() || orderItems.length === 0) return toast.error('Nomor pesanan dan minimal satu produk wajib diisi');
     setSaving(true);
     try {
-      await api.post('/ecom/orders', { marketplace: form.marketplace, orderNo: form.orderNo, buyer: form.buyer, note: form.note, items: [{ productId: form.productId, qty: Number(form.qty) }] });
+      await api.post('/ecom/orders', { marketplace: form.marketplace, orderNo: form.orderNo, buyer: form.buyer, note: form.note, items: orderItems.map((x) => ({ productId: x.productId, qty: Number(x.qty) })) });
       toast.success('Pesanan dibuat dan stok E-commerce telah direservasi');
       setForm((p) => ({ ...p, orderNo: '', buyer: '', productId: '', qty: '', note: '' }));
+      setOrderItems([]);
       await load();
     } catch (e) { toast.error(apiError(e)); } finally { setSaving(false); }
   };
@@ -66,9 +80,13 @@ const EcomOperasional = () => {
         <select className={inputCls} value={form.marketplace} onChange={(e) => setForm({ ...form, marketplace: e.target.value })}><option>Manual</option><option>Shopee</option><option>Tokopedia</option><option>TikTok Shop</option><option>Lainnya</option></select>
         <input className={inputCls} placeholder="Nomor pesanan" value={form.orderNo} onChange={(e) => setForm({ ...form, orderNo: e.target.value })}/>
         <input className={inputCls} placeholder="Pembeli (opsional)" value={form.buyer} onChange={(e) => setForm({ ...form, buyer: e.target.value })}/>
-        <select className={inputCls} value={form.productId} onChange={(e) => setForm({ ...form, productId: e.target.value })}><option value="">Pilih komoditi</option>{availability.map((x) => <option key={x.productId} value={x.productId}>{x.name} · tersedia {x.availableQty} {x.unit}</option>)}</select>
-        <input type="number" min="0" className={inputCls} placeholder="Jumlah" value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })}/>
+        <div className="grid grid-cols-[1fr_120px_auto] gap-2">
+          <select className={inputCls} value={form.productId} onChange={(e) => setForm({ ...form, productId: e.target.value })}><option value="">Pilih komoditi</option>{availability.map((x) => <option key={x.productId} value={x.productId}>{x.name} · tersedia {x.availableQty} {x.unit}</option>)}</select>
+          <input type="number" min="0" className={inputCls} placeholder="Jumlah" value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })}/>
+          <button type="button" onClick={addOrderItem} className="px-3 rounded-lg border border-[#3b82f6]/50 text-[#93c5fd]"><Plus size={17}/></button>
+        </div>
         {selected && <div className="text-xs text-[#94a3b8]">Fisik {selected.physicalQty} · Reserved {selected.reservedQty} · Tersedia {selected.availableQty} {selected.unit}</div>}
+        <div className="space-y-2">{orderItems.map((x) => <div key={x.productId} className="flex justify-between border border-[#243044] rounded-lg px-3 py-2 text-xs"><span>{x.name}</span><span className="font-mono">{x.qty} {x.unit}</span></div>)}</div>
         <textarea className={inputCls} placeholder="Catatan" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })}/>
         <button disabled={saving} onClick={createOrder} className="btn-primary w-full py-2.5 rounded-lg font-semibold">{saving ? 'Menyimpan…' : 'Buat & Reservasi Order'}</button>
       </div>
