@@ -15,14 +15,24 @@ os.environ.setdefault("JWT_SECRET", "test-only-jwt-secret")
 
 import backend.role_four_config  # noqa: F401
 from backend.consignment import normalize_consignment_stack_code
+from backend.consignment_locations import consignment_stack_codes
 from backend.consignment_documents import _ensure_bazar_access, document_series_code
 
 
 def test_consignment_stack_codes_are_scoped():
-    assert normalize_consignment_stack_code("Gudang Bazar", "a01") == "BZR/A01"
-    assert normalize_consignment_stack_code("Gudang E-commerce", "ECOM/B02") == "ECOM/B02"
+    assert consignment_stack_codes("Gudang Bazar") == (
+        "18/A01-BAZAR", "18/A02-BAZAR", "18/A03-BAZAR", "18/A04-BAZAR",
+    )
+    assert consignment_stack_codes("Gudang E-commerce") == (
+        "18/B01(1/2)-ECOM", "18/B02(1/2)-ECOM", "18/B03(1/2)-ECOM", "18/B04(1/2)-ECOM",
+    )
+    assert normalize_consignment_stack_code("Gudang Bazar", "a01") == "18/A01-BAZAR"
+    assert normalize_consignment_stack_code("Gudang Bazar", "BZR/A04") == "18/A04-BAZAR"
+    assert normalize_consignment_stack_code("Gudang E-commerce", "ECOM/B02") == "18/B02(1/2)-ECOM"
+    assert normalize_consignment_stack_code("Gudang E-commerce", "ECOM/A01") == "18/B01(1/2)-ECOM"
+    assert normalize_consignment_stack_code("Gudang E-commerce", "18/B04 (½)") == "18/B04(1/2)-ECOM"
     with pytest.raises(HTTPException):
-        normalize_consignment_stack_code("Gudang Bazar", "ECOM/A01")
+        normalize_consignment_stack_code("Gudang Bazar", "18/B01(1/2)-ECOM")
 
 
 def test_bazar_document_series_are_distinct():
@@ -39,6 +49,6 @@ def test_bazar_documents_allow_bazar_operator_and_superadmin():
 
 def test_stack_code_normalizer_rejects_cross_scope_and_invalid_package_marker():
     with pytest.raises(HTTPException):
-        normalize_consignment_stack_code("Gudang E-commerce", "BZR/A01")
+        normalize_consignment_stack_code("Gudang E-commerce", "18/A01-BAZAR")
     with pytest.raises(HTTPException):
         normalize_consignment_stack_code("Gudang Bazar", "BZR/PKT")
