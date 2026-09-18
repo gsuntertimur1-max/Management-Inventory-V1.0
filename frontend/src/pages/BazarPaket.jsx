@@ -83,11 +83,11 @@ const BazarPaket = () => {
   };
 
   const unpackBatch = async (batch) => {
-    const raw = window.prompt(\`Jumlah paket yang akan dibongkar dari \${batch.batchNo} (maks. \${batch.remainingQty}):\`, '');
+    const raw = window.prompt(`Jumlah paket yang akan dibongkar dari ${batch.batchNo} (maks. ${batch.remainingQty}):`, '');
     const qty = Number(raw || 0);
     if (qty <= 0) return;
     try {
-      await api.post(\`/bazar/package-batches/\${batch.id}/unpack\`, { qty, note: 'Pembongkaran Paket Jadi' });
+      await api.post(`/bazar/package-batches/${batch.id}/unpack`, { qty, note: 'Pembongkaran Paket Jadi' });
       toast.success('Paket dibongkar; komponen kembali tersedia sebagai stok loose');
       await loadAll();
     } catch (e) { toast.error(apiError(e)); }
@@ -133,10 +133,10 @@ const BazarPaket = () => {
         const delivered = Number(closeRows[item.templateId]?.deliveredQty || 0);
         const damaged = Number(closeRows[item.templateId]?.returnedDamagedQty || 0);
         const returnedGood = Number(item.loadedQty || 0) - delivered - damaged;
-        if (returnedGood < 0) throw new Error(\`\${item.packageName}: disalurkan + retur rusak melebihi jumlah muat\`);
+        if (returnedGood < 0) throw new Error(`${item.packageName}: disalurkan + retur rusak melebihi jumlah muat`);
         return { templateId: item.templateId, deliveredQty: delivered, returnedGoodQty: returnedGood, returnedDamagedQty: damaged };
       });
-      await api.post(\`/bazar/package-loads/\${closing.id}/close\`, { items, note: 'Rekonsiliasi distribusi paket' });
+      await api.post(`/bazar/package-loads/${closing.id}/close`, { items, note: 'Rekonsiliasi distribusi paket' });
       toast.success('Distribusi paket selesai dan stok telah direkonsiliasi');
       setClosing(null); await loadAll();
     } catch (e) { toast.error(e?.response ? apiError(e) : e.message); }
@@ -187,7 +187,7 @@ const BazarPaket = () => {
           {packageStock.map((x) => <div key={x.id} className="border border-[#243044] rounded-xl p-3 text-sm">
             <div className="flex justify-between gap-3"><div><b>{x.code}</b> · {x.name}</div><div className="font-mono">{x.availableQty} tersedia</div></div>
             <div className="text-xs text-[#8b93a1] mt-1">Paket jadi {x.assembledQty} · dimuat/reserved {x.reservedQty}</div>
-            <div className="text-xs text-[#8b93a1] mt-1">{(x.components || []).map((c) => \`\${c.name} \${c.qty} \${c.unit}\`).join(' + ')}</div>
+            <div className="text-xs text-[#8b93a1] mt-1">{(x.components || []).map((c) => `${c.name} ${c.qty} ${c.unit}`).join(' + ')}</div>
           </div>)}
         </div>
       </section>
@@ -211,7 +211,7 @@ const BazarPaket = () => {
       </div>
       {selectedTemplateStock && <div className="text-xs text-[#94a3b8] mt-1">Tersedia {selectedTemplateStock.availableQty} paket · reserved {selectedTemplateStock.reservedQty}</div>}
       <div className="flex flex-wrap gap-2 mt-3">{loadItems.map((x) => <span key={x.templateId} className="text-xs px-3 py-2 rounded-lg bg-[#1e293b]">{x.code} · {x.qty} paket</span>)}</div>
-      <textarea className={\`\${inputCls} mt-2\`} placeholder="Catatan pemuatan" value={loadForm.note} onChange={(e) => setLoadForm({ ...loadForm, note: e.target.value })}/>
+      <textarea className={`${inputCls} mt-2`} placeholder="Catatan pemuatan" value={loadForm.note} onChange={(e) => setLoadForm({ ...loadForm, note: e.target.value })}/>
       <button disabled={saving} onClick={createLoad} className="btn-primary mt-3 px-5 py-2.5 rounded-lg font-semibold">Muat Paket ke Kendaraan</button>
     </section>
 
