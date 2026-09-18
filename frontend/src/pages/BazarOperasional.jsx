@@ -115,7 +115,7 @@ const BazarOperasional = () => {
           <div className="text-xs font-semibold">Tambah Komoditi Muatan</div>
           <select className={inputCls} value={draft.productId} onChange={(e) => chooseProduct(e.target.value)}><option value="">Pilih komoditi</option>{availability.map((x) => <option key={x.productId} value={x.productId}>{x.name} · tersedia {x.availableQty} {x.unit}</option>)}</select>
           <select className={inputCls} value={draft.stackCode} onChange={(e) => setDraft({ ...draft, stackCode: e.target.value })}>
-            {stackOptions.length === 0 && <option value=defaultConsignmentStack('Gudang Bazar')>BZR/A01 · belum dipetakan khusus</option>}
+            {stackOptions.length === 0 && <option value={defaultConsignmentStack('Gudang Bazar')}>{defaultConsignmentStack('Gudang Bazar')} · belum dipetakan khusus</option>}
             {stackOptions.map((row) => <option key={row.id || row.stackCode} value={row.stackCode}>{row.stackCode} · {row.arrangementAdjusted ? 'perlu hitung ulang' : 'perkalian aktif'}</option>)}
           </select>
           <div className="flex gap-2"><input type="number" min="0" className={inputCls} placeholder="Jumlah muat" value={draft.qty} onChange={(e) => setDraft({ ...draft, qty: e.target.value })} /><button type="button" onClick={addItem} className="px-4 rounded-lg border border-[#3b82f6] text-[#93c5fd]">Tambah</button></div>
