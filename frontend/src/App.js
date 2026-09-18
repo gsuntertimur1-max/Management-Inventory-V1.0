@@ -68,10 +68,11 @@ function AppRoutes() {
       <Route path="/area-barang-rusak" element={<Protected permission="mainInventory"><AreaBarangRusak /></Protected>} />
       <Route path="/opname-gudang" element={<Protected permission="mainInventory"><OpnameGudang /></Protected>} />
       <Route path="/opname-konsinyasi" element={<Protected permission="consignmentView"><OpnameKonsinyasi /></Protected>} />
-      <Route path="/bazar-operasional" element={<Protected permission="bazarView"><BazarOperasional /></Protected>} />
-      <Route path="/bazar-paket" element={<Protected permission="bazarView"><BazarPaket /></Protected>} />
-      <Route path="/ecom-operasional" element={<Protected permission="ecomView"><EcomOperasional /></Protected>} />
-      <Route path="/marketplace" element={<Protected permission="ecomView"><MarketplaceIntegration /></Protected>} />
+      <Route path="/bazar-operasional" element={<Protected permission="bazarOps"><BazarOperasional /></Protected>} />
+      <Route path="/bazar-paket" element={<Protected permission="bazarOps"><BazarPaket /></Protected>} />
+      <Route path="/ecom-operasional" element={<Protected permission="ecomOps"><EcomOperasional /></Protected>} />
+      <Route path="/pengaturan/marketplace" element={<Protected permission="settings"><MarketplaceIntegration /></Protected>} />
+      <Route path="/marketplace" element={<Protected permission="settings"><Navigate to="/pengaturan/marketplace" replace /></Protected>} />
       <Route path="/catat" element={<Protected permission="operations"><CatatStok /></Protected>} />
       <Route path="/mutasi-tumpukan" element={<Protected permission="operations"><MutasiTumpukan /></Protected>} />
       <Route path="/temuan-kerusakan" element={<Protected permission="operations"><CatatStok panel="damage" /></Protected>} />
