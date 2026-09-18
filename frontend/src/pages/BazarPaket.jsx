@@ -166,7 +166,6 @@ const BazarPaket = () => {
     <div>
       <div className="label-mono mb-2">Operasional Bazar · Paket</div>
       <h1 className="font-display text-3xl sm:text-4xl font-bold">Pembuatan & Distribusi Paket</h1>
-      <p className="text-[#8b93a1] mt-2 text-sm">Stok Bazar → komposisi paket → rakit Paket Jadi → muat kendaraan → disalurkan / retur. Komponen yang sudah dirakit tidak bisa dipakai sebagai stok loose.</p>
     </div>
 
     <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
