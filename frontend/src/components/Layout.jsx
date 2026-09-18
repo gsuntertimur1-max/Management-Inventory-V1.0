@@ -17,6 +17,9 @@ const NAV_GROUPS = [
       { to: '/area-barang-rusak', label: 'Area Barang Rusak', icon: PackageX, permission: 'mainInventory' },
       { to: '/opname-gudang', label: 'Stock Opname GBB', icon: ClipboardCheck, permission: 'mainInventory' },
       { to: '/opname-konsinyasi', label: 'Opname Bazar/E-commerce', icon: ClipboardCheck, permission: 'consignmentView' },
+      { to: '/bazar-operasional', label: 'Perjalanan Bazar', icon: Truck, permission: 'bazarView' },
+      { to: '/bazar-paket', label: 'Paket Bazar', icon: PackagePlus, permission: 'bazarView' },
+      { to: '/ecom-operasional', label: 'Operasional E-commerce', icon: ShoppingCart, permission: 'ecomView' },
     ],
   },
   {
