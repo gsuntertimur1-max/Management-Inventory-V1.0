@@ -154,7 +154,6 @@ const Pengaturan = () => {
       <div>
         <div className="label-mono mb-2">Konfigurasi Sistem</div>
         <h1 className="font-display text-4xl font-bold">Pengaturan</h1>
-        <p className="text-[#8b93a1] mt-2">Kelola profil gudang dan preferensi sistem. Perubahan tersimpan di database.</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
