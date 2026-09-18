@@ -309,8 +309,8 @@ export const DataProvider = ({ children }) => {
     return data;
   };
 
-  const completeOutboundLoad = async (id) => {
-    const { data } = await api.post(`/outbound-loads/${id}/complete`);
+  const completeOutboundLoad = async (id, payload = {}) => {
+    const { data } = await api.post(`/outbound-loads/${id}/complete`, payload);
     await refreshOutboundFlow();
     return data;
   };
