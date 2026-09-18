@@ -158,9 +158,6 @@ const MarketplaceIntegration = () => {
     <div>
       <div className="label-mono mb-2">Pengaturan · Integrasi Marketplace</div>
       <h1 className="font-display text-3xl sm:text-4xl font-bold">Marketplace Integration</h1>
-      <p className="text-[#8b93a1] mt-2 text-sm">
-        Inventory E-commerce tetap menjadi master stock. Kredensial API tidak disimpan di source code; konektor eksternal memakai environment Railway dan Marketplace Gateway.
-      </p>
     </div>
 
     <div className="flex flex-wrap gap-2">{tabs.map(tabButton)}</div>
