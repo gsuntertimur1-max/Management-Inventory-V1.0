@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Printer, MonitorSmartphone, Play, CheckCircle2, RotateCcw, Link2, Search } from 'lucide-react';
 import { useData } from '../context/DataContext';
@@ -16,8 +16,6 @@ const STATUS = {
   'Selesai': { c: '#22c55e', bg: 'rgba(34,197,94,.15)' },
   'Dibatalkan': { c: '#ef4444', bg: 'rgba(239,68,68,.14)' },
 };
-const COST_GROUPS = ['GRUP 1 - GBB 17-20', 'GRUP 2 - MP1/21-24', 'GRUP 3 - RTR'];
-
 const escapeHtml = (value) => String(value ?? '')
   .replaceAll('&', '&amp;')
   .replaceAll('<', '&lt;')
@@ -44,26 +42,19 @@ const printDateWib = (value) => {
 };
 
 const Pengeluaran = () => {
-  const { user, outboundLoads, suratJalan, settings, startOutboundLoad, completeOutboundLoad, createConsignmentReturn, createSalesReturn, settleOutboundDocument, cancelOutboundLoad, editOutboundLoad } = useData();
+  const { user, outboundLoads, suratJalan, settings, startOutboundLoad, completeOutboundLoad, createConsignmentReturn, createSalesReturn, settleOutboundDocument, cancelOutboundLoad, editOutboundLoad, refreshOutboundLoads } = useData();
   const STACKS = stackCodes(settings?.warehouses);
   const navigate = useNavigate();
   const [filter, setFilter] = useState('Semua Status');
   const [query, setQuery] = useState('');
   const [busyId, setBusyId] = useState('');
   const [documentModal, setDocumentModal] = useState(null);
-  const [costDate, setCostDate] = useState(() => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' }));
-  const [costReport, setCostReport] = useState(null);
   const [costBusy, setCostBusy] = useState(false);
   const [paymentModal, setPaymentModal] = useState(null);
   const [cancelModal, setCancelModal] = useState(null);
   const [editModal, setEditModal] = useState(null);
   const isSuperadmin = user?.role === 'Administrator' || user?.role === 'Superadmin';
   const canOperateOutbound = hasPermission(user?.role, 'outbound');
-
-  const fetchCostReport = useCallback(async (date = costDate) => {
-    try { const { data } = await api.get('/loading-costs', { params: { date } }); setCostReport(data); } catch (e) { toast.error(apiError(e)); }
-  }, [costDate]);
-  useEffect(() => { fetchCostReport(); }, [fetchCostReport]);
 
   const list = outboundLoads.filter((load) => {
     const needle = query.trim().toLowerCase();
@@ -221,47 +212,12 @@ const Pengeluaran = () => {
     setTimeout(() => w.print(), 450);
   };
 
-  const printDailyCost = (recipient, crewGroup = '') => {
-    if (!costReport) return;
-    const key = recipient === 'BURUH' ? 'labor' : 'daily';
-    const title = recipient === 'BURUH' ? 'REKAP UPAH BURUH PEMUATAN' : 'REKAP UH GUDANG PEMUATAN';
-    const grouped = {};
-    (costReport.loads || []).forEach((load) => (load.items || []).forEach((item) => {
-      if (crewGroup && (item.crewGroup || 'GRUP 1 - GBB 17-20') !== crewGroup) return;
-      const fee = item.loadingFee || {};
-      const amount = Number(fee[key] || 0);
-      if (!amount) return;
-      const groupKey = item.productId || item.sku || item.name;
-      const row = grouped[groupKey] || { name: item.name || '-', unit: item.unit || 'pcs/pack', measureUnit: item.measureUnit || 'kg', qty: 0, berat: 0, secondary: item.secondary || 'karung', secondaryQty: Number(item.secondaryQty || 0), amount: 0, overtime: 0 };
-      row.qty += Number(item.qty || 0);
-      row.berat += Number(item.berat || 0);
-      row.amount += amount;
-      if (fee.overtime || fee.holiday) row.overtime += amount;
-      grouped[groupKey] = row;
-    }));
-    const rows = Object.values(grouped).sort((a, b) => a.name.localeCompare(b.name)).map((item, index) => {
-      const secondary = item.secondaryQty ? item.qty / item.secondaryQty : 0;
-      return `<tr><td>${index + 1}</td><td><b>${escapeHtml(item.name)}</b><br><small>${escapeHtml(formatNum(item.qty))} ${escapeHtml(item.unit || 'pcs/pack')} · ${escapeHtml(formatNum(item.berat))} ${escapeHtml(item.measureUnit || 'kg')} · ${escapeHtml(formatNum(secondary))} ${escapeHtml(item.secondary)}</small>${item.overtime ? '<br><small>Termasuk lembur/hari libur</small>' : ''}</td><td class="r">Rp ${escapeHtml(formatNum(item.amount))}</td></tr>`;
-    }).join('');
-    const total = Object.values(grouped).reduce((sum, item) => sum + item.amount, 0);
-    const overtimeTotal = Object.values(grouped).reduce((sum, item) => sum + item.overtime, 0);
-    const w = window.open('', '_blank', 'width=420,height=760');
-    if (!w) return toast.error('Izinkan popup untuk mencetak rekap thermal.');
-    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>@page{size:80mm auto;margin:3mm}*{box-sizing:border-box}body{width:74mm;margin:0 auto;color:#000;font:12px/1.35 Arial,sans-serif}.center{text-align:center}.center>b{font-size:14px}.title{font-size:16px;line-height:1.2;font-weight:900;margin:6px 0}.sub{font-size:12px;line-height:1.35;margin-bottom:10px}table{width:100%;border-collapse:collapse;margin-top:8px;font-size:11.5px}th{font-size:11.5px;font-weight:800}th,td{border-bottom:1px dashed #000;padding:7px 2px;text-align:left;vertical-align:top}.r{text-align:right;font-weight:700}.total{font-size:18px;line-height:1.2;font-weight:900;margin:13px 0}.line{border-top:1px solid #000;margin-top:42px;padding-top:5px;text-align:center;font-size:11px;font-weight:700}small{font-size:10px;line-height:1.4}</style></head><body><div class="center"><b>PERUM BULOG</b><div>Gudang Sunter Timur I & II</div><div class="title">${title}</div><div class="sub">${escapeHtml(crewGroup || 'SELURUH GRUP')}<br/>Tanggal: ${escapeHtml(costReport.date)}</div></div><table><thead><tr><th>No</th><th>Komoditi / Kuantum</th><th class="r">Biaya</th></tr></thead><tbody>${rows || '<tr><td colspan="3">Tidak ada biaya</td></tr>'}</tbody></table>${overtimeTotal ? `<div>Lembur/hari libur tercatat: Rp ${escapeHtml(formatNum(overtimeTotal))}</div>` : ''}<div class="total">TOTAL: Rp ${escapeHtml(formatNum(total))}</div><div class="line">Petugas Gudang</div><div class="line">Penerima ${recipient === 'BURUH' ? 'Buruh' : 'UH Gudang'}</div></body></html>`);
-    w.document.close(); w.focus(); setTimeout(() => w.print(), 350);
-  };
-
-  const settleDailyCost = async (recipient) => {
-    if (!window.confirm(`Tandai total ${recipient === 'BURUH' ? 'upah buruh' : 'UH Gudang'} tanggal ${costDate} sebagai lunas?`)) return;
-    setCostBusy(true);
-    try { await api.post(`/loading-costs/${costDate}/settle`, { recipient }); toast.success('Pembayaran harian ditandai lunas'); await fetchCostReport(); } catch (e) { toast.error(apiError(e)); } finally { setCostBusy(false); }
-  };
   const saveLoadingPayment = async () => {
     if (!paymentModal) return;
     const amount = Number(paymentModal.amount || 0);
     if (amount <= 0) return toast.error('Nominal pembayaran harus diisi');
     setCostBusy(true);
-    try { await api.post(`/outbound-loads/${paymentModal.load.id}/loading-fee-payment`, { amount, method: paymentModal.method, payer: paymentModal.payer, note: paymentModal.note }); toast.success('Pembayaran biaya muat dicatat'); setPaymentModal(null); await fetchCostReport(); } catch (e) { toast.error(apiError(e)); } finally { setCostBusy(false); }
+    try { await api.post(`/outbound-loads/${paymentModal.load.id}/loading-fee-payment`, { amount, method: paymentModal.method, payer: paymentModal.payer, note: paymentModal.note }); toast.success('Pembayaran biaya muat dicatat'); setPaymentModal(null); await refreshOutboundLoads(); } catch (e) { toast.error(apiError(e)); } finally { setCostBusy(false); }
   };
 
   const openEdit = (load) => setEditModal({
@@ -326,7 +282,7 @@ const Pengeluaran = () => {
     setBusyId(load.id);
     try {
       const result = await completeOutboundLoad(load.id);
-      toast.success(`Pemuatan selesai · Surat Jalan ${result?.suratJalan?.no || ''} diterbitkan`); await fetchCostReport();
+      toast.success(`Pemuatan selesai · Surat Jalan ${result?.suratJalan?.no || ''} diterbitkan`);
     } catch (e) {
       toast.error(e?.response?.data?.detail || 'Gagal menyelesaikan pemuatan');
     } finally {
@@ -343,14 +299,6 @@ const Pengeluaran = () => {
           <p className="text-[#8b93a1] mt-2">Bon Muat diterbitkan untuk proses loading. Stok dan Surat Jalan baru diproses setelah pemuatan selesai.</p>
         </div>
         <button onClick={() => navigate('/antrian')} className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-[#242f3d] hover:bg-[#141a24]"><MonitorSmartphone size={15} /> Layar Antrian</button>
-      </div>
-
-      <div className="card-surface p-5 border border-[#294263]">
-        <div className="flex flex-wrap items-start justify-between gap-3 mb-4"><div><div className="label-mono text-[10px] text-[#93c5fd]">Penutupan sore hari</div><h2 className="font-display text-xl font-bold mt-1">Biaya Pemuatan Harian</h2><p className="text-xs text-[#8b93a1] mt-1">Hanya pemuatan yang sudah selesai yang masuk rekap. Biaya tidak tampil di Surat Jalan atau Bon Muat.</p></div><div><label className="text-xs text-[#8b93a1] block mb-1">Tanggal</label><input type="date" value={costDate} onChange={(e) => setCostDate(e.target.value)} className="bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm" /></div></div>
-        <div className="space-y-3">
-          {COST_GROUPS.map((group) => { const values = costReport?.groups?.[group] || {}; return <div key={group} className="rounded-xl border border-[#202a38] bg-[#0b0f17] p-4"><div className="font-semibold text-sm text-[#e7ebf2]">{group}</div><div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">{[['BURUH', 'Upah Buruh', 'labor', '#22c55e'], ['HARIAN', 'UH Gudang', 'daily', '#60a5fa'], ['GUDANG', 'Dana Gudang', 'warehouse', '#f59e0b']].map(([recipient, label, key, color]) => <div key={recipient} className="rounded-lg border border-[#202a38] p-3"><div className="text-xs text-[#8b93a1]">{label}</div><div className="font-mono text-lg font-bold mt-1" style={{ color }}>Rp {formatNum(values[key] || 0)}</div>{recipient !== 'GUDANG' && <button onClick={() => printDailyCost(recipient, group)} className="mt-2 text-xs px-2.5 py-1.5 rounded-lg border border-[#294263] text-[#93c5fd]"><Printer size={12} className="inline mr-1" />Cetak 80mm</button>}</div>)}</div></div>; })}
-        </div>
-        <div className="mt-3 text-xs text-[#8b93a1]">Tagihan pengambil: <span className="font-mono text-[#fbbf24]">Rp {formatNum(costReport?.totals?.chargeable || 0)}</span> · diterima: <span className="font-mono text-[#4ade80]">Rp {formatNum(costReport?.totals?.collected || 0)}</span> · belum dibayar: <span className="font-mono text-[#ef4444]">Rp {formatNum(costReport?.totals?.outstanding || 0)}</span></div>
       </div>
 
       {consignmentSummary.length > 0 && <div className="card-surface p-5 border border-[#1f3657]">
