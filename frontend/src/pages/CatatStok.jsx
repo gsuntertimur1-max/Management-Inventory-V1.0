@@ -12,12 +12,28 @@ import { consignmentAreaLabel, consignmentStackCodes } from '../lib/consignmentL
 
 const CONSIGNMENT_DESTINATIONS = ['Gudang E-commerce', 'Gudang Bazar'];
 const DAMAGED_AREA = 'AREA BARANG RUSAK';
-const emptyRow = () => ({ productId: '', inputMode: 'QTY', inputValue: 1, qty: 1, goodQty: 1, damagedQty: 0, exp: '', stackCode: '', documentNo: '', channel: '', fefoExceptionReason: '' });
+const emptyRow = () => ({ productId: '', inputMode: 'QTY', inputValue: 1, qty: 1, goodQty: 1, damagedQty: 0, normalQtyBefore1600: '', exp: '', stackCode: '', documentNo: '', channel: '', fefoExceptionReason: '' });
+
+const wibMinutesNow = () => {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Jakarta',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date());
+  const map = Object.fromEntries(parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+  return Number(map.hour) * 60 + Number(map.minute);
+};
+
+const timeMinutes = (value) => {
+  const match = String(value || '').match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  return Number(match[1]) * 60 + Number(match[2]);
+};
 
 const CatatStok = ({ panel = '' }) => {
   const { products, suppliers, purchaseOrders, settings, stackAllocations, transactions, supplierReturns, addReceipt, createOutboundLoad, recordStockDamage, createSupplierReturn, receiveSupplierReplacement, canInbound, canOutbound } = useData();
   const STACKS = stackCodes(settings?.warehouses);
-  const consignmentZoneOptions = consignmentStackCodes(consignmentDestination);
   const navigate = useNavigate();
   const activePanel = panel;
   const [type, setType] = useState(canOutbound ? 'KELUAR' : 'MASUK');
@@ -35,7 +51,10 @@ const CatatStok = ({ panel = '' }) => {
   const [dispatchPurpose, setDispatchPurpose] = useState('LAINNYA');
   const [consignmentDestination, setConsignmentDestination] = useState('');
   const [consignmentZone, setConsignmentZone] = useState('');
+  const [unloadingStartTime, setUnloadingStartTime] = useState('');
+  const [showUnloadingSplit, setShowUnloadingSplit] = useState(false);
   const [saving, setSaving] = useState(false);
+  const consignmentZoneOptions = consignmentStackCodes(consignmentDestination);
   const [weighingForm, setWeighingForm] = useState(false);
   const [grossWeight, setGrossWeight] = useState('');
   const [grossMin, setGrossMin] = useState('');
@@ -145,6 +164,7 @@ const CatatStok = ({ panel = '' }) => {
         qty: Math.max(Number(item.qty || 0) - Number(item.receivedQty || 0), 0),
         goodQty: Math.max(Number(item.qty || 0) - Number(item.receivedQty || 0), 0),
         damagedQty: 0,
+        normalQtyBefore1600: '',
         exp: '',
         channel: item.channel || products.find((product) => product.id === item.productId)?.channel || 'KOM',
       }))
@@ -256,6 +276,27 @@ const CatatStok = ({ panel = '' }) => {
       toast.error(type === 'MASUK' ? 'Pilih supplier pengirim' : 'Isi penerima barang');
       return;
     }
+    if (type === 'MASUK') {
+      if (!unloadingStartTime) {
+        toast.error('Isi waktu mulai bongkar agar perhitungan lembur akurat');
+        return;
+      }
+      const startMinutes = timeMinutes(unloadingStartTime);
+      const nowMinutes = wibMinutesNow();
+      const splitRequired = startMinutes !== null && startMinutes < 16 * 60 && nowMinutes >= 16 * 60;
+      if (splitRequired) {
+        const invalidSplit = chosen.some((row) => (
+          row.normalQtyBefore1600 === ''
+          || Number(row.normalQtyBefore1600) < 0
+          || Number(row.normalQtyBefore1600) > Number(row.qty)
+        ));
+        if (invalidSplit) {
+          setShowUnloadingSplit(true);
+          toast.error('Pekerjaan melewati 16.00. Isi jumlah yang sudah selesai dibongkar sampai pukul 16.00 untuk setiap komoditas.');
+          return;
+        }
+      }
+    }
     if (type === 'KELUAR' && (documentRefs.some((item) => !item.trim()) || outboundDocumentRefs.length !== documentRefs.length)) {
       toast.error('Lengkapi semua nomor SO/CT/TM/Memo');
       return;
@@ -318,7 +359,16 @@ const CatatStok = ({ panel = '' }) => {
       if (type === 'MASUK') {
         const result = await addReceipt({
           poId,
-          items: chosen.map((row) => ({ productId: row.productId, qty: Number(row.qty), goodQty: Number(row.goodQty || 0), damagedQty: Number(row.damagedQty || 0), exp: row.exp || '', stackCode: row.stackCode || row.product.location || '', channel: row.channel || row.product.channel || 'KOM' })),
+          items: chosen.map((row) => ({
+            productId: row.productId,
+            qty: Number(row.qty),
+            goodQty: Number(row.goodQty || 0),
+            damagedQty: Number(row.damagedQty || 0),
+            normalQtyBefore1600: row.normalQtyBefore1600 === '' ? null : Number(row.normalQtyBefore1600),
+            exp: row.exp || '',
+            stackCode: row.stackCode || row.product.location || '',
+            channel: row.channel || row.product.channel || 'KOM',
+          })),
           party,
           ref,
           polisi,
@@ -328,6 +378,7 @@ const CatatStok = ({ panel = '' }) => {
           grossMin: Number(grossMin || 0),
           grossMax: Number(grossMax || 0),
           unloadingFeeChargeMode: feeChargeMode,
+          unloadingStartTime,
         });
         const poStatus = result?.purchaseOrder?.status;
         toast.success(poStatus ? `Penerimaan tersimpan · Status PO: ${poStatus}` : 'Stok masuk tersimpan');
@@ -422,6 +473,15 @@ const CatatStok = ({ panel = '' }) => {
             </select>
           </div>
 
+          {type === 'MASUK' && <div className="mb-5 rounded-xl border border-[#7c5a1f] bg-[#191307] p-4">
+            <div className="text-sm font-semibold text-[#fde68a]">Waktu Kerja Bongkar</div>
+            <p className="text-xs text-[#c9b783] mt-1">Waktu selesai mengikuti saat tombol <b>Simpan Stok Masuk</b> ditekan. Cutoff lembur pukul 16.00 WIB.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3 items-end">
+              <div><label className="text-xs text-[#fcd34d] block mb-1">Mulai bongkar</label><input type="time" value={unloadingStartTime} onChange={(e) => { setUnloadingStartTime(e.target.value); setShowUnloadingSplit(false); }} className="w-full bg-[#0b0f17] border border-[#7c5a1f] rounded-lg px-3 py-2.5 font-mono" /></div>
+              <div className="rounded-lg border border-[#4b3b1c] px-3 py-2.5 text-xs text-[#d8c995]">{(() => { const start = timeMinutes(unloadingStartTime); const now = wibMinutesNow(); if (start === null) return 'Isi waktu mulai bongkar.'; if (start >= 16 * 60) return 'Lembur penuh: seluruh kuantitas mendapat tambahan lembur.'; if (now >= 16 * 60) return 'Lembur parsial: isi kuantitas selesai sampai 16.00 di bawah.'; return 'Masih jam normal. Jika penyelesaian melewati 16.00, sistem akan meminta split kuantitas.'; })()}</div>
+            </div>
+          </div>
+
           <div className="mb-5 rounded-xl border border-[#294263] bg-[#0d1728] p-4">
             <label className="flex items-center gap-3 cursor-pointer"><input type="checkbox" checked={weighingForm} onChange={(e) => setWeighingForm(e.target.checked)} className="h-4 w-4 accent-[#2563eb]" /><span><span className="text-sm font-semibold">Buat form timbangan</span><span className="block text-xs text-[#8fb8ef] mt-0.5">Opsional. Sistem mengisi 20 baris bruto dari satu nilai awal.</span></span></label>
             {weighingForm && <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3"><div><label className="text-xs text-[#93c5fd] block mb-1">Rata-rata bruto (kg)</label><input type="number" min="0.01" step="0.01" value={grossWeight} onChange={(e) => setGrossWeight(e.target.value)} placeholder="40.22" className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm font-mono" /></div><div><label className="text-xs text-[#93c5fd] block mb-1">Bruto minimum (kg)</label><input type="number" min="0.01" step="0.01" value={grossMin} onChange={(e) => setGrossMin(e.target.value)} placeholder="40.20" className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm font-mono" /></div><div><label className="text-xs text-[#93c5fd] block mb-1">Bruto maksimum (kg)</label><input type="number" min="0.01" step="0.01" value={grossMax} onChange={(e) => setGrossMax(e.target.value)} placeholder="40.32" className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm font-mono" /></div><p className="sm:col-span-3 text-[11px] text-[#8fb8ef]">20 bruto dibuat bervariasi di dalam rentang. Rata-ratanya tetap tepat sesuai nilai target.</p></div>}
@@ -475,6 +535,21 @@ const CatatStok = ({ panel = '' }) => {
               );
             })}
           </div>
+          {type === 'MASUK' && unloadingStartTime && (showUnloadingSplit || (timeMinutes(unloadingStartTime) < 16 * 60 && wibMinutesNow() >= 16 * 60)) && <div className="mb-4 rounded-xl border border-[#b45309] bg-[#1f1408] p-4">
+            <div className="font-semibold text-[#fbbf24]">Kuantitas selesai sampai pukul 16.00</div>
+            <p className="text-xs text-[#d6b77c] mt-1 mb-3">Isi per komoditas. Sistem menghitung <b>lembur = total bongkar − selesai s.d. 16.00</b>.</p>
+            <div className="space-y-2">{rows.map((row, index) => {
+              const product = products.find((item) => item.id === row.productId);
+              const total = receiptQty(row);
+              const normal = row.normalQtyBefore1600 === '' ? null : Number(row.normalQtyBefore1600);
+              const overtime = normal === null ? null : Math.max(total - normal, 0);
+              return <div key={index} className="grid grid-cols-1 sm:grid-cols-[1fr_160px_150px] gap-2 items-center rounded-lg border border-[#5b421b] bg-[#0b0f17] p-3">
+                <div><div className="text-sm font-semibold">{product?.name || 'Pilih produk'}</div><div className="text-[10px] text-[#8b93a1]">Total {formatNum(total)} {product?.unit || 'unit'}</div></div>
+                <div><label className="text-[10px] text-[#fcd34d] block mb-1">Selesai s.d. 16.00</label><input type="number" min="0" max={total} step="any" disabled={!product} value={row.normalQtyBefore1600 ?? ''} onChange={(e) => setRow(index, { normalQtyBefore1600: e.target.value })} className="w-full bg-[#0d121b] border border-[#7c5a1f] rounded-lg px-3 py-2 font-mono disabled:opacity-50" /></div>
+                <div className="text-xs"><span className="text-[#8b93a1]">Lembur:</span> <b className="font-mono text-[#fbbf24]">{overtime === null ? '—' : formatNum(overtime)} {product?.unit || ''}</b></div>
+              </div>;
+            })}</div>
+          </div>}
           {!selectedPO && <button onClick={addRow} className="inline-flex items-center gap-2 text-sm text-[#60a5fa] mb-5"><Plus size={15} /> Tambah Barang</button>}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
