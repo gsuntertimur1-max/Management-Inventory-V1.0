@@ -83,3 +83,41 @@ def test_connection_status_exposes_only_boolean_secret_readiness(monkeypatch):
     assert "super-secret" not in serialized
     assert "token-value" not in serialized
     assert "hook-secret" not in serialized
+
+
+from backend.marketplace_oauth import (
+    _credential_key,
+    _decrypt_token_bundle,
+    _encrypt_token_bundle,
+    _shopee_signature,
+    _tiktok_sign,
+)
+
+
+def test_tokopedia_and_tiktok_share_credential_family():
+    assert _credential_key("Tokopedia & Shop") == "TIKTOK_SHOP"
+    assert _credential_key("TikTok Shop") == "TIKTOK_SHOP"
+    assert _credential_key("Shopee") == "SHOPEE"
+
+
+def test_marketplace_tokens_are_encrypted_at_rest():
+    bundle = {"access_token": "access-secret", "refresh_token": "refresh-secret", "expire_in": 3600}
+    encrypted = _encrypt_token_bundle(bundle)
+    assert "access-secret" not in encrypted
+    assert "refresh-secret" not in encrypted
+    assert _decrypt_token_bundle(encrypted) == bundle
+
+
+def test_shopee_signature_is_stable_and_secret_not_returned():
+    signature = _shopee_signature("12345", "partner-secret", "/api/v2/auth/token/get", 1700000000)
+    assert len(signature) == 64
+    assert signature == _shopee_signature("12345", "partner-secret", "/api/v2/auth/token/get", 1700000000)
+    assert "partner-secret" not in signature
+
+
+def test_tiktok_signature_changes_with_body():
+    query = {"app_key": "abc", "timestamp": 1700000000, "shop_cipher": "cipher"}
+    first = _tiktok_sign("/event/202309/webhooks", query, '{"event_type":"ORDER_STATUS_CHANGE"}', "secret")
+    second = _tiktok_sign("/event/202309/webhooks", query, '{"event_type":"PACKAGE_UPDATE"}', "secret")
+    assert len(first) == 64
+    assert first != second
