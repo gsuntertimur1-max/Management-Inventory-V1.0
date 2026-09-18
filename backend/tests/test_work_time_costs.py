@@ -14,7 +14,7 @@ os.environ.setdefault("MONGO_URL", "mongodb://127.0.0.1:27017")
 os.environ.setdefault("DB_NAME", "management_inventory_test")
 os.environ.setdefault("JWT_SECRET", "test-only-jwt-secret")
 
-from backend.work_time_costs import handling_fee, work_split
+from backend.work_time_costs import handling_fee, holiday_from_settings, work_split
 
 WIB = timezone(timedelta(hours=7))
 
@@ -61,3 +61,13 @@ def test_partial_overtime_fee_applies_base_to_all_and_overtime_only_to_remainder
 def test_split_rejects_normal_quantity_above_total():
     with pytest.raises(HTTPException, match="antara 0 dan 25"):
         work_split(dt(15, 30), dt(16, 40), 25, normal_before_cutoff=26)
+
+
+def test_master_weekday_holiday():
+    weekday = datetime(2026, 12, 25, 15, 0, tzinfo=WIB)
+    assert holiday_from_settings(weekday, [{"date": "2026-12-25", "active": True}]) is True
+
+
+def test_inactive_master_holiday():
+    weekday = datetime(2026, 12, 24, 15, 0, tzinfo=WIB)
+    assert holiday_from_settings(weekday, [{"date": "2026-12-24", "active": False}]) is False

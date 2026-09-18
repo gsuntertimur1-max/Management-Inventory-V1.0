@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Save, Building2, Bell, Palette, Database, Plus, Trash2, Warehouse, Link2, MapPin } from 'lucide-react';
+import { Save, Building2, Bell, Palette, Database, Plus, Trash2, Warehouse, Link2, MapPin, CalendarDays } from 'lucide-react';
 import { DEFAULT_CATEGORIES } from '../mock';
 import { useData } from '../context/DataContext';
 import { apiError } from '../lib/api';
@@ -39,11 +39,13 @@ const Pengaturan = () => {
   const [categories, setCategories] = useState(settings?.categories || DEFAULT_CATEGORIES);
   const [warehouses, setWarehouses] = useState(warehousesFromSettings(settings?.warehouses));
   const [locations, setLocations] = useState(settings?.locations || DEFAULT_LOCATIONS);
+  const [holidays, setHolidays] = useState(settings?.holidays || []);
   const [savingProfile, setSavingProfile] = useState(false);
   const [savingCategories, setSavingCategories] = useState(false);
   const [savingToggle, setSavingToggle] = useState('');
   const [savingWarehouses, setSavingWarehouses] = useState(false);
   const [savingLocations, setSavingLocations] = useState(false);
+  const [savingHolidays, setSavingHolidays] = useState(false);
 
   useEffect(() => {
     setWarehouse(settings?.warehouse || 'Gudang Sunter Timur I & II');
@@ -52,7 +54,8 @@ const Pengaturan = () => {
     setCategories(settings?.categories || DEFAULT_CATEGORIES);
     setWarehouses(warehousesFromSettings(settings?.warehouses));
     setLocations(settings?.locations || DEFAULT_LOCATIONS);
-  }, [settings?.warehouse, settings?.address, settings?.warehouseHead, settings?.categories, settings?.warehouses, settings?.locations]);
+    setHolidays(settings?.holidays || []);
+  }, [settings?.warehouse, settings?.address, settings?.warehouseHead, settings?.categories, settings?.warehouses, settings?.locations, settings?.holidays]);
 
   const payload = (override = {}) => ({
     warehouse: settings?.warehouse || 'Gudang Sunter Timur I & II',
@@ -62,6 +65,7 @@ const Pengaturan = () => {
     lowAlert: settings?.lowAlert ?? true,
     expAlert: settings?.expAlert ?? true,
     autoQueue: settings?.autoQueue ?? true,
+    holidays: settings?.holidays || [],
     warehouses: settings?.warehouses || DEFAULT_WAREHOUSES,
     locations: settings?.locations || DEFAULT_LOCATIONS,
     ...override,
@@ -129,6 +133,23 @@ const Pengaturan = () => {
     finally { setSavingWarehouses(false); }
   };
 
+
+  const addHoliday = () => setHolidays((items) => [...items, { date: '', name: '', active: true }]);
+  const updateHoliday = (index, patch) => setHolidays((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item));
+  const removeHoliday = (index) => setHolidays((items) => items.filter((_, itemIndex) => itemIndex !== index));
+  const saveHolidays = async () => {
+    const cleaned = holidays.map((item) => ({ date: String(item.date || '').trim(), name: String(item.name || '').trim(), active: item.active !== false }));
+    if (cleaned.some((item) => !item.date)) return toast.error('Tanggal hari libur wajib diisi');
+    setSavingHolidays(true);
+    try {
+      await updateSettings(payload({ holidays: cleaned }));
+      toast.success('Master hari libur tersimpan');
+    } catch (e) {
+      toast.error(apiError(e));
+    } finally {
+      setSavingHolidays(false);
+    }
+  };
 
   const updateLocation = (index, patch) => setLocations((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item));
   const addLocation = () => setLocations((items) => [...items, { code: '', name: '', type: 'LAINNYA', loadingGroup: '', unloadingGroup: '', allowInbound: true, allowOutbound: true, loadingCostEnabled: false, unloadingCostEnabled: false, active: true }]);
@@ -274,6 +295,24 @@ const Pengaturan = () => {
             ))}
           </div>
           {isAdmin && <button onClick={saveCategories} disabled={savingCategories} className="btn-primary inline-flex items-center gap-2 text-sm font-semibold px-4 py-2.5 rounded-lg mt-4 disabled:opacity-60"><Save size={15} /> {savingCategories ? 'Menyimpan…' : 'Simpan Kategori'}</button>}
+        </div>
+
+        <div className="card-surface p-6 lg:col-span-2">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+            <div className="flex items-center gap-2"><CalendarDays size={18} className="text-[#f59e0b]" /><h2 className="font-display text-lg font-bold">Master Hari Libur / Tanggal Merah</h2></div>
+            {isAdmin && <button onClick={addHoliday} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#2563eb] text-[#60a5fa]"><Plus size={14} /> Tambah Hari Libur</button>}
+          </div>
+          <div className="space-y-2">
+            {holidays.length === 0 ? <div className="text-sm text-[#8b93a1] py-2">Sabtu dan Minggu dihitung otomatis. Tambahkan tanggal merah hari kerja bila diperlukan.</div> : holidays.map((item, index) => (
+              <div key={`${item.date}-${index}`} className="grid grid-cols-1 sm:grid-cols-[180px_1fr_auto_auto] gap-2 items-center rounded-lg bg-[#0b0f17] border border-[#151d28] p-2.5">
+                <input type="date" disabled={!isAdmin} value={item.date || ''} onChange={(e) => updateHoliday(index, { date: e.target.value })} className="bg-transparent border border-[#242f3d] rounded-lg px-3 py-2 text-sm" />
+                <input disabled={!isAdmin} value={item.name || ''} onChange={(e) => updateHoliday(index, { name: e.target.value })} placeholder="Nama hari libur / tanggal merah" className="bg-transparent border border-[#242f3d] rounded-lg px-3 py-2 text-sm" />
+                <button type="button" disabled={!isAdmin} onClick={() => updateHoliday(index, { active: item.active === false })} className={`text-xs px-2.5 py-1.5 rounded-md border ${item.active === false ? 'border-[#4b5563] text-[#9ca3af]' : 'border-[#22c55e]/50 text-[#4ade80]'}`}>{item.active === false ? 'Nonaktif' : 'Aktif'}</button>
+                {isAdmin && <button type="button" onClick={() => removeHoliday(index)} className="p-2 text-[#f87171]" title="Hapus hari libur"><Trash2 size={15} /></button>}
+              </div>
+            ))}
+          </div>
+          {isAdmin && <button onClick={saveHolidays} disabled={savingHolidays} className="btn-primary inline-flex items-center gap-2 text-sm font-semibold px-4 py-2.5 rounded-lg mt-4 disabled:opacity-60"><Save size={15} /> {savingHolidays ? 'Menyimpan…' : 'Simpan Hari Libur'}</button>}
         </div>
 
         <div className="card-surface p-6">
