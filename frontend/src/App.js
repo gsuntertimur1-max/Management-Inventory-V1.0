@@ -22,6 +22,7 @@ import TumpukanUnified from './pages/TumpukanUnified';
 import MutasiTumpukan from './pages/MutasiTumpukan';
 import OpnameKonsinyasi from './pages/OpnameKonsinyasi';
 import BazarOperasional from './pages/BazarOperasional';
+import BazarPaket from './pages/BazarPaket';
 import EcomOperasional from './pages/EcomOperasional';
 import KoreksiOperasional from './pages/KoreksiOperasional';
 import KontrolIntegritas from './pages/KontrolIntegritas';
@@ -67,6 +68,7 @@ function AppRoutes() {
       <Route path="/opname-gudang" element={<Protected permission="mainInventory"><OpnameGudang /></Protected>} />
       <Route path="/opname-konsinyasi" element={<Protected permission="consignmentView"><OpnameKonsinyasi /></Protected>} />
       <Route path="/bazar-operasional" element={<Protected permission="bazarView"><BazarOperasional /></Protected>} />
+      <Route path="/bazar-paket" element={<Protected permission="bazarView"><BazarPaket /></Protected>} />
       <Route path="/ecom-operasional" element={<Protected permission="ecomView"><EcomOperasional /></Protected>} />
       <Route path="/catat" element={<Protected permission="operations"><CatatStok /></Protected>} />
       <Route path="/mutasi-tumpukan" element={<Protected permission="operations"><MutasiTumpukan /></Protected>} />
