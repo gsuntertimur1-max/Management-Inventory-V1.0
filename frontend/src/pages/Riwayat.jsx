@@ -316,7 +316,6 @@ const Riwayat = () => {
         <div>
           <div className="label-mono mb-2">Audit Trail</div>
           <h1 className="font-display text-4xl font-bold">Riwayat Transaksi Stok</h1>
-          <p className="text-[#8b93a1] mt-2">{filtered.length} transaksi ditampilkan</p>
         </div>
         <div className="flex flex-wrap gap-3">
           <div className="card-surface px-5 py-3"><div className="label-mono text-[9px] mb-1">Masuk Aktif</div><div className="font-mono text-2xl font-bold text-[#22c55e]">+{formatNum(totalIn)}</div></div>
