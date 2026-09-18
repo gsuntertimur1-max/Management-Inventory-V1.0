@@ -429,25 +429,24 @@ def _draw_sj_half(
     right = x0 + half_w - 4.5 * mm
     width = right - left
     center = (left + right) / 2
-    y = page_h - 5 * mm
+    header_y = page_h - 10.2 * mm
 
-    # Logo BULOG berwarna di atas kode Kanwil, mengikuti contoh pengguna.
+    # Logo BULOG berwarna sejajar dengan identitas Kanwil.
     if LOGO.exists():
         c.drawImage(
             str(LOGO),
             left,
-            y - 8.3 * mm,
-            width=28 * mm,
-            height=8.3 * mm,
+            header_y - 2.2 * mm,
+            width=24 * mm,
+            height=7.2 * mm,
             preserveAspectRatio=True,
             mask="auto",
         )
-    y -= 11 * mm
 
     c.setFillColor(colors.black)
-    c.setFont("Helvetica-Bold", 7.8)
-    c.drawString(left, y, "09001 - KANWIL DKI JAKARTA BANTEN")
-    y -= 7 * mm
+    c.setFont("Helvetica-Bold", 7.4)
+    c.drawString(left + 28 * mm, header_y, "09001 - Kanwil DKI Jakarta dan Banten")
+    y = header_y - 8 * mm
 
     c.setFont("Helvetica-Bold", 14)
     c.drawCentredString(center, y, "SURAT JALAN MANUAL")
@@ -603,21 +602,15 @@ def _draw_sj_half(
     c.setFont("Helvetica-Bold", 7.1)
     c.drawCentredString(left_sig, y, str(sj.get("pengambil") or "-"))
     c.drawCentredString(right_sig, y, warehouse_head)
-    y -= 8 * mm
-
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(left, y, "Delivery Tracking")
-    y -= 2.6 * mm
-    c.line(left, y, right, y)
-    y -= 4 * mm
-    c.setFont("Helvetica", 5.1)
-    c.drawString(left, y, "Dicetak oleh")
-    c.drawString(left + 22 * mm, y, ":")
-    c.drawString(left + 25 * mm, y, str(sj.get("operator") or "Petugas Gudang"))
-    y -= 3.8 * mm
-    c.drawString(left, y, "Pada Waktu")
-    c.drawString(left + 22 * mm, y, ":")
-    c.drawString(left + 25 * mm, y, _date(operational_now().isoformat(), True))
+    # Delivery Tracking dijadikan footer tetap agar tidak berubah posisi saat item bertambah.
+    footer_top = 15 * mm
+    c.setLineWidth(0.35)
+    c.line(left, footer_top, right, footer_top)
+    c.setFont("Helvetica-Bold", 8.5)
+    c.drawString(left, 11.2 * mm, "Delivery Tracking")
+    c.setFont("Helvetica", 4.8)
+    c.drawString(left, 7.2 * mm, f"Dicetak oleh: {str(sj.get('operator') or 'Petugas Gudang')}")
+    c.drawString(left, 3.8 * mm, f"Pada Waktu: {_date(operational_now().isoformat(), True)}")
 
 
 @router.get("/export/surat-jalan/{sj_id}.pdf")
@@ -663,4 +656,4 @@ async def export_surat_jalan_multi_pdf(sj_id: str, user: dict = Depends(get_curr
 
     c.save()
     filename = (sj.get("no") or sj.get("ref") or sj_id).replace("/", "-")
-    return _pdf_response(buffer, f"surat_jalan_{filename}_A4_landscape_2copy.pdf")
+    return _pdf_response(buffer, f"surat_jalan_{filename}.pdf")
