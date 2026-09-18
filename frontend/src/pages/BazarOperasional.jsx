@@ -2,10 +2,12 @@ import React, { useEffect, useState } from 'react';
 import { Car, CheckCircle2, History, Plus, RefreshCcw, Trash2 } from 'lucide-react';
 import api, { apiError } from '../lib/api';
 import { toast } from 'sonner';
+import { useData } from '../context/DataContext';
 
 const inputCls = 'w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]';
 
 const BazarOperasional = () => {
+  const { refreshConsignmentFlow } = useData();
   const [availability, setAvailability] = useState([]);
   const [trips, setTrips] = useState([]);
   const [history, setHistory] = useState([]);
@@ -67,7 +69,7 @@ const BazarOperasional = () => {
       });
       await api.post(`/bazar/trips/${closing.id}/close`, { items: resultItems, note: 'Rekonsiliasi penutupan bazar' });
       toast.success('Perjalanan Bazar selesai dan stok direkonsiliasi');
-      setClosing(null); await load();
+      setClosing(null); await Promise.all([load(), refreshConsignmentFlow()]);
     } catch (e) { toast.error(e?.response ? apiError(e) : e.message); }
   };
 
