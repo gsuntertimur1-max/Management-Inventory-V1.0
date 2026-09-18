@@ -41,8 +41,15 @@ def _webhook_secret(provider: str) -> str:
     return os.getenv(f"MARKETPLACE_WEBHOOK_KEY_{provider_key}", "") or os.getenv("MARKETPLACE_WEBHOOK_KEY", "")
 
 
+def _credential_env_key(provider: str) -> str:
+    key = _provider_key(provider)
+    if key in {"TOKOPEDIA_SHOP", "TIKTOK_SHOP"}:
+        return "TIKTOK_SHOP"
+    return key
+
+
 def _provider_env(provider: str, *names: str) -> str:
-    prefix = f"MARKETPLACE_{_provider_key(provider)}"
+    prefix = f"MARKETPLACE_{_credential_env_key(provider)}"
     for name in names:
         value = os.getenv(f"{prefix}_{name}", "").strip()
         if value:
@@ -141,7 +148,26 @@ class NormalizedMarketplaceEvent(BaseModel):
 async def list_marketplace_accounts(user: dict = Depends(get_current_user)):
     _ensure_marketplace_settings(user)
     rows = await db.marketplace_accounts.find({}, {"_id": 0}).sort([("provider", 1), ("shopName", 1)]).to_list(5000)
-    return [{**row, **_connection_env_status(row.get("provider", ""))} for row in rows]
+    token_docs = await db.marketplace_tokens.find({}, {
+        "_id": 0, "accountId": 1, "expiresAt": 1, "hasRefreshToken": 1,
+        "grantedScopes": 1, "updatedAt": 1
+    }).to_list(5000)
+    token_map = {row.get("accountId"): row for row in token_docs}
+    result = []
+    for row in rows:
+        token = token_map.get(row.get("id"), {})
+        env_status = _connection_env_status(row.get("provider", ""))
+        result.append({
+            **row,
+            **env_status,
+            "tokenConfigured": bool(token) or env_status["tokenConfigured"],
+            "storedToken": bool(token),
+            "storedRefreshToken": bool(token.get("hasRefreshToken")),
+            "tokenExpiresAt": token.get("expiresAt", row.get("tokenExpiresAt", "")),
+            "grantedScopes": token.get("grantedScopes", row.get("grantedScopes", [])),
+            "credentialFamily": _credential_env_key(row.get("provider", "")),
+        })
+    return result
 
 
 @router.get("/marketplace/products")
@@ -282,9 +308,15 @@ async def disconnect_marketplace_account(account_id: str, user: dict = Depends(g
     if not account:
         raise HTTPException(status_code=404, detail="Akun marketplace tidak ditemukan")
     now = now_iso()
+    await db.marketplace_tokens.delete_many({"accountId": account_id})
+    await db.marketplace_auth_sessions.delete_many({"accountId": account_id})
     await db.marketplace_accounts.update_one(
         {"id": account_id},
-        {"$set": {"connectionStatus": "NOT_CONNECTED", "disconnectedAt": now, "updatedAt": now, "updatedBy": user.get("name", "")}},
+        {"$set": {
+            "connectionStatus": "NOT_CONNECTED", "disconnectedAt": now, "updatedAt": now,
+            "updatedBy": user.get("name", ""), "tokenStored": False,
+            "refreshTokenStored": False, "tokenExpiresAt": "",
+        }},
     )
     await _log(level="INFO", event_type="ACCOUNT_DISCONNECTED", provider=account.get("provider", ""), account_id=account_id,
                reference=account.get("shopName", ""), message="Koneksi marketplace dinonaktifkan di Inventory. Secret Railway tidak dihapus.")
