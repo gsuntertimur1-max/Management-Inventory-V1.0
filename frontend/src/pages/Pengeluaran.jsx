@@ -41,6 +41,28 @@ const printDateWib = (value) => {
   }
 };
 
+const wibParts = (value = new Date()) => {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jakarta',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(new Date(value));
+  const map = Object.fromEntries(parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+  return {
+    date: `${map.year}-${map.month}-${map.day}`,
+    minutes: Number(map.hour) * 60 + Number(map.minute),
+  };
+};
+
+const loadingCutoffStatus = (startedAt) => {
+  if (!startedAt) return 'NORMAL';
+  const started = wibParts(startedAt);
+  const current = wibParts();
+  if (started.minutes >= 16 * 60) return 'LEMBUR_PENUH';
+  if (started.date !== current.date || current.minutes >= 16 * 60) return 'LEMBUR_PARSIAL';
+  return 'NORMAL';
+};
+
 const Pengeluaran = () => {
   const { user, outboundLoads, suratJalan, settings, startOutboundLoad, completeOutboundLoad, createConsignmentReturn, createSalesReturn, settleOutboundDocument, cancelOutboundLoad, editOutboundLoad, refreshOutboundLoads } = useData();
   const STACKS = stackCodes(settings?.warehouses);
@@ -53,6 +75,7 @@ const Pengeluaran = () => {
   const [paymentModal, setPaymentModal] = useState(null);
   const [cancelModal, setCancelModal] = useState(null);
   const [editModal, setEditModal] = useState(null);
+  const [loadingCompletionModal, setLoadingCompletionModal] = useState(null);
   const isSuperadmin = user?.role === 'Administrator' || user?.role === 'Superadmin';
   const canOperateOutbound = hasPermission(user?.role, 'outbound');
 
@@ -276,18 +299,73 @@ const Pengeluaran = () => {
     }
   };
 
-  const finishLoading = async (load) => {
+  const finalizeLoading = async (load, payload = {}) => {
     if (busyId) return;
-    if (!window.confirm(`Selesaikan pemuatan ${load.antrian}? Setelah ini stok akan dikurangi dan Surat Jalan diterbitkan.`)) return;
     setBusyId(load.id);
     try {
-      const result = await completeOutboundLoad(load.id);
+      const result = await completeOutboundLoad(load.id, payload);
       toast.success(`Pemuatan selesai · Surat Jalan ${result?.suratJalan?.no || ''} diterbitkan`);
+      setLoadingCompletionModal(null);
     } catch (e) {
-      toast.error(e?.response?.data?.detail || 'Gagal menyelesaikan pemuatan');
+      const detail = e?.response?.data?.detail || 'Gagal menyelesaikan pemuatan';
+      toast.error(detail);
+      if (String(detail).includes('pukul 16.00') && !loadingCompletionModal) {
+        setLoadingCompletionModal({
+          load,
+          items: (load.items || []).map((item, index) => ({
+            index,
+            name: item.name,
+            unit: item.unit,
+            qty: Number(item.qty || 0),
+            normalQtyBefore1600: '',
+          })),
+        });
+      }
     } finally {
       setBusyId('');
     }
+  };
+
+  const finishLoading = async (load) => {
+    if (busyId) return;
+    const cutoffStatus = loadingCutoffStatus(load.started_at);
+    if (cutoffStatus === 'LEMBUR_PARSIAL') {
+      setLoadingCompletionModal({
+        load,
+        items: (load.items || []).map((item, index) => ({
+          index,
+          name: item.name,
+          unit: item.unit,
+          qty: Number(item.qty || 0),
+          normalQtyBefore1600: '',
+        })),
+      });
+      return;
+    }
+    const label = cutoffStatus === 'LEMBUR_PENUH'
+      ? 'Pemuatan dimulai setelah 16.00 sehingga seluruh kuantitas dihitung lembur. Lanjutkan?'
+      : `Selesaikan pemuatan ${load.antrian}? Setelah ini stok akan dikurangi dan Surat Jalan diterbitkan.`;
+    if (!window.confirm(label)) return;
+    await finalizeLoading(load);
+  };
+
+  const saveLoadingCompletion = async () => {
+    if (!loadingCompletionModal || busyId) return;
+    const invalid = loadingCompletionModal.items.some((item) => (
+      item.normalQtyBefore1600 === ''
+      || Number(item.normalQtyBefore1600) < 0
+      || Number(item.normalQtyBefore1600) > Number(item.qty)
+    ));
+    if (invalid) {
+      toast.error('Isi kuantitas selesai sampai 16.00 untuk setiap komoditas, antara 0 dan total pemuatan.');
+      return;
+    }
+    await finalizeLoading(loadingCompletionModal.load, {
+      items: loadingCompletionModal.items.map((item) => ({
+        index: item.index,
+        normalQtyBefore1600: Number(item.normalQtyBefore1600),
+      })),
+    });
   };
 
   return (
@@ -344,6 +422,29 @@ const Pengeluaran = () => {
           </table>
         </div>
       </div>
+      <Dialog open={Boolean(loadingCompletionModal)} onOpenChange={(open) => { if (!open && !busyId) setLoadingCompletionModal(null); }}>
+        <DialogContent className="max-w-xl border-[#242f3d] bg-[#0d121b] text-[#e7ebf2]">
+          <DialogHeader>
+            <DialogTitle>Selesaikan Pemuatan · Lembur Parsial</DialogTitle>
+            <DialogDescription className="text-[#8b93a1]">
+              Mulai {printDateWib(loadingCompletionModal?.load?.started_at)} · batas lembur 16.00 WIB. Isi jumlah yang sudah selesai dimuat sampai pukul 16.00; sisanya otomatis menjadi kuantitas lembur.
+            </DialogDescription>
+          </DialogHeader>
+          {loadingCompletionModal && <div className="space-y-3">
+            {loadingCompletionModal.items.map((item, index) => {
+              const normal = Number(item.normalQtyBefore1600 || 0);
+              const overtime = item.normalQtyBefore1600 === '' ? null : Math.max(Number(item.qty || 0) - normal, 0);
+              return <div key={item.index} className="rounded-lg border border-[#263244] bg-[#0b0f17] p-3">
+                <div className="flex justify-between gap-3"><div><div className="font-semibold text-sm">{item.name}</div><div className="text-xs text-[#8b93a1]">Total {formatNum(item.qty)} {item.unit}</div></div>{overtime !== null && <div className="text-right text-xs"><div className="text-[#8b93a1]">Lembur</div><div className="font-mono font-bold text-[#fbbf24]">{formatNum(overtime)} {item.unit}</div></div>}</div>
+                <label className="text-xs text-[#93c5fd] block mt-3 mb-1">Sudah selesai sampai 16.00</label>
+                <input type="number" min="0" max={item.qty} step="any" value={item.normalQtyBefore1600} onChange={(e) => setLoadingCompletionModal((prev) => ({ ...prev, items: prev.items.map((row, rowIndex) => rowIndex === index ? { ...row, normalQtyBefore1600: e.target.value } : row) }))} className="w-full bg-[#0d121b] border border-[#294263] rounded-lg px-3 py-2.5 font-mono" placeholder={`0 – ${item.qty}`} />
+              </div>;
+            })}
+            <div className="rounded-lg border border-[#78350f] bg-[#1c1408] p-3 text-xs text-[#fcd34d]">Biaya dasar tetap dihitung untuk seluruh kuantitas. Tambahan lembur hanya dikenakan pada sisa setelah kuantitas di atas.</div>
+          </div>}
+          <DialogFooter><button disabled={Boolean(busyId)} onClick={() => setLoadingCompletionModal(null)} className="px-4 py-2 border border-[#242f3d] rounded-lg">Batal</button><button disabled={Boolean(busyId)} onClick={saveLoadingCompletion} className="btn-primary px-4 py-2 rounded-lg disabled:opacity-50">{busyId ? 'Menyimpan...' : 'Simpan & Selesaikan Muat'}</button></DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={Boolean(editModal)} onOpenChange={(open) => { if (!open && !busyId) setEditModal(null); }}><DialogContent className="max-w-2xl border-[#242f3d] bg-[#0d121b] text-[#e7ebf2]"><DialogHeader><DialogTitle>Koreksi Pengeluaran</DialogTitle><DialogDescription className="text-[#8b93a1]">Khusus Superadmin · hanya tersedia sebelum pemuatan dimulai. Riwayat koreksi tetap disimpan.</DialogDescription></DialogHeader>{editModal && <div className="space-y-4"><div className="grid grid-cols-1 sm:grid-cols-2 gap-3"><div><label className="text-sm block mb-1">Nomor Polisi</label><input value={editModal.polisi} onChange={(e) => setEditModal({ ...editModal, polisi: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5" /></div><div><label className="text-sm block mb-1">Nama Sopir / Pengambil</label><input value={editModal.pengambil} onChange={(e) => setEditModal({ ...editModal, pengambil: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5" /></div></div><div><label className="text-sm block mb-1">Nomor Dokumen</label>{editModal.documents.map((doc, index) => <input key={index} value={doc} onChange={(e) => { const documents = [...editModal.documents]; documents[index] = e.target.value; setEditModal({ ...editModal, documents }); }} className="w-full mb-2 bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 font-mono text-sm" />)}</div><div className="space-y-2">{editModal.items.map((item, index) => <div key={index} className="grid grid-cols-1 sm:grid-cols-[1fr_110px_190px] gap-2 rounded-lg border border-[#202a38] bg-[#0b0f17] p-3"><div><div className="text-sm font-semibold">{item.name}</div><div className="text-xs text-[#8b93a1]">{item.unit}</div></div><div><label className="text-xs text-[#8b93a1]">Kuantum</label><input type="number" min="0.01" step="any" value={item.qty} onChange={(e) => updateEditItem(index, { qty: e.target.value })} className="w-full mt-1 bg-[#0d121b] border border-[#242f3d] rounded-lg px-3 py-2" /></div><div><label className="text-xs text-[#8b93a1]">Dokumen sumber</label><select value={item.documentNo || editModal.documents[0] || ''} onChange={(e) => updateEditItem(index, { documentNo: e.target.value })} className="w-full mt-1 bg-[#0d121b] border border-[#242f3d] rounded-lg px-2 py-2 text-xs">{editModal.documents.map((doc) => <option key={doc} value={doc}>{doc || 'Isi dokumen...'}</option>)}</select></div></div>)}</div></div>}<DialogFooter><button disabled={Boolean(busyId)} onClick={() => setEditModal(null)} className="px-4 py-2 border border-[#242f3d] rounded-lg">Batal</button><button disabled={Boolean(busyId)} onClick={saveEdit} className="btn-primary px-4 py-2 rounded-lg disabled:opacity-50">{busyId ? 'Menyimpan...' : 'Simpan Koreksi'}</button></DialogFooter></DialogContent></Dialog>
       <Dialog open={Boolean(cancelModal)} onOpenChange={(open) => { if (!open && !busyId) setCancelModal(null); }}><DialogContent className="max-w-md border-[#242f3d] bg-[#0d121b] text-[#e7ebf2]"><DialogHeader><DialogTitle>Batalkan Dokumen Pengeluaran</DialogTitle><DialogDescription className="text-[#8b93a1]">Pembatalan tidak menghapus riwayat. Dokumen yang selesai harus dikoreksi melalui retur atau dokumen balik.</DialogDescription></DialogHeader>{cancelModal && <div className="space-y-3"><div><label className="text-sm block mb-1">Dokumen yang dibatalkan</label><select value={cancelModal.documentNo} onChange={(e) => setCancelModal({ ...cancelModal, documentNo: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5"><option value="">Semua dokumen pada antrian</option>{(cancelModal.load.documents || [cancelModal.load.ref]).map((doc) => <option key={doc} value={doc}>{doc}</option>)}</select><p className="text-xs text-[#8b93a1] mt-1">Pilih satu dokumen untuk pembatalan sebagian pada pemuatan multi-SO.</p></div><div><label className="text-sm block mb-1">Alasan pembatalan</label><textarea rows="3" value={cancelModal.reason} onChange={(e) => setCancelModal({ ...cancelModal, reason: e.target.value })} placeholder="Contoh: permintaan dibatalkan oleh penerima" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5" /></div></div>}<DialogFooter><button disabled={Boolean(busyId)} onClick={() => setCancelModal(null)} className="px-4 py-2 border border-[#242f3d] rounded-lg">Kembali</button><button disabled={Boolean(busyId)} onClick={saveCancellation} className="px-4 py-2 rounded-lg bg-[#dc2626] text-white disabled:opacity-50">{busyId ? 'Membatalkan...' : 'Simpan Pembatalan'}</button></DialogFooter></DialogContent></Dialog>
       <Dialog open={Boolean(paymentModal)} onOpenChange={(open) => { if (!open && !costBusy) setPaymentModal(null); }}><DialogContent className="max-w-md border-[#242f3d] bg-[#0d121b] text-[#e7ebf2]"><DialogHeader><DialogTitle>Pembayaran Biaya Pemuatan</DialogTitle><DialogDescription className="text-[#8b93a1]">Dokumen {paymentModal?.load?.ref} · biaya ini hanya catatan internal.</DialogDescription></DialogHeader>{paymentModal && <div className="space-y-3"><div><label className="text-sm block mb-1">Nominal diterima</label><input type="number" min="1" value={paymentModal.amount} onChange={(e) => setPaymentModal({ ...paymentModal, amount: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 font-mono" /></div><div><label className="text-sm block mb-1">Metode</label><select value={paymentModal.method} onChange={(e) => setPaymentModal({ ...paymentModal, method: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5"><option value="TUNAI">Tunai</option><option value="TRANSFER">Transfer</option><option value="PIUTANG">Piutang / Disetujui</option></select></div><div><label className="text-sm block mb-1">Nama pembayar</label><input value={paymentModal.payer} onChange={(e) => setPaymentModal({ ...paymentModal, payer: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5" /></div><textarea rows="2" value={paymentModal.note} onChange={(e) => setPaymentModal({ ...paymentModal, note: e.target.value })} placeholder="Catatan (opsional)" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5" /></div>}<DialogFooter><button onClick={() => setPaymentModal(null)} className="px-4 py-2 border border-[#242f3d] rounded-lg">Batal</button><button disabled={costBusy} onClick={saveLoadingPayment} className="btn-primary px-4 py-2 rounded-lg">{costBusy ? 'Menyimpan...' : 'Simpan Pembayaran'}</button></DialogFooter></DialogContent></Dialog>
