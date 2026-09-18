@@ -224,7 +224,7 @@ export const DataProvider = ({ children }) => {
   useEffect(() => {
     if (!user || !hasPermission(user?.role, 'consignmentView')) return undefined;
 
-    const CONSignment_AUTO_SYNC_INTERVAL = 15000;
+    const CONSIGNMENT_AUTO_SYNC_INTERVAL = 15000;
     let timerId = null;
 
     const syncIfVisible = () => {
@@ -236,7 +236,7 @@ export const DataProvider = ({ children }) => {
 
     const startTimer = () => {
       if (timerId) window.clearInterval(timerId);
-      timerId = window.setInterval(syncIfVisible, CONSignment_AUTO_SYNC_INTERVAL);
+      timerId = window.setInterval(syncIfVisible, CONSIGNMENT_AUTO_SYNC_INTERVAL);
     };
 
     const handleVisibility = () => {
