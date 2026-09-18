@@ -517,8 +517,8 @@ async def get_loading_costs(date: str = "", user: dict = Depends(require_cost_vi
             for key in ("labor", "daily", "warehouse", "total", "chargeable"):
                 bucket[key] += group_cost[key]
         rows.append({"id": load["id"], "antrian": load.get("antrian", ""), "ref": load.get("ref", ""), "documents": load.get("documents", []), "party": load.get("party", ""), "pengambil": load.get("pengambil", ""), "items": load.get("items", []), "cost": cost, "crewGroups": dict(item_groups), "collected": collected, "paymentStatus": load.get("loading_fee_payment_status", "TIDAK_DITAGIH"), "payments": load.get("loading_fee_payments", [])})
-    settlements = await db.loading_cost_settlements.find({"date": target_date}, {"_id": 0}).to_list(20)
-    settled = {row.get("recipient"): row for row in settlements}
+    settlements = await db.loading_cost_settlements.find({"date": target_date}, {"_id": 0}).to_list(100)
+    settled = {f"{row.get('recipient', '')}:{row.get('group', '')}": row for row in settlements}
     return {"date": target_date, "loads": rows, "totals": {**totals, "outstanding": max(totals["chargeable"] - totals["collected"], 0)}, "groups": {name: {**values, "outstanding": max(values["chargeable"] - values["collected"], 0)} for name, values in groups.items()}, "settlements": settled}
 
 
