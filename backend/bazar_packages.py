@@ -8,6 +8,8 @@ from pydantic import BaseModel, Field
 
 from backend.server import db, get_current_user, new_id, next_sequence, normalize_channel, now_iso, operational_now
 from backend.role_four_config import has_role_permission, role_destination
+from backend.consignment_documents import next_bazar_document_numbers
+import backend.consignment as consignment_module
 import backend.consignment_operations as operations
 
 router = APIRouter(prefix="/api")
@@ -300,21 +302,74 @@ async def create_package_load(body: PackageLoadCreate, user: dict = Depends(get_
         if qty > available + EPS:
             raise HTTPException(status_code=409, detail=f"Paket {template.get('name', '')} tersedia hanya {available:g}")
         items.append({
-            "templateId": template_id, "packageCode": template.get("code", ""), "packageName": template.get("name", ""),
-            "components": template.get("components", []), "loadedQty": qty,
+            "templateId": template_id,
+            "packageCode": template.get("code", ""),
+            "packageName": template.get("name", ""),
+            "components": template.get("components", []),
+            "loadedQty": qty,
         })
+
     today = operational_now().strftime("%Y%m%d")
     seq = await next_sequence(f"bazar-package-load:{today}")
     load_no = f"PKL-{today}-{seq:03d}"
+    event_date = body.date or operational_now().strftime("%Y-%m-%d")
+    document_numbers = await next_bazar_document_numbers("PAKET", event_date)
+
+    flattened = defaultdict(float)
+    for loaded in items:
+        for component in loaded.get("components", []):
+            flattened[component["productId"]] += _n(loaded.get("loadedQty")) * _n(component.get("qty"))
+    document_items = []
+    for product_id, qty in flattened.items():
+        identity = await operations._identity(BAZAR, product_id)
+        document_items.append({
+            "productId": product_id,
+            "sku": identity.get("sku", ""),
+            "name": identity.get("name", ""),
+            "unit": identity.get("unit", ""),
+            "channel": normalize_channel(identity.get("channel"), "KOM"),
+            "weight": _n(identity.get("weight")),
+            "measureUnit": identity.get("measureUnit", "kg") or "kg",
+            "secondary": identity.get("secondary", ""),
+            "secondaryQty": _n(identity.get("secondaryQty")),
+            "stackCode": "BZR/PKT",
+            "qty": qty,
+            "documentNo": load_no,
+        })
+
     now = now_iso()
     doc = {
-        "id": new_id(), "loadNo": load_no, "date": body.date or operational_now().strftime("%Y-%m-%d"),
-        "destination": body.destination.strip(), "vehicleNo": body.vehicleNo.strip().upper(), "driver": body.driver.strip(),
-        "items": items, "status": "BERJALAN", "note": body.note.strip(), "createdAt": now, "createdBy": user.get("name", ""),
+        "id": new_id(),
+        "loadNo": load_no,
+        "date": event_date,
+        "destination": body.destination.strip(),
+        "vehicleNo": body.vehicleNo.strip().upper(),
+        "driver": body.driver.strip(),
+        "items": items,
+        "documentItems": document_items,
+        "status": "BERJALAN",
+        "bonNo": document_numbers["bonNo"],
+        "suratJalanNo": document_numbers["suratJalanNo"],
+        "note": body.note.strip(),
+        "createdAt": now,
+        "createdBy": user.get("name", ""),
     }
     await db.bazar_package_loads.insert_one(dict(doc))
-    await operations._history(BAZAR, "PAKET_DIMUAT", doc["id"], load_no, user.get("name", ""), items, body.note,
-                              {"destinationName": doc["destination"], "vehicleNo": doc["vehicleNo"]})
+    await operations._history(
+        BAZAR,
+        "PAKET_DIMUAT",
+        doc["id"],
+        load_no,
+        user.get("name", ""),
+        items,
+        body.note,
+        {
+            "destinationName": doc["destination"],
+            "vehicleNo": doc["vehicleNo"],
+            "bonNo": doc["bonNo"],
+            "suratJalanNo": doc["suratJalanNo"],
+        },
+    )
     return doc
 
 
@@ -364,6 +419,12 @@ async def close_package_load(load_id: str, body: PackageLoadClose, user: dict = 
                     "operator": user.get("name", ""),
                 }
                 await db.consignment_movements.update_one({"eventKey": event_key}, {"$setOnInsert": movement}, upsert=True)
+                await consignment_module.decrease_consignment_layouts(
+                    BAZAR,
+                    component["productId"],
+                    qty_component,
+                    user.get("name", ""),
+                )
         final_items.append({
             **loaded, "deliveredQty": delivered, "returnedGoodQty": returned_good,
             "returnedDamagedQty": returned_damaged, "consumedBatches": consumed_batches,

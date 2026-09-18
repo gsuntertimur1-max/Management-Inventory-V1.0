@@ -14,7 +14,7 @@ from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.platypus import LongTable, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from backend.server import JAKARTA_TZ, db, get_current_user, operational_now
-from backend.consignment import DESTINATIONS, consignment_stock
+from backend.consignment import DESTINATIONS, consignment_stock, _ensure_destination_access, normalize_consignment_stack_code, _layout_primary_qty
 
 router = APIRouter(prefix="/api")
 LOGO = Path(__file__).resolve().parents[1] / "backend" / "assets" / "logo-bulog-gst.png"
@@ -84,11 +84,14 @@ async def export_consignment_stock_card_pdf(destination: str, user: dict = Depen
     location = destination.strip()
     if location not in DESTINATIONS:
         raise HTTPException(status_code=400, detail="Pilih Gudang Bazar atau Gudang E-commerce")
+    _ensure_destination_access(user, location, write=False)
     items = await consignment_stock(location)
     if not items:
         raise HTTPException(status_code=404, detail="Belum ada stok konsinyasi aktif pada lokasi ini")
-    layouts = await db.consignment_layouts.find({"destination": location}, {"_id": 0}).to_list(5000)
-    by_product = {item.get("productId"): item for item in layouts}
+    layouts = await db.consignment_layouts.find({"destination": location}, {"_id": 0}).sort([("stackCode", 1), ("productName", 1)]).to_list(5000)
+    by_product = {}
+    for layout in layouts:
+        by_product.setdefault(layout.get("productId"), []).append(layout)
     settings = await db.settings.find_one({"_id": "app"}, {"_id": 0}) or {}
     warehouse_head = settings.get("warehouseHead") or "Irsa Maulian Nugraha"
     buffer = io.BytesIO()
@@ -102,10 +105,14 @@ async def export_consignment_stock_card_pdf(destination: str, user: dict = Depen
     headers = ["NO", "SKU", "NAMA KOMODITI", "PERKALIAN", "KEMASAN SEKUNDER", "KUANTUM PACK/PCS", "KUANTUM FISIK", "DOKUMEN TERKAIT", "KETERANGAN"]
     data = [[Paragraph(header, center) for header in headers]]
     for index, item in enumerate(items, 1):
-        layout = by_product.get(item.get("productId"), {})
-        calculated = (sum(float(x.get("hamparan", 0)) * float(x.get("kaki", 0)) * float(x.get("height", 0)) for x in layout.get("arrangements", [])) + float(layout.get("extraSecondary", 0) or 0)) * float(item.get("secondaryQty", 0) or 0) + float(layout.get("extraPrimary", 0) or 0)
+        product_layouts = by_product.get(item.get("productId"), [])
+        calculated = sum(_layout_primary_qty(layout) for layout in product_layouts)
         unmatched = max(float(item.get("qty", 0)) - calculated, 0)
-        arrangement = _consignment_arrangement(layout, item)
+        arrangement_parts = []
+        for layout in product_layouts:
+            arrangement_text = "Perlu dihitung ulang" if layout.get("arrangementAdjusted") else _consignment_arrangement(layout, item)
+            arrangement_parts.append(f"{layout.get('stackCode', '-')}: {arrangement_text}")
+        arrangement = "<br/>".join(arrangement_parts) if arrangement_parts else "Belum dicatat"
         if unmatched > 0:
             arrangement += f"<br/><font color='#9a6700'>Belum terhitung: {_num(unmatched)} {item.get('unit', '')}</font>"
         row = [index, item.get("sku", ""), item.get("name", ""), arrangement, item.get("secondary", "-") or "-", f"{_num(item.get('qty', 0))} {item.get('unit', '')}", f"{_num(item.get('totalWeight', 0))} {_measure_unit(item)}" if item.get("weight") else "-", ", ".join(item.get("documents", [])) or "-", "ND atau Memo"]
@@ -123,6 +130,124 @@ async def export_consignment_stock_card_pdf(destination: str, user: dict = Depen
     story += [LongTable(history_data, colWidths=[34 * mm, 66 * mm, 86 * mm, 45 * mm, 38 * mm], repeatRows=1, style=[("BACKGROUND", (0, 0), (-1, 0), SOFT_HEADER), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 7), ("GRID", (0, 0), (-1, -1), .35, colors.grey), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]), Spacer(1, 10 * mm), Table([["", Paragraph(f"Jakarta, {_date(operational_now().isoformat())}<br/><br/>Kepala Gudang Sunter Timur I &amp; II<br/><br/><br/><b>{warehouse_head}</b>", ParagraphStyle("cons-sign", parent=small, alignment=TA_CENTER, fontSize=8, leading=14))]], colWidths=[190 * mm, 65 * mm])]
     doc.build(story, onFirstPage=_stack_page, onLaterPages=_stack_page)
     return _pdf_response(buffer, f"kartu_stok_konsinyasi_{short_location.lower()}.pdf")
+
+
+@router.get("/export/consignment-stack-card.pdf")
+async def export_consignment_stack_card_pdf(stackCode: str, user: dict = Depends(get_current_user)):
+    raw = str(stackCode or "").strip().upper()
+    if raw.startswith("BZR/"):
+        destination = "Gudang Bazar"
+    elif raw.startswith("ECOM/"):
+        destination = "Gudang E-commerce"
+    else:
+        raise HTTPException(status_code=400, detail="Kode tumpukan harus BZR/... atau ECOM/...")
+    code = normalize_consignment_stack_code(destination, raw)
+    _ensure_destination_access(user, destination, write=False)
+
+    layouts = await db.consignment_layouts.find(
+        {"destination": destination, "stackCode": code},
+        {"_id": 0},
+    ).sort("productName", 1).to_list(1000)
+    if not layouts:
+        raise HTTPException(status_code=404, detail="Tumpukan belum memiliki perkalian komoditi")
+
+    history = await db.consignment_layout_history.find(
+        {"destination": destination, "stackCode": code},
+        {"_id": 0},
+    ).sort("time", -1).to_list(5000)
+    settings = await db.settings.find_one({"_id": "app"}, {"_id": 0}) or {}
+    warehouse_head = settings.get("warehouseHead") or "Irsa Maulian Nugraha"
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(A4),
+        leftMargin=12 * mm,
+        rightMargin=12 * mm,
+        topMargin=24 * mm,
+        bottomMargin=11 * mm,
+    )
+    styles = getSampleStyleSheet()
+    title = ParagraphStyle("cons-stack-title", parent=styles["Title"], alignment=TA_CENTER, fontName="Helvetica-Bold", fontSize=15, leading=18, spaceAfter=2)
+    small = ParagraphStyle("cons-stack-small", parent=styles["BodyText"], fontName="Helvetica", fontSize=6.5, leading=8)
+    center = ParagraphStyle("cons-stack-center", parent=small, alignment=TA_CENTER)
+    location_label = "BAZAR" if destination == "Gudang Bazar" else "E-COMMERCE"
+
+    story = [
+        Paragraph("K A R T U &nbsp; T U M P U K A N", title),
+        Paragraph(f"{location_label} - GBB Sunter Timur I &amp; II", ParagraphStyle("cons-stack-sub", parent=title, fontSize=9, leading=12, spaceAfter=12)),
+        Spacer(1, 5 * mm),
+    ]
+    headers = ["NO", "TANGGAL", "GUDANG", "LOKASI", "SKU", "NAMA PRODUK", "KUANTUM", "KOLLY", "SPRAYING", "FUMIGASI", "KETERANGAN", "PERHITUNGAN TUMPUKAN"]
+    data = [[Paragraph(value, center) for value in headers]]
+    for index, layout in enumerate(layouts, 1):
+        arrangement = "Perlu dihitung ulang setelah pengeluaran" if layout.get("arrangementAdjusted") else _arrangement(layout)
+        quantum = float(layout.get("primaryQty", 0) or 0) * float(layout.get("weight", 0) or 0)
+        row = [
+            index,
+            _date(layout.get("createdAt")),
+            location_label,
+            code,
+            layout.get("sku", ""),
+            layout.get("productName", ""),
+            f"{_num(quantum)} {layout.get('measureUnit', 'kg')}",
+            _num(layout.get("secondaryCount", 0)),
+            "-",
+            "-",
+            layout.get("note", ""),
+            arrangement,
+        ]
+        data.append([Paragraph(str(value), center if col in {0, 1, 2, 3, 4, 6, 7, 8, 9} else small) for col, value in enumerate(row)])
+    widths = [8, 18, 15, 20, 22, 50, 18, 16, 22, 22, 31, 52]
+    table = LongTable(data, colWidths=[value * mm for value in widths], repeatRows=1)
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), SOFT_HEADER),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("GRID", (0, 0), (-1, -1), .35, colors.HexColor("#777777")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    story += [
+        table,
+        Spacer(1, 10 * mm),
+        Table([["", Paragraph(
+            f"Jakarta, {_date(operational_now().isoformat())}<br/><br/>Kepala Gudang Sunter Timur I &amp; II<br/><br/><br/><b>{warehouse_head}</b>",
+            ParagraphStyle("cons-stack-sign", parent=small, alignment=TA_CENTER, fontSize=8, leading=14),
+        )]], colWidths=[190 * mm, 65 * mm]),
+        PageBreak(),
+        Paragraph("RIWAYAT PERUBAHAN SUSUNAN", title),
+    ]
+    hdata = [["WAKTU", "AKSI", "PRODUK", "PERHITUNGAN", "JUMLAH PRIMER", "PETUGAS"]]
+    for entry in history:
+        snap = entry.get("after") or entry.get("before") or {}
+        calculation = "Perlu dihitung ulang" if snap.get("arrangementAdjusted") else _arrangement(snap)
+        hdata.append([
+            _date(entry.get("time"), True),
+            entry.get("action", ""),
+            snap.get("productName", ""),
+            calculation,
+            _num(snap.get("primaryQty", 0)),
+            entry.get("operator", ""),
+        ])
+    story.append(LongTable(
+        hdata,
+        colWidths=[32 * mm, 34 * mm, 70 * mm, 73 * mm, 30 * mm, 35 * mm],
+        repeatRows=1,
+        style=[
+            ("BACKGROUND", (0, 0), (-1, 0), SOFT_HEADER),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 7),
+            ("GRID", (0, 0), (-1, -1), .35, colors.grey),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ],
+    ))
+    doc.build(story, onFirstPage=_stack_page, onLaterPages=_stack_page)
+    return _pdf_response(buffer, f"kartu_tumpukan_{code.replace('/', '-')}.pdf")
 
 
 @router.get("/export/products.pdf")

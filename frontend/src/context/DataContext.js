@@ -370,7 +370,8 @@ export const DataProvider = ({ children }) => {
   const updateStackAllocation = async (id, payload) => { await api.put(`/stack-allocations/${id}`, payload); await refreshStacks(); };
   const deleteStackAllocation = async (id) => { await api.delete(`/stack-allocations/${id}`); await refreshStacks(); };
   const addStackTreatment = async (payload) => { await api.post('/stack-treatments', payload); await refreshTreatments(); };
-  const saveConsignmentLayout = async (payload) => { await api.put('/consignment-layouts', payload); await refreshConsignmentLayouts(); };
+  const saveConsignmentLayout = async (payload) => { const { data } = await api.put('/consignment-layouts', payload); await refreshConsignmentLayouts(); return data; };
+  const deleteConsignmentLayout = async (id) => { await api.delete(`/consignment-layouts/${id}`); await refreshConsignmentLayouts(); };
   const addConsignmentOpname = async (payload) => { await api.post('/consignment-opnames', payload); await refreshConsignmentOpnames(); };
 
   return (
@@ -395,6 +396,7 @@ export const DataProvider = ({ children }) => {
       addStackAllocation, updateStackAllocation, deleteStackAllocation,
       addStackTreatment,
       saveConsignmentLayout,
+      deleteConsignmentLayout,
       addConsignmentOpname,
       refreshConsignmentFlow,
     }}>

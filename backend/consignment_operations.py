@@ -10,6 +10,7 @@ from pymongo import ReturnDocument
 
 from backend.server import build_xlsx, db, get_current_user, new_id, next_sequence, normalize_channel, now_iso, operational_now
 from backend.role_four_config import has_role_permission, role_destination
+from backend.consignment_documents import next_bazar_document_numbers
 import backend.consignment as consignment_module
 
 router = APIRouter(prefix="/api")
@@ -149,12 +150,16 @@ class QtyItem(BaseModel):
     qty: float = Field(gt=0)
 
 
+class BazarTripItem(QtyItem):
+    stackCode: str = ""
+
+
 class BazarTripCreate(BaseModel):
     eventDate: str = ""
     location: str
     vehicleNo: str
     driver: str = ""
-    items: List[QtyItem] = Field(min_length=1)
+    items: List[BazarTripItem] = Field(min_length=1)
     note: str = ""
 
 
@@ -190,32 +195,83 @@ async def bazar_availability(user: dict = Depends(get_current_user)):
 async def create_bazar_trip(body: BazarTripCreate, user: dict = Depends(get_current_user)):
     _ensure_access(user, BAZAR, write=True)
     grouped = defaultdict(float)
+    requested_stacks = {}
     for item in body.items:
-        grouped[item.productId] += float(item.qty)
+        stack_code = str(item.stackCode or "").strip().upper()
+        key = (item.productId, stack_code)
+        grouped[key] += float(item.qty)
+        requested_stacks[key] = stack_code
+
     items = []
-    for product_id, qty in grouped.items():
+    for (product_id, requested_stack), qty in grouped.items():
         identity = await _identity(BAZAR, product_id)
         _, _, available = await _available(BAZAR, product_id)
-        if qty > available + EPS:
+        total_requested = sum(amount for (pid, _), amount in grouped.items() if pid == product_id)
+        if total_requested > available + EPS:
             raise HTTPException(status_code=409, detail=f"Stok tersedia {identity.get('name', '')} hanya {available:g} {identity.get('unit', '')}")
+
+        stack_code = ""
+        if requested_stack:
+            stack_code = consignment_module.normalize_consignment_stack_code(BAZAR, requested_stack)
+        else:
+            layout = await db.consignment_layouts.find_one(
+                {"destination": BAZAR, "productId": product_id},
+                {"_id": 0, "stackCode": 1},
+                sort=[("stackCode", 1)],
+            )
+            stack_code = str((layout or {}).get("stackCode") or "BZR/A01")
+
         items.append({
-            "productId": product_id, "sku": identity.get("sku", ""), "name": identity.get("name", ""),
-            "unit": identity.get("unit", ""), "channel": normalize_channel(identity.get("channel"), "KOM"),
+            "productId": product_id,
+            "sku": identity.get("sku", ""),
+            "name": identity.get("name", ""),
+            "unit": identity.get("unit", ""),
+            "channel": normalize_channel(identity.get("channel"), "KOM"),
+            "weight": _n(identity.get("weight")),
+            "measureUnit": identity.get("measureUnit", "kg") or "kg",
+            "secondary": identity.get("secondary", ""),
+            "secondaryQty": _n(identity.get("secondaryQty")),
+            "stackCode": stack_code,
             "loadedQty": qty,
         })
+
+    event_date = body.eventDate or operational_now().strftime("%Y-%m-%d")
     today = operational_now().strftime("%Y%m%d")
     seq = await next_sequence(f"bazar-trip:{today}")
     trip_no = f"BZ-{today}-{seq:03d}"
+    document_numbers = await next_bazar_document_numbers("BAZAR", event_date)
     now = now_iso()
     doc = {
-        "id": new_id(), "tripNo": trip_no, "eventDate": body.eventDate or operational_now().strftime("%Y-%m-%d"),
-        "location": body.location.strip(), "vehicleNo": body.vehicleNo.strip().upper(), "driver": body.driver.strip(),
-        "items": items, "status": "BERJALAN", "note": body.note.strip(), "createdAt": now,
+        "id": new_id(),
+        "tripNo": trip_no,
+        "eventDate": event_date,
+        "location": body.location.strip(),
+        "vehicleNo": body.vehicleNo.strip().upper(),
+        "driver": body.driver.strip(),
+        "items": items,
+        "status": "BERJALAN",
+        "bonNo": document_numbers["bonNo"],
+        "suratJalanNo": document_numbers["suratJalanNo"],
+        "note": body.note.strip(),
+        "createdAt": now,
         "createdBy": user.get("name", ""),
     }
     await db.bazar_trips.insert_one(dict(doc))
-    await _history(BAZAR, "BAZAR_MUAT", doc["id"], trip_no, user.get("name", ""), items, body.note,
-                   {"location": doc["location"], "vehicleNo": doc["vehicleNo"]})
+    await _history(
+        BAZAR,
+        "BAZAR_MUAT",
+        doc["id"],
+        trip_no,
+        user.get("name", ""),
+        items,
+        body.note,
+        {
+            "location": doc["location"],
+            "vehicleNo": doc["vehicleNo"],
+            "bonNo": doc["bonNo"],
+            "suratJalanNo": doc["suratJalanNo"],
+        },
+    )
     return doc
 
 
@@ -259,6 +315,16 @@ async def close_bazar_trip(trip_id: str, body: BazarTripClose, user: dict = Depe
 
     for movement in movements:
         await db.consignment_movements.update_one({"eventKey": movement["eventKey"]}, {"$setOnInsert": movement}, upsert=True)
+    for item in final_items:
+        consumed = _n(item.get("soldQty")) + _n(item.get("returnedDamagedQty"))
+        if consumed > EPS:
+            await consignment_module.decrease_consignment_layouts(
+                BAZAR,
+                item.get("productId", ""),
+                consumed,
+                user.get("name", ""),
+                item.get("stackCode", ""),
+            )
     await db.bazar_trips.update_one({"id": trip_id, "status": "BERJALAN"}, {"$set": {
         "status": "SELESAI", "resultItems": final_items, "closedAt": now, "closedBy": user.get("name", ""), "closeNote": body.note.strip(),
     }})
@@ -368,6 +434,12 @@ async def update_ecom_status(order_id: str, body: EcomStatusBody, user: dict = D
                 "operator": user.get("name", ""),
             }
             await db.consignment_movements.update_one({"eventKey": event_key}, {"$setOnInsert": movement}, upsert=True)
+            await consignment_module.decrease_consignment_layouts(
+                ECOM,
+                item.get("productId", ""),
+                _n(item.get("qty")),
+                user.get("name", ""),
+            )
 
     patch = {"status": body.status, "updatedAt": now, "updatedBy": user.get("name", ""), "statusNote": body.note.strip()}
     if body.trackingNo.strip():

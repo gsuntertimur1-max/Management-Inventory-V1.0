@@ -371,8 +371,29 @@ async def initialize_app():
     await db.user_sessions.create_index("session_token")
     await db.products.create_index("sku")
     await db.stack_allocations.create_index([("productId", 1), ("stackCode", 1)], unique=True)
-    await create_unique_index_safely(db.consignment_layouts, [("destination", 1), ("productId", 1)])
-    await db.consignment_layout_history.create_index([("destination", 1), ("time", -1)])
+    # Layout Bazar/E-commerce mendukung satu produk di beberapa tumpukan independen.
+    # Hapus indeks lama destination+product bila masih ada, migrasikan layout lama ke kode default,
+    # lalu gunakan kombinasi destination+stackCode+productId.
+    try:
+        await db.consignment_layouts.drop_index("destination_1_productId_1")
+    except OperationFailure as exc:
+        if getattr(exc, "code", None) not in {26, 27}:
+            logger.warning("Gagal melepas indeks layout konsinyasi lama: %s", exc)
+    await db.consignment_layouts.update_many(
+        {"destination": "Gudang Bazar", "$or": [{"stackCode": {"$exists": False}}, {"stackCode": ""}]},
+        {"$set": {"stackCode": "BZR/A01"}},
+    )
+    await db.consignment_layouts.update_many(
+        {"destination": "Gudang E-commerce", "$or": [{"stackCode": {"$exists": False}}, {"stackCode": ""}]},
+        {"$set": {"stackCode": "ECOM/A01"}},
+    )
+    await create_unique_index_safely(
+        db.consignment_layouts,
+        [("destination", 1), ("stackCode", 1), ("productId", 1)],
+        name="consignment_stack_product_unique",
+    )
+    await db.consignment_layouts.create_index([("destination", 1), ("stackCode", 1)])
+    await db.consignment_layout_history.create_index([("destination", 1), ("stackCode", 1), ("time", -1)])
     await db.consignment_opnames.create_index([("destination", 1), ("time", -1)])
     await db.login_attempts.create_index("identifier")
     await create_unique_index_safely(db.surat_jalan, "no", sparse=True)

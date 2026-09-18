@@ -1,3 +1,4 @@
+import re
 from typing import Literal, List
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,6 +12,38 @@ from backend.role_four_config import has_role_permission, role_destination
 router = APIRouter(prefix="/api")
 
 DESTINATIONS = {"Gudang Bazar", "Gudang E-commerce"}
+STACK_PREFIX = {"Gudang Bazar": "BZR", "Gudang E-commerce": "ECOM"}
+STACK_CODE_RE = re.compile(r"^(BZR|ECOM)/[A-Z]{1,2}\d{2,3}$")
+
+
+def consignment_stack_prefix(destination: str) -> str:
+    return STACK_PREFIX.get(str(destination or "").strip(), "")
+
+
+def normalize_consignment_stack_code(destination: str, value: str) -> str:
+    prefix = consignment_stack_prefix(destination)
+    if not prefix:
+        raise HTTPException(status_code=400, detail="Lokasi konsinyasi tidak valid")
+    raw = str(value or "").strip().upper()
+    if not raw:
+        raise HTTPException(status_code=400, detail=f"Kode tumpukan wajib diisi, contoh {prefix}/A01")
+    code = raw if "/" in raw else f"{prefix}/{raw}"
+    if not STACK_CODE_RE.fullmatch(code):
+        raise HTTPException(status_code=400, detail=f"Format kode tumpukan tidak valid. Gunakan contoh {prefix}/A01")
+    if not code.startswith(f"{prefix}/"):
+        raise HTTPException(status_code=400, detail=f"Kode tumpukan {destination} harus diawali {prefix}/")
+    return code
+
+
+def _layout_primary_qty(layout: dict) -> float:
+    if "primaryQty" in layout:
+        return float(layout.get("primaryQty", 0) or 0)
+    secondary_qty = float(layout.get("secondaryQty", 0) or 0)
+    secondary_count = sum(
+        float(row.get("hamparan", 0) or 0) * float(row.get("kaki", 0) or 0) * float(row.get("height", 0) or 0)
+        for row in (layout.get("arrangements") or [])
+    ) + float(layout.get("extraSecondary", 0) or 0)
+    return secondary_count * secondary_qty + float(layout.get("extraPrimary", 0) or 0)
 
 
 class Arrangement(BaseModel):
@@ -22,6 +55,7 @@ class Arrangement(BaseModel):
 class ConsignmentLayoutInput(BaseModel):
     destination: Literal["Gudang Bazar", "Gudang E-commerce"]
     productId: str
+    stackCode: str
     arrangements: List[Arrangement] = Field(default_factory=list, max_length=10)
     extraSecondary: int = Field(default=0, ge=0, le=1000000)
     extraPrimary: int = Field(default=0, ge=0, le=1000000)
@@ -224,28 +258,157 @@ async def list_consignment_opnames(destination: str = "", user: dict = Depends(g
 @router.put("/consignment-layouts")
 async def save_consignment_layout(body: ConsignmentLayoutInput, user: dict = Depends(get_current_user)):
     _ensure_destination_access(user, body.destination, write=True)
+    stack_code = normalize_consignment_stack_code(body.destination, body.stackCode)
     rows = await consignment_stock(body.destination)
     stock = next((row for row in rows if row["productId"] == body.productId), None)
     if not stock:
         raise HTTPException(status_code=400, detail="Produk tidak memiliki stok konsinyasi aktif pada lokasi ini")
+
+    secondary_qty = float(stock.get("secondaryQty", 0) or 0)
     secondary_count = sum(row.hamparan * row.kaki * row.height for row in body.arrangements) + body.extraSecondary
-    calculated = secondary_count * stock["secondaryQty"] + body.extraPrimary
-    if stock["secondaryQty"] <= 0 and calculated:
+    calculated = secondary_count * secondary_qty + body.extraPrimary
+    if calculated <= 0:
+        raise HTTPException(status_code=400, detail="Isi minimal satu perkalian tumpukan atau jumlah tambahan")
+    if secondary_count > 0 and secondary_qty <= 0:
         raise HTTPException(status_code=400, detail="Kemasan sekunder produk belum diatur")
-    if calculated > stock["qty"] + 1e-9:
-        raise HTTPException(status_code=400, detail="Hasil perkalian melebihi saldo konsinyasi aktif")
+
+    existing_same = await db.consignment_layouts.find_one(
+        {"destination": body.destination, "productId": body.productId, "stackCode": stack_code},
+        {"_id": 0},
+    )
+    allocated_elsewhere = 0.0
+    query = {"destination": body.destination, "productId": body.productId}
+    async for row in db.consignment_layouts.find(query, {"_id": 0}):
+        if existing_same and row.get("id") == existing_same.get("id"):
+            continue
+        allocated_elsewhere += _layout_primary_qty(row)
+
+    stock_qty = float(stock.get("qty", 0) or 0)
+    if allocated_elsewhere + calculated > stock_qty + 1e-9:
+        available = max(stock_qty - allocated_elsewhere, 0)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Perkalian melebihi saldo {stock.get('name', '')}. Tersedia untuk tumpukan ini {available:g} {stock.get('unit', '')}",
+        )
+
     now = now_iso()
     doc = {
-        "destination": body.destination, "productId": body.productId, "arrangements": [row.model_dump() for row in body.arrangements],
-        "extraSecondary": body.extraSecondary, "extraPrimary": body.extraPrimary, "note": body.note.strip(), "updatedAt": now, "updatedBy": user.get("name", ""),
+        "destination": body.destination,
+        "productId": body.productId,
+        "stackCode": stack_code,
+        "sku": stock.get("sku", ""),
+        "productName": stock.get("name", ""),
+        "unit": stock.get("unit", ""),
+        "weight": float(stock.get("weight", 0) or 0),
+        "measureUnit": stock.get("measureUnit", "kg") or "kg",
+        "secondary": stock.get("secondary", ""),
+        "secondaryQty": secondary_qty,
+        "arrangements": [row.model_dump() for row in body.arrangements],
+        "extraSecondary": body.extraSecondary,
+        "extraPrimary": body.extraPrimary,
+        "secondaryCount": secondary_count,
+        "primaryQty": calculated,
+        "arrangementAdjusted": False,
+        "note": body.note.strip(),
+        "updatedAt": now,
+        "updatedBy": user.get("name", ""),
     }
-    previous = await db.consignment_layouts.find_one_and_update(
-        {"destination": body.destination, "productId": body.productId},
-        {"$set": doc, "$setOnInsert": {"id": new_id(), "createdAt": now}}, upsert=True, return_document=ReturnDocument.AFTER,
+    before = existing_same or {}
+    saved = await db.consignment_layouts.find_one_and_update(
+        {"destination": body.destination, "productId": body.productId, "stackCode": stack_code},
+        {"$set": doc, "$setOnInsert": {"id": new_id(), "createdAt": now}},
+        upsert=True,
+        return_document=ReturnDocument.AFTER,
     )
-    result = {k: v for k, v in previous.items() if k != "_id"}
-    await db.consignment_layout_history.insert_one({"id": new_id(), "time": now, "destination": body.destination, "productId": body.productId, "before": {k: v for k, v in (await db.consignment_layout_history.find_one({"destination": body.destination, "productId": body.productId}, {"_id": 0}, sort=[("time", -1)]) or {}).get("after", {}).items()}, "after": result, "operator": user.get("name", ""), "note": body.note.strip()})
+    result = {k: v for k, v in saved.items() if k != "_id"}
+    await db.consignment_layout_history.insert_one({
+        "id": new_id(),
+        "time": now,
+        "destination": body.destination,
+        "productId": body.productId,
+        "stackCode": stack_code,
+        "action": "DIUBAH" if before else "DIBUAT",
+        "before": before,
+        "after": result,
+        "operator": user.get("name", ""),
+        "note": body.note.strip(),
+    })
     return result
+
+
+@router.delete("/consignment-layouts/{layout_id}")
+async def delete_consignment_layout(layout_id: str, user: dict = Depends(get_current_user)):
+    existing = await db.consignment_layouts.find_one({"id": layout_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Perkalian tumpukan tidak ditemukan")
+    _ensure_destination_access(user, existing.get("destination", ""), write=True)
+    await db.consignment_layouts.delete_one({"id": layout_id})
+    await db.consignment_layout_history.insert_one({
+        "id": new_id(),
+        "time": now_iso(),
+        "destination": existing.get("destination", ""),
+        "productId": existing.get("productId", ""),
+        "stackCode": existing.get("stackCode", ""),
+        "action": "DIHAPUS",
+        "before": existing,
+        "after": {},
+        "operator": user.get("name", ""),
+        "note": "Perkalian tumpukan dihapus",
+    })
+    return {"ok": True}
+
+
+async def decrease_consignment_layouts(
+    destination: str,
+    product_id: str,
+    qty: float,
+    operator: str,
+    preferred_stack: str = "",
+) -> None:
+    remaining = max(float(qty or 0), 0.0)
+    if remaining <= 1e-9:
+        return
+    query = {"destination": destination, "productId": product_id}
+    layouts = await db.consignment_layouts.find(query, {"_id": 0}).sort([("updatedAt", 1), ("stackCode", 1)]).to_list(5000)
+    if preferred_stack:
+        normalized = normalize_consignment_stack_code(destination, preferred_stack)
+        layouts.sort(key=lambda row: (row.get("stackCode") != normalized, row.get("stackCode", "")))
+    for layout in layouts:
+        if remaining <= 1e-9:
+            break
+        current = _layout_primary_qty(layout)
+        if current <= 1e-9:
+            continue
+        take = min(current, remaining)
+        next_qty = current - take
+        now = now_iso()
+        if next_qty <= 1e-9:
+            await db.consignment_layouts.delete_one({"id": layout["id"]})
+            after = {**layout, "primaryQty": 0, "arrangementAdjusted": True, "updatedAt": now}
+            action = "PENGELUARAN_HABIS"
+        else:
+            patch = {
+                "primaryQty": next_qty,
+                "arrangementAdjusted": True,
+                "updatedAt": now,
+                "updatedBy": operator,
+            }
+            await db.consignment_layouts.update_one({"id": layout["id"]}, {"$set": patch})
+            after = {**layout, **patch}
+            action = "PENGELUARAN_OTOMATIS"
+        await db.consignment_layout_history.insert_one({
+            "id": new_id(),
+            "time": now,
+            "destination": destination,
+            "productId": product_id,
+            "stackCode": layout.get("stackCode", ""),
+            "action": action,
+            "before": layout,
+            "after": after,
+            "operator": operator,
+            "note": f"Pengurangan otomatis {take:g} {layout.get('unit', '')}",
+        })
+        remaining -= take
 
 
 @router.post("/consignment-opnames")

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Boxes, CheckCircle2, History, PackagePlus, Plus, RefreshCcw, Truck, Undo2 } from 'lucide-react';
-import api, { apiError } from '../lib/api';
+import { Boxes, CheckCircle2, FileText, History, PackagePlus, Plus, Printer, RefreshCcw, Truck, Undo2 } from 'lucide-react';
+import api, { apiError, downloadApiFile } from '../lib/api';
 import { toast } from 'sonner';
 import { useData } from '../context/DataContext';
 
@@ -15,6 +15,7 @@ const BazarPaket = () => {
   const [loads, setLoads] = useState([]);
   const [history, setHistory] = useState([]);
   const [saving, setSaving] = useState(false);
+  const [downloading, setDownloading] = useState('');
 
   const [master, setMaster] = useState({ code: '', name: '', note: '', productId: '', qty: '' });
   const [components, setComponents] = useState([]);
@@ -144,6 +145,23 @@ const BazarPaket = () => {
     } catch (e) { toast.error(e?.response ? apiError(e) : e.message); }
   };
 
+  const downloadDocument = async (load, type) => {
+    const key = `${load.id}-${type}`;
+    setDownloading(key);
+    try {
+      await api.post(`/bazar/package-loads/${load.id}/documents`);
+      await downloadApiFile(
+        `/export/bazar/package-loads/${load.id}/${type}.pdf`,
+        type === 'surat-jalan' ? `surat_jalan_${load.loadNo}.pdf` : `bon_muat_${load.loadNo}.pdf`,
+      );
+      await loadAll();
+    } catch (e) {
+      toast.error(apiError(e));
+    } finally {
+      setDownloading('');
+    }
+  };
+
   return <div className="space-y-6">
     <div>
       <div className="label-mono mb-2">Operasional Bazar · Paket</div>
@@ -222,10 +240,14 @@ const BazarPaket = () => {
       <div className="space-y-3">
         {loads.length === 0 && <div className="text-sm text-[#8b93a1]">Belum ada pemuatan paket.</div>}
         {loads.map((load) => <div key={load.id} className="border border-[#243044] rounded-xl p-4">
-          <div className="flex flex-wrap justify-between gap-2"><div><b>{load.loadNo}</b> · {load.destination}<div className="text-xs text-[#8b93a1] mt-1">{load.date} · {load.vehicleNo} · {load.driver || 'Pengemudi belum diisi'}</div></div><span className="text-xs px-2.5 py-1 rounded-full bg-[#2563eb]/15 text-[#93c5fd]">{load.status}</span></div>
+          <div className="flex flex-wrap justify-between gap-2"><div><b>{load.loadNo}</b> · {load.destination}<div className="text-xs text-[#8b93a1] mt-1">{load.date} · {load.vehicleNo} · {load.driver || 'Pengemudi belum diisi'}</div><div className="font-mono text-[10px] text-[#93c5fd] mt-1">SJ: {load.suratJalanNo || 'belum dibuat'} · BM: {load.bonNo || 'belum dibuat'}</div></div><span className="text-xs px-2.5 py-1 rounded-full bg-[#2563eb]/15 text-[#93c5fd]">{load.status}</span></div>
           <div className="text-xs mt-3 space-y-1">{(load.items || []).map((x) => <div key={x.templateId}>{x.packageCode} · {x.packageName}: <b>{x.loadedQty}</b> paket</div>)}</div>
           {load.status === 'SELESAI' && <div className="mt-3 pt-3 border-t border-[#243044] text-xs space-y-1">{(load.resultItems || []).map((x) => <div key={x.templateId}>{x.packageName}: <b>{x.deliveredQty}</b> disalurkan · <b>{x.returnedGoodQty}</b> retur baik · <b>{x.returnedDamagedQty}</b> retur rusak</div>)}</div>}
-          {load.status === 'BERJALAN' && <button onClick={() => openClose(load)} className="mt-3 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-[#22c55e]/40 text-[#86efac] text-xs font-semibold"><CheckCircle2 size={14}/> Selesaikan & Rekonsiliasi</button>}
+          <div className="flex flex-wrap gap-2 mt-3">
+            <button disabled={downloading === `${load.id}-surat-jalan`} onClick={() => downloadDocument(load, 'surat-jalan')} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#2563eb]/50 text-[#93c5fd] text-xs font-semibold"><FileText size={13}/>{downloading === `${load.id}-surat-jalan` ? 'Menyiapkan…' : 'Surat Jalan'}</button>
+            <button disabled={downloading === `${load.id}-bon-muat`} onClick={() => downloadDocument(load, 'bon-muat')} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#64748b]/50 text-[#cbd5e1] text-xs font-semibold"><Printer size={13}/>{downloading === `${load.id}-bon-muat` ? 'Menyiapkan…' : 'Bon Muat'}</button>
+            {load.status === 'BERJALAN' && <button onClick={() => openClose(load)} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-[#22c55e]/40 text-[#86efac] text-xs font-semibold"><CheckCircle2 size={14}/> Selesaikan & Rekonsiliasi</button>}
+          </div>
         </div>)}
       </div>
     </section>
