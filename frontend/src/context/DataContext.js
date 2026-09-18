@@ -168,6 +168,19 @@ export const DataProvider = ({ children }) => {
     setState((prev) => ({ ...prev, stackTreatments: data }));
   }, []);
 
+  const refreshConsignmentFlow = useCallback(async () => {
+    const [stockRes, monitoringRes] = await Promise.all([
+      api.get('/consignment-stock'),
+      api.get('/monitoring-stock'),
+    ]);
+    setState((prev) => ({
+      ...prev,
+      consignmentStock: stockRes.data,
+      monitoringStock: monitoringRes.data,
+    }));
+    return stockRes.data;
+  }, []);
+
   const refreshConsignmentLayouts = useCallback(async () => {
     const [layoutsRes, historyRes] = await Promise.all([
       api.get('/consignment-layouts'),
@@ -324,6 +337,7 @@ export const DataProvider = ({ children }) => {
       addStackTreatment,
       saveConsignmentLayout,
       addConsignmentOpname,
+      refreshConsignmentFlow,
     }}>
       {children}
     </DataContext.Provider>
