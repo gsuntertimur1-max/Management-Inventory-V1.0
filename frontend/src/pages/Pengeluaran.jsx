@@ -374,7 +374,6 @@ const Pengeluaran = () => {
         <div>
           <div className="label-mono mb-2">Pengiriman Barang</div>
           <h1 className="font-display text-4xl font-bold">Proses Pengeluaran</h1>
-          <p className="text-[#8b93a1] mt-2">Bon Muat diterbitkan untuk proses loading. Stok dan Surat Jalan baru diproses setelah pemuatan selesai.</p>
         </div>
         <button onClick={() => navigate('/antrian')} className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-[#242f3d] hover:bg-[#141a24]"><MonitorSmartphone size={15} /> Layar Antrian</button>
       </div>
