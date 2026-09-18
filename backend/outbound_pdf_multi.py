@@ -329,54 +329,295 @@ async def export_bon_muat_multi_pdf(load_id: str, user: dict = Depends(get_curre
 def _sj_item_rows(sj: dict):
     grouped = OrderedDict()
     for item in sj.get("items", []):
-        doc = str(item.get("documentNo") or sj.get("ref") or "-")
+        doc = str(item.get("documentNo") or sj.get("ref") or "-").strip()
         grouped.setdefault(doc, []).append(item)
     return grouped
 
 
-def _draw_sj_page(c: canvas.Canvas, sj: dict, items_by_doc: list[tuple[str, list[dict]]], warehouse_head: str, copy_label: str):
-    w, h = landscape(A4)
-    left, right = 14 * mm, w - 14 * mm
-    if LOGO.exists():
-        c.drawImage(str(LOGO), left, h - 29 * mm, width=35 * mm, height=16 * mm, preserveAspectRatio=True, mask="auto")
-    c.setFont("Helvetica-Bold", 15); c.drawCentredString(w / 2, h - 18 * mm, "SURAT JALAN")
-    c.setFont("Helvetica", 7); c.drawRightString(right, h - 17 * mm, copy_label)
-    c.setFont("Helvetica-Bold", 8); c.drawCentredString(w / 2, h - 24 * mm, sj.get("no", ""))
-    c.setFont("Helvetica", 7)
-    c.drawString(left, h - 36 * mm, f"Penerima: {sj.get('penerima','-')}")
-    c.drawString(left + 95 * mm, h - 36 * mm, f"Nopol / Sopir: {sj.get('polisi','-')} / {sj.get('pengambil','-')}")
-    c.drawString(left, h - 42 * mm, f"Dokumen: {', '.join(sj.get('documents') or [sj.get('ref','-')])}")
-    c.drawString(left, h - 48 * mm, f"Lokasi muat: {_loading_route(sj)}")
+def _sj_wrap(text: str, font_name: str, font_size: float, max_width: float) -> list[str]:
+    words = str(text or "").split()
+    if not words:
+        return [""]
+    lines = []
+    current = words[0]
+    for word in words[1:]:
+        candidate = f"{current} {word}"
+        if stringWidth(candidate, font_name, font_size) <= max_width:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+    lines.append(current)
+    return lines
 
-    styles = getSampleStyleSheet()
-    small = ParagraphStyle("sj-multi-small", parent=styles["BodyText"], fontName="Helvetica", fontSize=6.2, leading=7.4)
-    small_bold = ParagraphStyle("sj-multi-bold", parent=small, fontName="Helvetica-Bold")
-    data = [[Paragraph("DOKUMEN", small_bold), Paragraph("TUMPUKAN", small_bold), Paragraph("PRODUK / SKU", small_bold), Paragraph("PRIMER", small_bold), Paragraph("SEKUNDER", small_bold), Paragraph("FISIK", small_bold)]]
-    for document_no, rows in items_by_doc:
+
+def _sj_unit_codes(sj: dict) -> str:
+    seen = []
+    for item in sj.get("items", []):
+        stack = str(item.get("stackCode") or item.get("location") or "").strip().upper()
+        if not stack:
+            continue
+        unit = stack.split("/", 1)[0] if "/" in stack else stack
+        if unit and unit not in seen:
+            seen.append(unit)
+    if seen:
+        return ", ".join(seen)
+    fallback = str(sj.get("unit_loading") or "").strip()
+    return fallback or "-"
+
+
+def _sj_quantity_lines(item: dict) -> tuple[str, str]:
+    qty = float(item.get("qty", 0) or 0)
+    secondary_qty = float(item.get("secondaryQty", 0) or 0)
+    primary_unit = str(item.get("unit") or "pcs").strip()
+    if secondary_qty <= 0:
+        return "-", f"{_num(qty)} {primary_unit}"
+    full_secondary = int(qty // secondary_qty)
+    remainder = qty - (full_secondary * secondary_qty)
+    secondary_name = str(item.get("secondary") or "Kemasan").strip()
+    return f"{_num(full_secondary)} {secondary_name}", f"{_num(remainder)} {primary_unit}"
+
+
+def _sj_row_height(item: dict, product_width: float) -> float:
+    product_lines = _sj_wrap(str(item.get("name") or ""), "Helvetica-Bold", 7.0, product_width - 4 * mm)
+    return max(12 * mm, (len(product_lines) * 3.7 + 4.5) * mm)
+
+
+def _sj_paginate(grouped: OrderedDict, product_width: float, max_detail_height: float) -> list[list[tuple[str, list[dict]]]]:
+    pages = []
+    current = []
+    used = 0.0
+    group_header_h = 5.5 * mm
+
+    for document_no, rows in grouped.items():
+        group_open = False
         for item in rows:
-            data.append([
-                Paragraph(document_no, small),
-                Paragraph(str(item.get("stackCode") or item.get("location") or "-"), small),
-                Paragraph(f"{item.get('name','')}<br/><font size='5'>{item.get('sku','')}</font>", small),
-                Paragraph(f"{_num(item.get('qty'))} {item.get('unit','')}", small),
-                Paragraph(_secondary_text(item), small),
-                Paragraph(f"{_num(item.get('berat'))} {_measure_unit(item)}", small),
-            ])
-    table = Table(data, colWidths=[45*mm, 31*mm, 78*mm, 33*mm, 48*mm, 34*mm], repeatRows=1)
-    table.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#527D96")), ("TEXTCOLOR", (0,0), (-1,0), colors.white),
-        ("GRID", (0,0), (-1,-1), .35, colors.HexColor("#777777")), ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
-        ("TOPPADDING", (0,0), (-1,-1), 3), ("BOTTOMPADDING", (0,0), (-1,-1), 3),
-    ]))
-    table.wrapOn(c, right-left, h)
-    table.drawOn(c, left, h - 55*mm - table._height)
+            row_h = _sj_row_height(item, product_width)
+            required = row_h + (0 if group_open else group_header_h)
+            if current and used + required > max_detail_height:
+                pages.append(current)
+                current = []
+                used = 0.0
+                group_open = False
+                required = row_h + group_header_h
 
-    sign_y = 24 * mm
-    c.setFont("Helvetica", 7); c.drawCentredString(left + 50*mm, sign_y + 20*mm, "Pengangkut / Pengambil")
-    c.drawCentredString(right - 50*mm, sign_y + 20*mm, "Yang Menyerahkan")
-    c.line(left + 25*mm, sign_y, left + 75*mm, sign_y)
-    c.setFont("Helvetica-Bold", 7); c.drawCentredString(right - 50*mm, sign_y, warehouse_head)
-    c.setFont("Helvetica", 5.8); c.drawString(left, 8*mm, f"Delivery Slip | Dicetak: {_date(operational_now().isoformat(), True)}")
+            if not group_open:
+                current.append((document_no, []))
+                used += group_header_h
+                group_open = True
+
+            current[-1][1].append(item)
+            used += row_h
+
+    if current or not pages:
+        pages.append(current)
+    return pages
+
+
+def _draw_sj_half(
+    c: canvas.Canvas,
+    sj: dict,
+    items_by_doc: list[tuple[str, list[dict]]],
+    warehouse_head: str,
+    x0: float,
+    page_no: int,
+    total_pages: int,
+):
+    page_w, page_h = landscape(A4)
+    half_w = page_w / 2
+    left = x0 + 4.5 * mm
+    right = x0 + half_w - 4.5 * mm
+    width = right - left
+    center = (left + right) / 2
+    y = page_h - 5 * mm
+
+    # Logo BULOG berwarna di atas kode Kanwil, mengikuti contoh pengguna.
+    if LOGO.exists():
+        c.drawImage(
+            str(LOGO),
+            left,
+            y - 8.3 * mm,
+            width=28 * mm,
+            height=8.3 * mm,
+            preserveAspectRatio=True,
+            mask="auto",
+        )
+    y -= 11 * mm
+
+    c.setFillColor(colors.black)
+    c.setFont("Helvetica-Bold", 7.8)
+    c.drawString(left, y, "09001 - KANWIL DKI JAKARTA BANTEN")
+    y -= 7 * mm
+
+    c.setFont("Helvetica-Bold", 14)
+    c.drawCentredString(center, y, "SURAT JALAN MANUAL")
+    y -= 2.8 * mm
+    c.setFillColor(colors.HexColor("#BDBDBD"))
+    c.rect(left, y - 2.4 * mm, width, 3.1 * mm, fill=1, stroke=0)
+    c.setFillColor(colors.black)
+    y -= 6.5 * mm
+
+    c.setFont("Helvetica", 8)
+    c.drawCentredString(center, y, str(sj.get("no") or sj.get("ref") or "-"))
+    if total_pages > 1:
+        c.setFont("Helvetica", 5.2)
+        c.drawRightString(right, y, f"Hal. {page_no}/{total_pages}")
+    y -= 8 * mm
+
+    c.setFont("Helvetica-Bold", 7.5)
+    c.drawString(left, y, "Penerima")
+    c.setFont("Helvetica", 7.5)
+    c.drawString(left + 21 * mm, y, ":")
+    c.setFont("Helvetica", 8)
+    penerima = str(sj.get("penerima") or "-")
+    penerima_font = 8.0
+    while penerima_font > 6.2 and stringWidth(penerima, "Helvetica", penerima_font) > (width - 27 * mm):
+        penerima_font -= 0.2
+    c.setFont("Helvetica", penerima_font)
+    c.drawString(left + 25 * mm, y, penerima)
+    y -= 10 * mm
+
+    c.setFont("Helvetica-Bold", 7.3)
+    c.drawString(left, y, "Gudang Asal :")
+    c.drawString(right - 31 * mm, y, "Unit Gudang :")
+    y -= 5 * mm
+    warehouse_name = "KOMPLEKS GUDANG SUNTER TIMUR I & II"
+    wh_font = 7.5
+    while wh_font > 6.2 and stringWidth(warehouse_name, "Helvetica-Bold", wh_font) > (width - 35 * mm):
+        wh_font -= 0.2
+    c.setFont("Helvetica-Bold", wh_font)
+    c.drawString(left, y, warehouse_name)
+    c.setFont("Helvetica-Bold", 7.7)
+    c.drawCentredString(right - 10 * mm, y, _sj_unit_codes(sj))
+    y -= 9 * mm
+
+    # Daftar seluruh dokumen sumber pada setiap copy/page.
+    documents = [str(value or "").strip() for value in (sj.get("documents") or [sj.get("ref", "")]) if str(value or "").strip()]
+    date_x = right - 37 * mm
+    c.setFont("Helvetica-Bold", 7.2)
+    c.drawString(left, y, "Dokumen Sumber")
+    c.drawString(date_x, y, "Tanggal")
+    y -= 1.6 * mm
+    c.setLineWidth(0.45)
+    c.line(left, y, right, y)
+    y -= 4.2 * mm
+
+    issued = _date(sj.get("issued_at") or sj.get("time"), True)
+    c.setFont("Helvetica", 6.7)
+    for document_no in documents:
+        doc_font = 6.9
+        while doc_font > 5.8 and stringWidth(document_no, "Helvetica", doc_font) > (date_x - left - 3 * mm):
+            doc_font -= 0.2
+        c.setFont("Helvetica", doc_font)
+        c.drawString(left, y, document_no)
+        c.setFont("Helvetica", 6.4)
+        c.drawString(date_x, y, issued)
+        y -= 4.4 * mm
+    y -= 4.0 * mm
+
+    # Tabel produk: Produk | Kuantitas (sekunder + sisa primer) | Kuantum fisik.
+    product_w = 66 * mm
+    qty_w = 31 * mm
+    quantum_w = width - product_w - qty_w
+    x1 = left + product_w
+    x2 = x1 + qty_w
+
+    c.setFont("Helvetica", 7.2)
+    c.drawCentredString(left + product_w / 2, y, "Produk")
+    c.drawCentredString(x1 + qty_w / 2, y, "Kuantitas")
+    c.drawCentredString(x2 + quantum_w / 2, y, "Kuantum")
+    y -= 4.6 * mm
+    c.line(left, y, right, y)
+
+    for document_no, rows in items_by_doc:
+        group_h = 5.5 * mm
+        c.setFillColor(colors.HexColor("#EEEEEE"))
+        c.rect(left, y - group_h, width, group_h, fill=1, stroke=0)
+        c.setFillColor(colors.black)
+        c.setFont("Helvetica-Bold", 6.5)
+        group_text = f"Dokumen: {document_no}"
+        group_font = 6.5
+        while group_font > 5.5 and stringWidth(group_text, "Helvetica-Bold", group_font) > (width - 4 * mm):
+            group_font -= 0.2
+        c.setFont("Helvetica-Bold", group_font)
+        c.drawString(left + 2 * mm, y - 3.8 * mm, group_text)
+        y -= group_h
+        c.line(left, y, right, y)
+
+        for item in rows:
+            product_lines = _sj_wrap(str(item.get("name") or ""), "Helvetica-Bold", 7.0, product_w - 4 * mm)
+            row_h = _sj_row_height(item, product_w)
+            row_top = y
+            row_bottom = y - row_h
+
+            c.line(left, row_bottom, right, row_bottom)
+            c.line(x1, row_top, x1, row_bottom)
+            c.line(x2, row_top, x2, row_bottom)
+
+            py = row_top - 4.4 * mm
+            c.setFont("Helvetica-Bold", 7.0)
+            for line in product_lines:
+                c.drawCentredString(left + product_w / 2, py, line)
+                py -= 3.7 * mm
+
+            sku = str(item.get("sku") or "").strip()
+            if sku and py > row_bottom + 2.2 * mm:
+                c.setFont("Helvetica", 5.2)
+                c.drawCentredString(left + product_w / 2, py, sku)
+
+            secondary_line, remainder_line = _sj_quantity_lines(item)
+            qty_center = x1 + qty_w / 2
+            c.setFont("Helvetica-Bold", 7.7)
+            c.drawCentredString(qty_center, row_top - 4.8 * mm, secondary_line)
+            c.setFont("Helvetica", 6.8)
+            c.drawCentredString(qty_center, row_top - 9.0 * mm, remainder_line)
+
+            physical = f"{_num(item.get('berat', 0))} {_measure_unit(item)}"
+            physical_font = 7.8
+            while physical_font > 6.2 and stringWidth(physical, "Helvetica", physical_font) > (quantum_w - 2 * mm):
+                physical_font -= 0.2
+            c.setFont("Helvetica", physical_font)
+            c.drawCentredString(x2 + quantum_w / 2, row_top - 6.7 * mm, physical)
+
+            y = row_bottom
+
+    y -= 4.2 * mm
+    note = " / ".join(value for value in [str(sj.get("pengambil") or "").strip(), str(sj.get("polisi") or "").strip()] if value) or "-"
+    c.setFont("Helvetica", 6.9)
+    c.drawString(left, y, "Catatan/Nopol/No Kontainer :")
+    note_font = 7.2
+    while note_font > 6.0 and stringWidth(note, "Helvetica", note_font) > (width - 62 * mm):
+        note_font -= 0.2
+    c.setFont("Helvetica", note_font)
+    c.drawString(left + 60 * mm, y, note)
+    y -= 9 * mm
+
+    left_sig = left + 22 * mm
+    right_sig = right - 36 * mm
+    c.setFont("Helvetica", 7)
+    c.drawCentredString(left_sig, y, "Pengangkut,")
+    c.drawCentredString(right_sig, y + 4 * mm, "Yang Menyerahkan,")
+    c.setFont("Helvetica-Bold", 6.4)
+    c.drawCentredString(right_sig, y, warehouse_name)
+    y -= 20 * mm
+    c.setFont("Helvetica-Bold", 7.1)
+    c.drawCentredString(left_sig, y, str(sj.get("pengambil") or "-"))
+    c.drawCentredString(right_sig, y, warehouse_head)
+    y -= 8 * mm
+
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(left, y, "Delivery Tracking")
+    y -= 2.6 * mm
+    c.line(left, y, right, y)
+    y -= 4 * mm
+    c.setFont("Helvetica", 5.1)
+    c.drawString(left, y, "Dicetak oleh")
+    c.drawString(left + 22 * mm, y, ":")
+    c.drawString(left + 25 * mm, y, str(sj.get("operator") or "Petugas Gudang"))
+    y -= 3.8 * mm
+    c.drawString(left, y, "Pada Waktu")
+    c.drawString(left + 22 * mm, y, ":")
+    c.drawString(left + 25 * mm, y, _date(operational_now().isoformat(), True))
 
 
 @router.get("/export/surat-jalan/{sj_id}.pdf")
@@ -384,26 +625,42 @@ async def export_surat_jalan_multi_pdf(sj_id: str, user: dict = Depends(get_curr
     sj = await db.surat_jalan.find_one({"id": sj_id}, {"_id": 0})
     if not sj:
         raise HTTPException(status_code=404, detail="Surat Jalan tidak ditemukan")
+
     settings = await db.settings.find_one({"_id": "app"}, {"_id": 0}) or {}
     warehouse_head = settings.get("warehouseHead") or "Irsa Maulian Nugraha"
-    grouped = list(_sj_item_rows(sj).items())
+    grouped = _sj_item_rows(sj)
 
-    # Batasi per halaman berdasarkan jumlah baris agar tidak ada item yang terpotong.
-    pages = []
-    current = []
-    count = 0
-    for document_no, rows in grouped:
-        for item in rows:
-            if count >= 12:
-                pages.append(current); current = []; count = 0
-            current.append((document_no, [item])); count += 1
-    if current or not pages:
-        pages.append(current)
+    # Setengah A4 hanya punya tinggi efektif terbatas. Saat produk banyak,
+    # tambahkan halaman A4 landscape berikutnya, tetap dua copy per halaman.
+    page_w, page_h = landscape(A4)
+    half_w = page_w / 2
+    content_width = half_w - 9 * mm
+    product_width = 66 * mm
 
-    buffer = io.BytesIO(); c = canvas.Canvas(buffer, pagesize=landscape(A4))
+    document_count = max(1, len(sj.get("documents") or [sj.get("ref", "")]))
+    fixed_height = (94 + max(document_count - 1, 0) * 4.4) * mm
+    bottom_reserved = 58 * mm
+    detail_height = max(35 * mm, page_h - fixed_height - bottom_reserved)
+    pages = _sj_paginate(grouped, product_width, detail_height)
+
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=landscape(A4))
     total_pages = len(pages)
+
     for page_index, page_rows in enumerate(pages, 1):
-        _draw_sj_page(c, sj, page_rows, warehouse_head, f"Halaman {page_index}/{total_pages}")
+        _draw_sj_half(c, sj, page_rows, warehouse_head, 0, page_index, total_pages)
+        _draw_sj_half(c, sj, page_rows, warehouse_head, half_w, page_index, total_pages)
+
+        # Garis bantu potong tanpa tulisan.
+        c.setStrokeColor(colors.HexColor("#B8B8B8"))
+        c.setLineWidth(0.25)
+        c.setDash(1.2, 2.2)
+        c.line(half_w, 3 * mm, half_w, page_h - 3 * mm)
+        c.setDash()
+        c.setStrokeColor(colors.black)
+
         c.showPage()
+
     c.save()
-    return _pdf_response(buffer, f"surat_jalan_{(sj.get('no') or sj.get('ref') or sj_id).replace('/', '-')}.pdf")
+    filename = (sj.get("no") or sj.get("ref") or sj_id).replace("/", "-")
+    return _pdf_response(buffer, f"surat_jalan_{filename}_A4_landscape_2copy.pdf")
