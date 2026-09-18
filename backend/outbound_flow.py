@@ -801,7 +801,7 @@ async def complete_outbound_load(load_id: str, user: dict = Depends(require_writ
         sj_floor = await max_suffix(db.surat_jalan, "no", month_prefix)
         sj_number = await next_sequence(f"surat-jalan:{month_key}", sj_floor)
         sj_id = new_id()
-        sj_no = f"{month_prefix}{sj_number:03d}"
+        sj_no = f"{month_prefix}{sj_number:04d}"
         sj = {
             "id": sj_id,
             "operation_id": operation_id,
