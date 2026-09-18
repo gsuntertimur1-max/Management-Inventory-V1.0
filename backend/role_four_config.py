@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-"""Compatibility layer for warehouse access roles.
+"""Six-role warehouse access compatibility layer.
 
-Stored legacy role values are retained for API compatibility. Operator and QC are
-re-used as internal storage codes for the two tightly-scoped consignment roles:
-Petugas Bazar and Petugas E-commerce. UI labels expose the business names only.
+Stored legacy role values remain valid, while all API/UI labels resolve to the
+same six business roles. Operator and QC are retained only as internal storage
+codes for Petugas Bazar and Petugas E-commerce.
 """
 
 from fastapi import Depends, HTTPException

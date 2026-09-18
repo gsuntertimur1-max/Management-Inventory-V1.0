@@ -161,64 +161,90 @@ ROLE_ADMIN = "Supervisor"
 ROLE_OPERATOR = "Operator"
 ROLE_QC = "QC"
 ROLE_WAREHOUSE_HEAD = "Kepala Gudang"
-ROLE_FOREMAN = "Mandor"
+ROLE_FOREMAN = "Mandor"  # legacy alias only; canonicalized to Admin Operasional
 ROLE_VIEWER = "Pemantau"
 
+# Canonical storage values are retained for backward compatibility. Business
+# labels are exposed consistently by the API and frontend.
 ROLE_ALIASES = {
+    "Administrator": ROLE_SUPERADMIN,
     "Superadmin": ROLE_SUPERADMIN,
+    "Kepala Gudang": ROLE_WAREHOUSE_HEAD,
+    "Supervisor": ROLE_ADMIN,
     "Admin": ROLE_ADMIN,
+    "Admin Operasional": ROLE_ADMIN,
+    "Operator": ROLE_OPERATOR,
+    "Petugas Bazar": ROLE_OPERATOR,
+    "QC": ROLE_QC,
+    "Petugas E-commerce": ROLE_QC,
+    "Petugas Ecom": ROLE_QC,
+    "Mandor": ROLE_ADMIN,
+    "Pemantau": ROLE_VIEWER,
+    "Viewer": ROLE_VIEWER,
+    "Viewer / Auditor": ROLE_VIEWER,
 }
 
 ROLE_LABELS = {
     ROLE_SUPERADMIN: "Superadmin",
-    ROLE_ADMIN: "Admin Gudang",
-    ROLE_OPERATOR: "Operator Gudang",
-    ROLE_QC: "QC",
     ROLE_WAREHOUSE_HEAD: "Kepala Gudang",
-    ROLE_FOREMAN: "Mandor / Keuangan Operasional",
-    ROLE_VIEWER: "Viewer / Auditor",
+    ROLE_ADMIN: "Admin Operasional",
+    ROLE_OPERATOR: "Petugas Bazar",
+    ROLE_QC: "Petugas E-commerce",
+    ROLE_VIEWER: "Viewer",
 }
 
 
 def canonical_role(role: Optional[str]) -> str:
-    value = (role or ROLE_VIEWER).strip()
-    return ROLE_ALIASES.get(value, value)
+    value = str(role or ROLE_VIEWER).strip()
+    return ROLE_ALIASES.get(value, ROLE_VIEWER)
 
 
 ROLE_PERMISSIONS = {
-    ROLE_SUPERADMIN: {"masterWrite", "inbound", "outbound", "rebagging", "qc", "users", "settings", "costView"},
-    ROLE_ADMIN: {"masterWrite", "inbound", "outbound", "costView"},
-    # Operator Gudang hanya mencatat arus stok harian; master dan pengaturan
-    # tetap khusus Admin Gudang/Superadmin.
-    ROLE_OPERATOR: {"rebagging"},
-    ROLE_QC: {"qc"},
-    # Modul persetujuan Kepala Gudang dan layar pembayaran mandor akan memakai
-    # izin khusus ini saat endpoint-nya ditambahkan. Keduanya tetap read-only
-    # untuk stok agar tidak dapat mengubah transaksi operasional.
-    ROLE_WAREHOUSE_HEAD: {"warehouseApprove"},
-    ROLE_FOREMAN: {"costView"},
-    ROLE_VIEWER: set(),
+    ROLE_SUPERADMIN: {
+        "masterWrite", "inbound", "outbound", "rebagging", "qc", "users",
+        "settings", "costView", "corrections", "warehouseApprove", "currentWrite",
+        "bazarView", "bazarOps", "ecomView", "ecomOps", "consignmentView", "consignmentHistory",
+    },
+    ROLE_WAREHOUSE_HEAD: {
+        "inbound", "outbound", "costView", "corrections", "warehouseApprove",
+        "currentWrite", "bazarView", "bazarOps", "ecomView", "ecomOps",
+        "consignmentView", "consignmentHistory",
+    },
+    ROLE_ADMIN: {
+        "inbound", "outbound", "costView", "currentWrite",
+        "bazarView", "ecomView", "consignmentView",
+    },
+    ROLE_OPERATOR: {"bazarView", "bazarOps", "consignmentView", "consignmentHistory"},
+    ROLE_QC: {"ecomView", "ecomOps", "consignmentView", "consignmentHistory"},
+    ROLE_VIEWER: {"bazarView", "ecomView", "consignmentView"},
 }
 
 
 def has_role_permission(role: Optional[str], permission: str) -> bool:
     canonical = canonical_role(role)
-    if permission == "currentWrite":
-        return canonical in {ROLE_SUPERADMIN, ROLE_ADMIN}
+    if permission == "view":
+        return canonical in ROLE_PERMISSIONS
     if permission == "operations":
-        return canonical in {ROLE_SUPERADMIN, ROLE_ADMIN}
+        return (
+            "inbound" in ROLE_PERMISSIONS.get(canonical, set())
+            or "outbound" in ROLE_PERMISSIONS.get(canonical, set())
+        )
+    if permission == "outboundPage":
+        return (
+            "outbound" in ROLE_PERMISSIONS.get(canonical, set())
+            or "costView" in ROLE_PERMISSIONS.get(canonical, set())
+        )
     return permission in ROLE_PERMISSIONS.get(canonical, set())
 
 
 def role_label(role: Optional[str]) -> str:
     canonical = canonical_role(role)
-    return ROLE_LABELS.get(canonical, canonical)
+    return ROLE_LABELS.get(canonical, "Viewer")
 
 
-# The current Railway branch has no separate Rebagging/QC endpoints yet. The
-# generic write dependency covers the currently exposed inbound/outbound
-# operations. Master/settings routes use their dedicated Admin dependency.
-WRITE_ROLES = {ROLE_SUPERADMIN, ROLE_ADMIN}
+# Generic write routes are limited to the same three operational roles used by
+# the active compatibility layer. Scoped Bazar/E-commerce roles remain isolated.
+WRITE_ROLES = {ROLE_SUPERADMIN, ROLE_WAREHOUSE_HEAD, ROLE_ADMIN}
 
 
 async def require_write(user: dict = Depends(get_current_user)) -> dict:
@@ -366,18 +392,28 @@ class SessionBody(BaseModel):
     session_id: str
 
 
+RoleInput = Literal[
+    'Administrator', 'Superadmin',
+    'Kepala Gudang',
+    'Supervisor', 'Admin', 'Admin Operasional', 'Mandor',
+    'Operator', 'Petugas Bazar',
+    'QC', 'Petugas E-commerce', 'Petugas Ecom',
+    'Pemantau', 'Viewer', 'Viewer / Auditor',
+]
+
+
 class UserCreate(BaseModel):
     name: str
     username: str
     email: str = ''
-    role: Literal['Administrator', 'Supervisor', 'Operator', 'QC', 'Kepala Gudang', 'Mandor', 'Pemantau', 'Superadmin', 'Admin'] = 'Operator'
+    role: RoleInput = 'Operator'
     password: str
 
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None
     email: Optional[str] = None
-    role: Optional[Literal['Administrator', 'Supervisor', 'Operator', 'QC', 'Kepala Gudang', 'Mandor', 'Pemantau', 'Superadmin', 'Admin']] = None
+    role: Optional[RoleInput] = None
     active: Optional[bool] = None
 
 

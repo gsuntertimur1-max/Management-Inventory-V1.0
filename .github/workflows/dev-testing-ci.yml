@@ -21,6 +21,10 @@ jobs:
           yarn install --network-timeout 600000
           CI=false yarn build
 
+      - name: Test frontend role permissions
+        working-directory: frontend
+        run: CI=true yarn test --watchAll=false --runInBand src/lib/permissions.test.js
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

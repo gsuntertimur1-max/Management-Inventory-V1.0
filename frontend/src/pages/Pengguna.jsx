@@ -4,9 +4,9 @@ import { Plus, X, ShieldCheck, User as UserIcon, KeyRound, Trash2, Power } from 
 import { useData } from '../context/DataContext';
 import { apiError } from '../lib/api';
 import { toast } from 'sonner';
-import { ROLE_COLORS, ROLE_LABELS, FOUR_ROLES, canonicalRole, roleLabel } from '../lib/permissions';
+import { ROLE_COLORS, ROLE_LABELS, USER_ROLES, canonicalRole, roleLabel } from '../lib/permissions';
 
-const ROLES = FOUR_ROLES;
+const ROLES = USER_ROLES;
 
 const inputCls = 'w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]';
 
@@ -108,7 +108,7 @@ const Pengguna = () => {
       </div>
 
       <div className="card-surface p-4 text-xs text-[#aab4c4]">
-        <span className="font-semibold text-white">Aturan akses:</span> Superadmin memiliki akses penuh termasuk pengguna, master, pengaturan, koreksi, dan operasional · Kepala Gudang mengelola seluruh proses operasional, monitoring, biaya, koreksi, dan persetujuan · Admin Operasional menjalankan inbound, mutasi, outbound, temuan kerusakan, retur/ganti pemasok, serta monitoring · Viewer hanya melihat dashboard, stok, inventory, riwayat, dan laporan.
+        <span className="font-semibold text-white">Aturan akses:</span> Superadmin memiliki akses penuh · Kepala Gudang menangani operasional, koreksi, biaya, persetujuan, serta Bazar/E-commerce · Admin Operasional menangani inbound, outbound, biaya, dan monitoring · Petugas Bazar hanya menjalankan proses Bazar · Petugas E-commerce hanya menjalankan proses E-commerce · Viewer hanya membaca data yang diizinkan.
       </div>
 
       <div className="card-surface p-6">
