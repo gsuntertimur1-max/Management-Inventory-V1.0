@@ -6,6 +6,7 @@ import { apiError, downloadApiFile } from '../lib/api';
 import { formatNum } from '../mock';
 import { stackCodes, warehousesFromSettings, zonesForWarehouse } from '../lib/warehouses';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
+import SearchableProductSelect from '../components/SearchableProductSelect';
 
 const blank = (stackCode) => ({ productId: '', stackCode, length: 1, width: 1, height: 1, arrangements: [{ hamparan: 1, kaki: 1, height: 1 }], extraSecondary: 0, extraPrimary: 0, note: '' });
 
@@ -123,7 +124,14 @@ const TumpukanStok = () => {
     </section>
 
     <Dialog open={Boolean(modal)} onOpenChange={(open) => { if (!open && !busy) setModal(null); }}><DialogContent className="max-w-2xl border-[#242f3d] bg-[#0d121b] text-[#e7ebf2]"><DialogHeader><DialogTitle>{modal?.mode === 'edit' ? 'Ubah Susunan' : 'Tempatkan Komoditas'}</DialogTitle><DialogDescription className="text-[#8b93a1]">Tumpukan {modal?.data.stackCode}; perhitungan memakai kemasan sekunder.</DialogDescription></DialogHeader>{modal && <div className="space-y-4">
-      <div><label className="text-sm block mb-1">Produk</label><select disabled={modal.mode === 'edit'} value={modal.data.productId} onChange={(e) => setModal({ ...modal, data: { ...modal.data, productId: e.target.value } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5"><option value="">Pilih produk...</option>{eligible.map((p) => <option key={p.id} value={p.id}>{p.name} — belum ditempatkan {formatNum(Math.max(Number(p.stock || 0) - Number(allocated[p.id] || 0), 0))} {p.unit}</option>)}</select><p className="text-xs text-[#6b7688] mt-1">Atur kemasan sekunder di Master Produk jika produk belum muncul.</p></div>
+      <div><label className="text-sm block mb-1">Produk</label><SearchableProductSelect
+        disabled={modal.mode === 'edit'}
+        products={eligible}
+        value={modal.data.productId}
+        placeholder="Ketik nama / SKU produk..."
+        onChange={(productId) => setModal({ ...modal, data: { ...modal.data, productId } })}
+        getDescription={(p) => `Belum ditempatkan ${formatNum(Math.max(Number(p.stock || 0) - Number(allocated[p.id] || 0), 0))} ${p.unit}`}
+      /><p className="text-xs text-[#6b7688] mt-1">Atur kemasan sekunder di Master Produk jika produk belum muncul.</p></div>
       <div className="space-y-2"><div className="flex justify-between"><label className="text-sm font-medium">Blok perkalian <span className="text-[#6b7688]">(maks. 10)</span></label>{modal.data.arrangements.length < 10 && <button onClick={() => setModal({ ...modal, data: { ...modal.data, arrangements: [...modal.data.arrangements, { hamparan: 1, kaki: 1, height: 1 }] } })} className="text-xs text-[#60a5fa] flex items-center gap-1"><Plus size={14} />Tambah perkalian</button>}</div>{modal.data.arrangements.map((row, index) => <div key={index} className="grid grid-cols-[1fr_1fr_1fr_34px] gap-2 items-end rounded-lg bg-[#0b0f17] p-2">{[['hamparan', 'Hamparan'], ['kaki', 'Kaki'], ['height', 'Tinggi']].map(([key, label]) => <div key={key}><label className="text-xs text-[#8b93a1] block mb-1">{label}</label><input type="number" min="1" step="1" value={row[key]} onChange={(e) => { const arrangements = modal.data.arrangements.map((x, i) => i === index ? { ...x, [key]: Number(e.target.value) } : x); setModal({ ...modal, data: { ...modal.data, arrangements } }); }} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2 font-mono" /></div>)}<button disabled={modal.data.arrangements.length === 1} onClick={() => setModal({ ...modal, data: { ...modal.data, arrangements: modal.data.arrangements.filter((_, i) => i !== index) } })} className="h-10 text-[#ef4444] disabled:opacity-30"><Minus size={16} /></button></div>)}</div>
       <div><label className="text-sm block mb-1">Kemasan tambahan / numpang</label><input type="number" min="0" step="1" value={modal.data.extraSecondary || 0} onChange={(e) => setModal({ ...modal, data: { ...modal.data, extraSecondary: Number(e.target.value) } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 font-mono" /></div>
       <div><label className="text-sm block mb-1">{product?.unit || 'Pack/pouch'} lepas tanpa {product?.secondary || 'kemasan sekunder'}</label><input type="number" min="0" step="1" value={modal.data.extraPrimary || 0} onChange={(e) => setModal({ ...modal, data: { ...modal.data, extraPrimary: Number(e.target.value) } })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 font-mono" /></div>
