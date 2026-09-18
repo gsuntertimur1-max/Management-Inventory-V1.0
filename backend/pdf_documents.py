@@ -308,10 +308,48 @@ async def export_bon_muat_pdf(load_id: str, user: dict = Depends(get_current_use
         entry["berat"] += float(item.get("berat", 0) or 0)
 
     buffer = io.BytesIO()
-    width = 80 * mm
-    # Font besar dipertahankan. Jika item/SO bertambah, kertas thermal yang memanjang,
-    # bukan ukuran font yang dikecilkan.
-    height = max(210 * mm, (158 + (len(grouped) * 52)) * mm)
+    width = 72 * mm
+    # Area cetak 72 mm dengan margin kiri-kanan 4 mm.
+    printable_width = width - (8 * mm)
+
+    def _wrap_thermal(text: str, font_name: str, font_size: float, max_width: float) -> list[str]:
+        words = str(text or "").split()
+        if not words:
+            return [""]
+        lines: list[str] = []
+        current = words[0]
+        for word in words[1:]:
+            candidate = f"{current} {word}"
+            if stringWidth(candidate, font_name, font_size) <= max_width:
+                current = candidate
+            else:
+                lines.append(current)
+                current = word
+        lines.append(current)
+        return lines
+
+    # Hitung ruang tambahan untuk nama komoditi yang membungkus ke bawah.
+    product_extra_mm = 0.0
+    for item in grouped.values():
+        product_name = str(item.get("name", ""))
+        words = product_name.split()
+        if not words:
+            line_count = 1
+        else:
+            line_count = 1
+            current = words[0]
+            for word in words[1:]:
+                candidate = f"{current} {word}"
+                if stringWidth(candidate, "Helvetica-Bold", 12.5) <= printable_width:
+                    current = candidate
+                else:
+                    line_count += 1
+                    current = word
+        product_extra_mm += max(0, line_count - 1) * 5.5
+
+    # Font besar dipertahankan. Jika item/SO/nama produk bertambah, kertas thermal
+    # yang memanjang, bukan ukuran font yang dikecilkan.
+    height = max(210 * mm, (158 + (len(grouped) * 52) + product_extra_mm) * mm)
     c = canvas.Canvas(buffer, pagesize=(width, height))
     mid = width / 2
 
@@ -369,9 +407,14 @@ async def export_bon_muat_pdf(load_id: str, user: dict = Depends(get_current_use
     ]
     for label, value in fields:
         c.setFont("Helvetica-Bold", 8.8)
-        c.drawString(5 * mm, y, label)
-        c.setFont("Helvetica-Bold", 8.8)
-        c.drawString(24 * mm, y, str(value)[:35])
+        c.drawString(4 * mm, y, label)
+        value_text = str(value)
+        value_font = 8.8
+        value_max_width = width - (27 * mm)
+        while value_font > 7.0 and c.stringWidth(value_text, "Helvetica-Bold", value_font) > value_max_width:
+            value_font -= 0.4
+        c.setFont("Helvetica-Bold", value_font)
+        c.drawString(23 * mm, y, value_text)
         y -= 6.2 * mm
 
     y -= 2 * mm
@@ -389,8 +432,8 @@ async def export_bon_muat_pdf(load_id: str, user: dict = Depends(get_current_use
     table_left = 4 * mm
     table_right = width - 4 * mm
     table_width = table_right - table_left
-    label_w = 24 * mm
-    number_w = 28 * mm
+    label_w = 20 * mm
+    number_w = 24 * mm
     unit_w = table_width - label_w - number_w
 
     for item in grouped.values():
@@ -413,14 +456,19 @@ async def export_bon_muat_pdf(load_id: str, user: dict = Depends(get_current_use
         else:
             loading_location = str(load.get("unit_loading") or stack_code or "-")
 
-        c.setFont("Helvetica-Bold", 12.5)
         product_name = str(item.get("name", ""))
         product_font = 12.5
-        while product_font > 9.5 and c.stringWidth(product_name, "Helvetica-Bold", product_font) > table_width:
-            product_font -= 0.5
-        c.setFont("Helvetica-Bold", product_font)
-        c.drawCentredString(mid, y, product_name)
-        y -= 6.2 * mm
+        product_lines = _wrap_thermal(product_name, "Helvetica-Bold", product_font, table_width)
+        # Jika ada satu kata/merk yang sangat panjang, turunkan sedikit hanya untuk
+        # kata tersebut; nama normal tetap 12,5 pt dan dibungkus ke baris berikutnya.
+        for line in product_lines:
+            line_font = product_font
+            while line_font > 10.5 and c.stringWidth(line, "Helvetica-Bold", line_font) > table_width:
+                line_font -= 0.5
+            c.setFont("Helvetica-Bold", line_font)
+            c.drawCentredString(mid, y, line)
+            y -= 5.5 * mm
+        y -= 0.7 * mm
 
         c.setFont("Helvetica-Bold", 9.5)
         source_line = f"{item.get('documentNo') or load.get('ref', '-')} | Tumpukan: {stack_code or '-'}"
@@ -459,23 +507,35 @@ async def export_bon_muat_pdf(load_id: str, user: dict = Depends(get_current_use
         # sehingga tulisan "Colly:" membentang dua baris.
         c.line(x_label, y_colly_second_top, table_right, y_colly_second_top)
 
-        # Label kiri besar.
-        c.setFont("Helvetica-Bold", 13.5)
-        c.drawString(table_left + 1.8 * mm, y_tonase_top + colly_row_h - 3.5 * mm, "Colly:")
-        c.drawString(table_left + 1.8 * mm, y_loading_top + 3.4 * mm, "Tonase:")
-        c.drawString(table_left + 1.8 * mm, table_bottom + 5.0 * mm, "Pemuatan:")
+        # Label kiri diperkecil 2 pt dari versi sebelumnya (13,5 -> 11,5 pt).
+        c.setFont("Helvetica-Bold", 11.5)
+        c.drawString(table_left + 1.5 * mm, y_tonase_top + colly_row_h - 3.5 * mm, "Colly:")
+        c.drawString(table_left + 1.5 * mm, y_loading_top + 3.4 * mm, "Tonase:")
+        c.drawString(table_left + 1.5 * mm, table_bottom + 5.0 * mm, "Pemuatan:")
 
         # Angka Colly / sisa Pack-PCS.
         number_center = x_label + number_w / 2
         unit_center = x_number + unit_w / 2
 
-        c.setFont("Helvetica-Bold", 18)
-        c.drawCentredString(number_center, table_top - 6.8 * mm, secondary_number)
-        c.drawCentredString(number_center, y_colly_second_top - 6.8 * mm, primary_number)
+        for number_value, number_y in [
+            (secondary_number, table_top - 6.8 * mm),
+            (primary_number, y_colly_second_top - 6.8 * mm),
+        ]:
+            number_font = 18
+            while number_font > 13 and c.stringWidth(str(number_value), "Helvetica-Bold", number_font) > (number_w - 2.5 * mm):
+                number_font -= 0.5
+            c.setFont("Helvetica-Bold", number_font)
+            c.drawCentredString(number_center, number_y, str(number_value))
 
-        c.setFont("Helvetica-Bold", 13.5)
-        c.drawCentredString(unit_center, table_top - 6.5 * mm, secondary_unit)
-        c.drawCentredString(unit_center, y_colly_second_top - 6.5 * mm, primary_unit)
+        for unit_value, unit_y in [
+            (secondary_unit, table_top - 6.5 * mm),
+            (primary_unit, y_colly_second_top - 6.5 * mm),
+        ]:
+            unit_font = 13.5
+            while unit_font > 10.5 and c.stringWidth(str(unit_value), "Helvetica-Bold", unit_font) > (unit_w - 2 * mm):
+                unit_font -= 0.5
+            c.setFont("Helvetica-Bold", unit_font)
+            c.drawCentredString(unit_center, unit_y, str(unit_value))
 
         # Tonase/kuantum fisik.
         physical_value = _num(item.get("berat", 0))
@@ -484,7 +544,10 @@ async def export_bon_muat_pdf(load_id: str, user: dict = Depends(get_current_use
             physical_font -= 0.5
         c.setFont("Helvetica-Bold", physical_font)
         c.drawCentredString(number_center, y_tonase_top - 7.4 * mm, physical_value)
-        c.setFont("Helvetica-Bold", 13.5)
+        measure_font = 13.5
+        while measure_font > 10.5 and c.stringWidth(str(measure_unit), "Helvetica-Bold", measure_font) > (unit_w - 2 * mm):
+            measure_font -= 0.5
+        c.setFont("Helvetica-Bold", measure_font)
         c.drawCentredString(unit_center, y_tonase_top - 7.0 * mm, measure_unit)
 
         # Lokasi pemuatan dibuat besar pada sel gabungan.
