@@ -236,7 +236,7 @@ async def create_bazar_trip(body: BazarTripCreate, user: dict = Depends(get_curr
                 {"_id": 0, "stackCode": 1},
                 sort=[("stackCode", 1)],
             )
-            stack_code = str((layout or {}).get("stackCode") or "BZR/A01")
+            stack_code = str((layout or {}).get("stackCode") or "18/A01-BAZAR")
 
         product_layout_count = await db.consignment_layouts.count_documents({"destination": BAZAR, "productId": product_id})
         selected_layout = await db.consignment_layouts.find_one(
