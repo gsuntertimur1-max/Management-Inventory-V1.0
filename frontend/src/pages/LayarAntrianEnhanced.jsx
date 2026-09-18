@@ -30,8 +30,7 @@ const LayarAntrianEnhanced = () => {
           <div>
             <div className="label-mono text-[10px] text-[#93c5fd]">Aturan Nomor Antrian</div>
             <div className="text-sm mt-1"><span className="font-mono font-bold">17-xxx s.d. 24-xxx / MP1-xxx</span> = satu unit pemuatan · <span className="font-mono font-bold text-[#fbbf24]">M-xxx</span> = satu kendaraan memuat dari lebih dari satu unit.</div>
-            <div className="text-xs text-[#8b93a1] mt-1">Nomor Bon Muat tetap nomor dokumen global dan tidak memakai kode lokasi. Lokasi fisik ditampilkan terpisah sebagai rute muat.</div>
-          </div>
+                </div>
           <div className="inline-flex items-center gap-2 rounded-lg border border-[#334155] px-3 py-2 text-xs"><Route size={15} /> {multi.length} multi-lokasi aktif</div>
         </div>
       </div>
