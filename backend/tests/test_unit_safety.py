@@ -55,10 +55,10 @@ def test_service_routes_do_not_duplicate_api_prefix():
         ("Supervisor", "inbound", True),
         ("Supervisor", "outbound", True),
         ("Supervisor", "qc", False),
-        ("Operator", "rebagging", True),
+        ("Operator", "bazarOps", True),
         ("Operator", "inbound", False),
         ("Operator", "outbound", False),
-        ("QC", "qc", True),
+        ("QC", "ecomOps", True),
         ("QC", "inbound", False),
         ("QC", "outbound", False),
     ],
@@ -71,7 +71,7 @@ def test_role_aliases_and_labels_preserve_legacy_values():
     assert server.canonical_role("Superadmin") == "Administrator"
     assert server.canonical_role("Admin") == "Supervisor"
     assert server.role_label("Administrator") == "Superadmin"
-    assert server.role_label("Supervisor") == "Admin Gudang"
+    assert server.role_label("Supervisor") == "Admin Operasional"
 
 
 def test_receipt_quantities_preserve_legacy_condition_and_validate_split_total():
