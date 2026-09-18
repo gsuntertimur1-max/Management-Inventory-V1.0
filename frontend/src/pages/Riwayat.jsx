@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
-import { Search, Download } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Search, Download, DollarSign, Printer, X } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { apiError, downloadApiFile } from '../lib/api';
-import { formatNum, formatDate } from '../mock';
+import { formatNum, formatDate, formatRp } from '../mock';
 import { toast } from 'sonner';
 import { packagingText, totalWeight } from '../lib/packaging';
 
@@ -19,6 +20,19 @@ const transactionChannel = (transaction) => {
   return transaction.type === 'KOREKSI' ? '' : 'KOM';
 };
 
+const normalizeUnloadingGroup = (value) => {
+  const text = String(value || '').toUpperCase();
+  if (!text || text.includes('RTR')) return '';
+  if (text.includes('GRUP 2') || text.includes('MANDOR 2') || text.includes('MP1') || /21-24/.test(text)) {
+    return 'MANDOR 2 - MP1/GBB 21-24';
+  }
+  return 'MANDOR 1 - GBB 17-20';
+};
+
+const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;',
+}[char]));
+
 const Riwayat = () => {
   const { transactions } = useData();
   const [q, setQ] = useState('');
@@ -26,6 +40,7 @@ const Riwayat = () => {
   const [kondisi, setKondisi] = useState('SEMUA');
   const [channel, setChannel] = useState('SEMUA');
   const [exporting, setExporting] = useState(false);
+  const [unloadingOpen, setUnloadingOpen] = useState(false);
 
   const filtered = transactions.filter((t) => {
     const query = q.toLowerCase();
@@ -45,6 +60,47 @@ const Riwayat = () => {
   const totalIn = transactions.filter((t) => t.type === 'MASUK' && !t.voided).reduce((a, t) => a + Number(t.change || 0), 0);
   const totalOut = transactions.filter((t) => t.type === 'KELUAR' && !t.voided).reduce((a, t) => a + Number(t.change || 0), 0);
   const totalCorrections = transactions.filter((t) => t.type === 'KOREKSI').length;
+
+  const unloadingDays = useMemo(() => {
+    const days = {};
+    transactions
+      .filter((t) => t.type === 'MASUK' && !t.voided && Number(t.unloading_cost?.total || 0) > 0)
+      .forEach((t) => {
+        const group = normalizeUnloadingGroup(t.unloading_group);
+        if (!group) return;
+        const date = t.operational_date || String(t.time || '').slice(0, 10) || '-';
+        const day = days[date] || {
+          date,
+          totals: { labor: 0, daily: 0, warehouse: 0, total: 0, chargeable: 0 },
+          groups: {},
+          items: [],
+        };
+        const groupTotals = day.groups[group] || { labor: 0, daily: 0, warehouse: 0, total: 0, chargeable: 0 };
+        ['labor', 'daily', 'warehouse', 'total', 'chargeable'].forEach((key) => {
+          const value = Number(t.unloading_cost?.[key] || 0);
+          day.totals[key] += value;
+          groupTotals[key] += value;
+        });
+        day.groups[group] = groupTotals;
+        day.items.push({ ...t, unloading_group: group });
+        days[date] = day;
+      });
+    return Object.values(days).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  }, [transactions]);
+
+  const unloadingGrandTotal = unloadingDays.reduce((sum, day) => sum + Number(day.totals.total || 0), 0);
+
+  const printUnloadingDay = (day, group, recipient) => {
+    const key = recipient === 'BURUH' ? 'labor' : 'daily';
+    const title = recipient === 'BURUH' ? 'REKAP UPAH BURUH BONGKAR' : 'REKAP UH GUDANG BONGKAR';
+    const items = (day.items || []).filter((item) => item.unloading_group === group && Number(item.unloading_cost?.[key] || 0) > 0);
+    const rows = items.map((item, index) => `<tr><td>${index + 1}</td><td><b>${escapeHtml(item.product)}</b><br/><small>${escapeHtml(item.ref || item.po_no || '—')} · ${escapeHtml(formatNum(Math.abs(Number(item.change || 0))))} ${escapeHtml(item.unit || '')}${item.unloading_cost?.overtime ? ' · Lembur' : ''}${item.unloading_cost?.holiday ? ' · Hari Libur' : ''}</small></td><td class="r">Rp ${escapeHtml(formatNum(item.unloading_cost?.[key] || 0))}</td></tr>`).join('');
+    const totalAmount = items.reduce((sum, item) => sum + Number(item.unloading_cost?.[key] || 0), 0);
+    const w = window.open('', '_blank', 'width=460,height=720');
+    if (!w) return toast.error('Izinkan popup untuk mencetak rekap thermal.');
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>@page{size:80mm auto;margin:3mm}*{box-sizing:border-box}body{width:74mm;margin:0 auto;color:#000;font:12px/1.35 Arial,sans-serif}.center{text-align:center}.title{font-size:15px;font-weight:900;margin:6px 0}.sub{font-size:10px;margin-bottom:8px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border-bottom:1px dashed #000;padding:6px 2px;text-align:left;vertical-align:top}.r{text-align:right;font-weight:700}.total{font-size:17px;font-weight:900;margin:12px 0}.line{border-top:1px solid #000;margin-top:38px;padding-top:5px;text-align:center;font-size:11px;font-weight:700}small{font-size:9px}</style></head><body><div class="center"><b>PERUM BULOG</b><div>Gudang Sunter Timur I & II</div><div class="title">${title}</div><div class="sub">${escapeHtml(group)}<br/>Tanggal: ${escapeHtml(day.date)}</div></div><table><thead><tr><th>No</th><th>Penerimaan</th><th class="r">Biaya</th></tr></thead><tbody>${rows || '<tr><td colspan="3">Tidak ada biaya</td></tr>'}</tbody></table><div class="total">TOTAL: Rp ${escapeHtml(formatNum(totalAmount))}</div><div class="line">Petugas Gudang</div><div class="line">Penerima ${recipient === 'BURUH' ? 'Buruh' : 'UH Gudang'}</div><script>window.onload=()=>window.print()</script></body></html>`);
+    w.document.close();
+  };
 
   const exportCurrentMonth = async () => {
     if (exporting) return;
@@ -77,9 +133,10 @@ const Riwayat = () => {
       <div className="card-surface p-6">
         <div className="flex flex-wrap gap-3 mb-4">
           <div className="relative flex-1 min-w-[240px]"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6b7688]" /><input data-testid="riwayat-search-input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari No. Ref/PO, produk, SKU, pihak terkait, alasan koreksi..." className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg pl-9 pr-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" /></div>
-          <select data-testid="riwayat-type-filter" value={type} onChange={(e) => setType(e.target.value)} className="bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none"><option value="SEMUA">SEMUA TIPE</option><option value="MASUK">MASUK</option><option value="KELUAR">KELUAR</option><option value="PENYESUAIAN">PENYESUAIAN</option><option value="KOREKSI">KOREKSI</option></select>
+          <select data-testid="riwayat-type-filter" value={type} onChange={(e) => setType(e.target.value)} className="bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none"><option value="SEMUA">SEMUA TIPE</option><option value="MASUK">PENERIMAAN (MASUK)</option><option value="KELUAR">KELUAR</option><option value="PENYESUAIAN">PENYESUAIAN</option><option value="KOREKSI">KOREKSI</option></select>
           <select value={channel} onChange={(e) => setChannel(e.target.value)} className="bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none"><option value="SEMUA">Semua Saluran</option><option value="PSO">PSO</option><option value="KOM">KOM</option></select>
           <select data-testid="riwayat-kondisi-filter" value={kondisi} onChange={(e) => setKondisi(e.target.value)} className="bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none"><option value="SEMUA">SEMUA KONDISI</option><option value="BAIK">BAIK</option><option value="RUSAK">RUSAK</option><option value="DOKUMEN">DOKUMEN</option></select>
+          <button onClick={() => { setType('MASUK'); setUnloadingOpen(true); }} className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-[#8a5a16] text-[#fbbf24] hover:bg-[#f59e0b]/10"><DollarSign size={15} /> Rekap Biaya Bongkar</button>
           <button onClick={exportCurrentMonth} disabled={exporting} className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-[#242f3d] hover:bg-[#141a24] disabled:opacity-60 disabled:cursor-wait"><Download size={15} /> {exporting ? 'Menyiapkan…' : 'Unduh Excel Bulan Ini'}</button>
         </div>
         <p className="text-xs text-[#6b7688] mb-4">Transaksi yang dibatalkan tetap tampil sebagai audit trail dan tidak dihitung pada Masuk Aktif. Koreksi tidak pernah menghapus riwayat transaksi asli.</p>
@@ -113,6 +170,68 @@ const Riwayat = () => {
           </table>
         </div>
       </div>
+
+      {unloadingOpen && createPortal(
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/75 p-4 sm:p-6 overflow-y-auto">
+          <div className="card-surface w-full max-w-5xl p-6 fade-up max-h-[calc(100dvh-3rem)] overflow-y-auto">
+            <div className="flex flex-wrap items-start justify-between gap-3 mb-5">
+              <div>
+                <div className="label-mono text-[10px] text-[#fbbf24]">History Penerimaan</div>
+                <h2 className="font-display text-xl font-bold mt-1">Rekap Biaya Bongkar</h2>
+                <p className="text-xs text-[#8b93a1] mt-1">Hanya 2 mandor bongkar: GBB 17–20 dan MP1/GBB 21–24. RTR tidak masuk rekap bongkar.</p>
+              </div>
+              <div className="flex items-start gap-3">
+                <div className="text-right"><div className="text-[10px] text-[#8b93a1]">Total tercatat</div><div className="font-mono font-bold text-[#fbbf24]">{formatRp(unloadingGrandTotal)}</div></div>
+                <button onClick={() => setUnloadingOpen(false)} className="text-[#8b93a1] hover:text-white"><X size={20} /></button>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              {unloadingDays.length === 0 ? <div className="rounded-lg border border-[#242f3d] p-6 text-center text-sm text-[#6b7688]">Belum ada penerimaan dengan biaya bongkar.</div> : unloadingDays.map((day) => (
+                <div key={day.date} className="rounded-xl border border-[#2b3545] bg-[#0b0f17] p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+                    <div>
+                      <div className="font-semibold">{day.date}</div>
+                      <div className="text-xs text-[#8b93a1] mt-1">Buruh {formatRp(day.totals.labor)} · UH {formatRp(day.totals.daily)} · Gudang {formatRp(day.totals.warehouse)} · Total <b className="text-[#fbbf24]">{formatRp(day.totals.total)}</b></div>
+                    </div>
+                    {Number(day.totals.chargeable || 0) > 0 && <div className="text-xs rounded-lg border border-[#8a5a16] px-3 py-2 text-[#fbbf24]">Tagihan Pengirim {formatRp(day.totals.chargeable)}</div>}
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                    {['MANDOR 1 - GBB 17-20', 'MANDOR 2 - MP1/GBB 21-24'].map((group) => {
+                      const values = day.groups[group];
+                      if (!values) return null;
+                      return (
+                        <div key={group} className="rounded-lg border border-[#202a38] p-3">
+                          <div className="font-semibold text-sm">{group}</div>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2 text-xs">
+                            <div><span className="text-[#8b93a1]">Buruh</span><div className="font-mono">{formatRp(values.labor)}</div></div>
+                            <div><span className="text-[#8b93a1]">UH</span><div className="font-mono">{formatRp(values.daily)}</div></div>
+                            <div><span className="text-[#8b93a1]">Gudang</span><div className="font-mono">{formatRp(values.warehouse)}</div></div>
+                            <div><span className="text-[#8b93a1]">Total</span><div className="font-mono font-bold text-[#fbbf24]">{formatRp(values.total)}</div></div>
+                          </div>
+                          <div className="flex flex-wrap gap-2 mt-3">
+                            <button onClick={() => printUnloadingDay(day, group, 'BURUH')} className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-[#294263] text-[#93c5fd]"><Printer size={12} /> Buruh 80mm</button>
+                            <button onClick={() => printUnloadingDay(day, group, 'HARIAN')} className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-[#294263] text-[#93c5fd]"><Printer size={12} /> UH 80mm</button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="overflow-x-auto mt-4">
+                    <table className="w-full text-xs">
+                      <thead><tr className="text-left border-b border-[#242f3d]"><th className="py-2 pr-3">No. Ref / PO</th><th className="py-2 pr-3">Produk</th><th className="py-2 pr-3">Mandor</th><th className="py-2 pr-3">Kuantitas</th><th className="py-2 text-right">Biaya</th></tr></thead>
+                      <tbody>{day.items.map((item) => <tr key={item.id} className="border-b border-[#171e29]"><td className="py-2 pr-3 font-mono">{item.po_no || item.ref || '—'}</td><td className="py-2 pr-3"><div className="font-medium">{item.product}</div><div className="text-[10px] text-[#6b7688]">{item.unloading_cost?.overtime ? 'Lembur ' : ''}{item.unloading_cost?.holiday ? 'Hari Libur' : ''}</div></td><td className="py-2 pr-3">{item.unloading_group}</td><td className="py-2 pr-3 font-mono">{formatNum(Math.abs(Number(item.change || 0)))} {item.unit || ''}</td><td className="py-2 text-right font-mono">{formatRp(item.unloading_cost?.total || 0)}</td></tr>)}</tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 };
