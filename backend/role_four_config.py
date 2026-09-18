@@ -57,7 +57,7 @@ ROLE_PERMISSIONS = {
     },
     ROLE_ADMIN: {
         "inbound", "outbound", "costView", "currentWrite",
-        "bazarView", "bazarOps", "ecomView", "ecomOps", "consignmentView",
+        "bazarView", "ecomView", "consignmentView",
     },
     ROLE_BAZAR: {"bazarView", "bazarOps", "consignmentView"},
     ROLE_ECOM: {"ecomView", "ecomOps", "consignmentView"},
