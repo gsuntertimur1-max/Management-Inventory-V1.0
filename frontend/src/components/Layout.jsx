@@ -90,8 +90,9 @@ const Layout = ({ children }) => {
               <img src="/bulog-sunter.png" alt="BULOG Sunter Timur I & II" className="w-full h-full object-contain" />
             </div>
             <div className="leading-tight">
-              <div className="font-display font-bold text-[15px] tracking-tight">BULOG</div>
-              <div className="label-mono text-[9px] max-w-[180px] sm:max-w-none truncate">{settings?.warehouse || 'Gudang Sunter Timur I & II'}</div>
+              <div className="font-display font-bold text-[15px] tracking-tight">PEPEG</div>
+              <div className="text-[9px] text-[#aab4c4] max-w-[230px] truncate">Platform Elektronik Pengendalian dan Evaluasi Gudang</div>
+              <div className="label-mono text-[8px] max-w-[180px] sm:max-w-none truncate">{settings?.warehouse || 'Gudang Sunter Timur I & II'}</div>
             </div>
           </div>
 
@@ -128,7 +129,7 @@ const Layout = ({ children }) => {
             <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
               <SheetTrigger asChild><button type="button" aria-label="Buka menu navigasi" className="w-11 h-11 rounded-xl border border-[#242f3d] flex items-center justify-center text-[#c7d0dc] hover:text-white hover:bg-[#141a24] transition-colors"><Menu size={21} /></button></SheetTrigger>
               <SheetContent side="right" className="w-[min(88vw,360px)] h-[100dvh] p-0 border-[#242f3d] bg-[#090d14] text-[#e7ebf2] flex flex-col">
-                <SheetHeader className="text-left px-5 pt-6 pb-4 border-b border-[#1a222e]"><SheetTitle className="font-display text-lg text-white">Menu Inventori</SheetTitle><SheetDescription className="text-[#8b93a1]">{user?.name || 'Pengguna'} · {roleLabel(user?.role)}</SheetDescription></SheetHeader>
+                <SheetHeader className="text-left px-5 pt-6 pb-4 border-b border-[#1a222e]"><SheetTitle className="font-display text-lg text-white">Menu PEPEG</SheetTitle><SheetDescription className="text-[#8b93a1]">{user?.name || 'Pengguna'} · {roleLabel(user?.role)}</SheetDescription></SheetHeader>
                 <nav aria-label="Navigasi mobile" className="flex-1 overflow-y-auto px-3 py-4">
                   {visibleGroups.map((group) => group.to ? (
                     <NavLink key={group.to} to={group.to} end={group.to === '/'} onClick={() => setMobileMenuOpen(false)} className={`mobile-nav-link mb-1 ${isGroupActive(group) ? 'active' : ''}`}><group.icon size={19} /><span>{group.label}</span></NavLink>
