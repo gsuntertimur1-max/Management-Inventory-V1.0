@@ -362,7 +362,7 @@ async def _apply_order_created(account: dict, body: NormalizedMarketplaceEvent) 
     now = now_iso()
     order = {
         "id": new_id(),
-        "marketplace": account.get("provider", ""),
+        "marketplace": (account.get("provider", "") + " / " + account.get("shopName", "")).strip(" /"),
         "marketplaceAccountId": body.accountId,
         "shopName": account.get("shopName", ""),
         "orderNo": body.orderNo.strip(),
@@ -381,7 +381,7 @@ async def _apply_order_created(account: dict, body: NormalizedMarketplaceEvent) 
         ECOM,
         "ECOM_RESERVED",
         order["id"],
-        f"{account.get('provider', '')}/{body.orderNo}",
+        f"{account.get('provider', '')} / {account.get('shopName', '')}/{body.orderNo}",
         "Marketplace Gateway",
         items,
         "Order otomatis dari marketplace",
@@ -467,7 +467,7 @@ async def marketplace_gateway_event(
     account = await db.marketplace_accounts.find_one({"id": body.accountId}, {"_id": 0})
     if not account:
         raise HTTPException(status_code=404, detail="Akun marketplace tidak ditemukan")
-    if account.get("provider") != provider:
+    if _provider_key(account.get("provider", "")) != _provider_key(provider):
         raise HTTPException(status_code=400, detail="Provider event tidak sesuai akun marketplace")
     if not account.get("active", True):
         raise HTTPException(status_code=409, detail="Akun marketplace sedang nonaktif")
