@@ -95,6 +95,18 @@ class DailyLoadingSettlementInput(BaseModel):
     note: str = ""
 
 
+def _crew_group(unit_loading: str) -> str:
+    """Compatibility helper only; unknown locations never fall back to Grup 1."""
+    text = str(unit_loading or "").strip().upper()
+    if "RTR" in text:
+        return "GRUP 3 - RTR"
+    if "MP1" in text or any(re.search(rf"(?:UNIT\\s*)?{x}(?:/|\\b)", text) for x in ("21", "22", "23", "24")):
+        return "GRUP 2 - MP1/21-24"
+    if any(re.search(rf"(?:UNIT\\s*)?{x}(?:/|\\b)", text) for x in ("17", "18", "19", "20")):
+        return "GRUP 1 - GBB 17-20"
+    return ""
+
+
 def _loading_fee(product: dict, qty: float, when=None, apply_overtime=None, apply_holiday=None, charge_mode_override: str = "") -> dict:
     current = when or operational_now()
     if isinstance(current, str):

@@ -15,10 +15,10 @@ from backend.server import (
     now_iso,
     operational_now,
     require_write,
+    get_operational_location,
 )
 from backend.outbound_flow import (
     OutboundCreateInput,
-    _crew_group,
     _loading_fee,
     _reserved_qty,
     _validate_pack_qty,
@@ -126,6 +126,11 @@ async def create_damaged_outbound_load(body: OutboundCreateInput, user: dict) ->
         if qty > available + 1e-9:
             raise HTTPException(status_code=400, detail=f"Stok rusak {channel} untuk {product.get('name', 'produk')} tidak mencukupi. Tersedia {available:g} {product.get('unit', '')}")
 
+    damaged_location = await get_operational_location(DAMAGED_AREA, "outbound")
+    damaged_crew_group = ""
+    if bool(damaged_location.get("loadingCostEnabled", False)):
+        damaged_crew_group = str(damaged_location.get("loadingGroup", "") or "")
+
     load_items = []
     for item in body.items:
         product = products[item.productId]
@@ -149,9 +154,11 @@ async def create_damaged_outbound_load(body: OutboundCreateInput, user: dict) ->
             "secondary": product.get("secondary", ""),
             "secondaryQty": float(product.get("secondaryQty", 0) or 0),
             "location": DAMAGED_AREA,
+            "locationCode": damaged_location.get("code", "RUSAK"),
+            "locationName": damaged_location.get("name", DAMAGED_AREA),
             "stackCode": "",
-            "crewGroup": DAMAGED_AREA,
-            "loadingFee": _loading_fee(product, qty, charge_mode_override=body.loadingFeeChargeMode),
+            "crewGroup": damaged_crew_group,
+            "loadingFee": _loading_fee(product, qty, charge_mode_override=body.loadingFeeChargeMode) if damaged_crew_group else {},
         })
 
     unit_loading, queue_prefix = damaged_loading_context()
@@ -182,7 +189,7 @@ async def create_damaged_outbound_load(body: OutboundCreateInput, user: dict) ->
         "polisi": body.polisi.strip(),
         "pengambil": body.pengambil.strip(),
         "unit_loading": unit_loading,
-        "crew_groups": [DAMAGED_AREA],
+        "crew_groups": [damaged_crew_group] if damaged_crew_group else [],
         "kondisi": "RUSAK",
         "keterangan": body.keterangan.strip(),
         "document_type": body.documentType,
