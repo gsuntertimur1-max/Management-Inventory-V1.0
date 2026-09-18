@@ -102,7 +102,7 @@ const BazarOperasional = () => {
   };
 
   return <div className="space-y-6">
-    <div><div className="label-mono mb-2">Operasional Bazar</div><h1 className="font-display text-3xl sm:text-4xl font-bold">Perjalanan & Penjualan Bazar</h1><p className="text-[#8b93a1] mt-2 text-sm">Satu mobil dapat membawa beberapa komoditi dari sub-ledger Bazar. Surat Jalan dan Bon Muat memakai seri BZR dan tidak menggunakan nomor antrean gudang induk.</p></div>
+    <div><div className="label-mono mb-2">Operasional Bazar</div><h1 className="font-display text-3xl sm:text-4xl font-bold">Perjalanan & Penjualan Bazar</h1></div>
 
     <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
       <div className="card-surface p-5 xl:col-span-1 space-y-3">
