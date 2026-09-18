@@ -109,7 +109,15 @@ class NormalizedMarketplaceEvent(BaseModel):
 @router.get("/marketplace/accounts")
 async def list_marketplace_accounts(user: dict = Depends(get_current_user)):
     _ensure_ecom_access(user, write=False)
-    return await db.marketplace_accounts.find({}, {"_id": 0}).sort([("provider", 1), ("shopName", 1)]).to_list(5000)
+    rows = await db.marketplace_accounts.find({}, {"_id": 0}).sort([("provider", 1), ("shopName", 1)]).to_list(5000)
+    return [{**row, "gatewayConfigured": bool(_webhook_secret(row.get("provider", "")))} for row in rows]
+
+
+@router.get("/marketplace/products")
+async def marketplace_products(user: dict = Depends(get_current_user)):
+    _ensure_ecom_access(user, write=False)
+    rows = await db.products.find({}, {"_id": 0, "id": 1, "sku": 1, "name": 1, "unit": 1, "channel": 1}).sort("name", 1).to_list(20000)
+    return rows
 
 
 @router.post("/marketplace/accounts")
