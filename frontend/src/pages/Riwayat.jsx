@@ -34,13 +34,14 @@ const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => 
 }[char]));
 
 const Riwayat = () => {
-  const { transactions } = useData();
+  const { transactions, outboundLoads } = useData();
   const [q, setQ] = useState('');
   const [type, setType] = useState('SEMUA');
   const [kondisi, setKondisi] = useState('SEMUA');
   const [channel, setChannel] = useState('SEMUA');
   const [exporting, setExporting] = useState(false);
   const [unloadingOpen, setUnloadingOpen] = useState(false);
+  const [loadingOpen, setLoadingOpen] = useState(false);
 
   const filtered = transactions.filter((t) => {
     const query = q.toLowerCase();
@@ -90,6 +91,74 @@ const Riwayat = () => {
 
   const unloadingGrandTotal = unloadingDays.reduce((sum, day) => sum + Number(day.totals.total || 0), 0);
 
+  const loadingDays = useMemo(() => {
+    const days = {};
+    (outboundLoads || [])
+      .filter((load) => load.status === 'Selesai' && Number(load.loading_cost?.total || 0) > 0)
+      .forEach((load) => {
+        const date = load.operational_date || String(load.completed_at || load.created_at || '').slice(0, 10) || '-';
+        const day = days[date] || {
+          date,
+          totals: { labor: 0, daily: 0, warehouse: 0, total: 0, chargeable: 0, collected: 0, outstanding: 0 },
+          groups: {},
+          items: [],
+          loads: [],
+        };
+
+        ['labor', 'daily', 'warehouse', 'total', 'chargeable'].forEach((key) => {
+          day.totals[key] += Number(load.loading_cost?.[key] || 0);
+        });
+        day.totals.collected += Number(load.loading_fee_payment_total || 0);
+        day.totals.outstanding += Math.max(Number(load.loading_cost?.chargeable || 0) - Number(load.loading_fee_payment_total || 0), 0);
+
+        (load.items || []).forEach((item, index) => {
+          const group = item.crewGroup || 'GRUP 1 - GBB 17-20';
+          const fee = item.loadingFee || {};
+          const groupTotals = day.groups[group] || { labor: 0, daily: 0, warehouse: 0, total: 0, chargeable: 0 };
+          ['labor', 'daily', 'warehouse', 'total', 'chargeable'].forEach((key) => {
+            groupTotals[key] += Number(fee[key] || 0);
+          });
+          day.groups[group] = groupTotals;
+          day.items.push({
+            id: `${load.id}-${index}`,
+            loadId: load.id,
+            antrian: load.antrian || '',
+            bonNo: load.bon_no || '',
+            suratJalanNo: load.surat_jalan_no || '',
+            documentNo: item.documentNo || load.ref || '',
+            product: item.name || '',
+            sku: item.sku || '',
+            qty: Number(item.qty || 0),
+            unit: item.unit || '',
+            stackCode: item.stackCode || item.location || '',
+            crewGroup: group,
+            fee,
+            pengambil: load.pengambil || load.party || '',
+            paymentStatus: load.loading_fee_payment_status || (Number(load.loading_cost?.chargeable || 0) > 0 ? 'BELUM_DIBAYAR' : 'TIDAK_DITAGIH'),
+            outstanding: Math.max(Number(load.loading_cost?.chargeable || 0) - Number(load.loading_fee_payment_total || 0), 0),
+          });
+        });
+
+        day.loads.push(load);
+        days[date] = day;
+      });
+    return Object.values(days).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  }, [outboundLoads]);
+
+  const loadingGrandTotal = loadingDays.reduce((sum, day) => sum + Number(day.totals.total || 0), 0);
+
+  const printLoadingDay = (day, group, recipient) => {
+    const key = recipient === 'BURUH' ? 'labor' : 'daily';
+    const title = recipient === 'BURUH' ? 'REKAP UPAH BURUH PEMUATAN' : 'REKAP UH GUDANG PEMUATAN';
+    const items = (day.items || []).filter((item) => item.crewGroup === group && Number(item.fee?.[key] || 0) > 0);
+    const rows = items.map((item, index) => `<tr><td>${index + 1}</td><td><b>${escapeHtml(item.product)}</b><br/><small>${escapeHtml(item.documentNo || item.bonNo || '—')} · ${escapeHtml(formatNum(item.qty))} ${escapeHtml(item.unit)} · ${escapeHtml(item.stackCode || '—')}${item.fee?.overtime ? ' · Lembur' : ''}${item.fee?.holiday ? ' · Hari Libur' : ''}</small></td><td class="r">Rp ${escapeHtml(formatNum(item.fee?.[key] || 0))}</td></tr>`).join('');
+    const totalAmount = items.reduce((sum, item) => sum + Number(item.fee?.[key] || 0), 0);
+    const w = window.open('', '_blank', 'width=460,height=720');
+    if (!w) return toast.error('Izinkan popup untuk mencetak rekap thermal.');
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>@page{size:80mm auto;margin:3mm}*{box-sizing:border-box}body{width:74mm;margin:0 auto;color:#000;font:12px/1.35 Arial,sans-serif}.center{text-align:center}.title{font-size:15px;font-weight:900;margin:6px 0}.sub{font-size:10px;margin-bottom:8px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border-bottom:1px dashed #000;padding:6px 2px;text-align:left;vertical-align:top}.r{text-align:right;font-weight:700}.total{font-size:17px;font-weight:900;margin:12px 0}.line{border-top:1px solid #000;margin-top:38px;padding-top:5px;text-align:center;font-size:11px;font-weight:700}small{font-size:9px}</style></head><body><div class="center"><b>PERUM BULOG</b><div>Gudang Sunter Timur I & II</div><div class="title">${title}</div><div class="sub">${escapeHtml(group)}<br/>Tanggal: ${escapeHtml(day.date)}</div></div><table><thead><tr><th>No</th><th>Pemuatan</th><th class="r">Biaya</th></tr></thead><tbody>${rows || '<tr><td colspan="3">Tidak ada biaya</td></tr>'}</tbody></table><div class="total">TOTAL: Rp ${escapeHtml(formatNum(totalAmount))}</div><div class="line">Petugas Gudang</div><div class="line">Penerima ${recipient === 'BURUH' ? 'Buruh' : 'UH Gudang'}</div><script>window.onload=()=>window.print()</script></body></html>`);
+    w.document.close();
+  };
+
   const printUnloadingDay = (day, group, recipient) => {
     const key = recipient === 'BURUH' ? 'labor' : 'daily';
     const title = recipient === 'BURUH' ? 'REKAP UPAH BURUH BONGKAR' : 'REKAP UH GUDANG BONGKAR';
@@ -133,10 +202,11 @@ const Riwayat = () => {
       <div className="card-surface p-6">
         <div className="flex flex-wrap gap-3 mb-4">
           <div className="relative flex-1 min-w-[240px]"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6b7688]" /><input data-testid="riwayat-search-input" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari No. Ref/PO, produk, SKU, pihak terkait, alasan koreksi..." className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg pl-9 pr-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" /></div>
-          <select data-testid="riwayat-type-filter" value={type} onChange={(e) => setType(e.target.value)} className="bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none"><option value="SEMUA">SEMUA TIPE</option><option value="MASUK">PENERIMAAN (MASUK)</option><option value="KELUAR">KELUAR</option><option value="PENYESUAIAN">PENYESUAIAN</option><option value="KOREKSI">KOREKSI</option></select>
+          <select data-testid="riwayat-type-filter" value={type} onChange={(e) => setType(e.target.value)} className="bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none"><option value="SEMUA">SEMUA TIPE</option><option value="MASUK">PENERIMAAN (MASUK)</option><option value="KELUAR">PENGELUARAN (KELUAR)</option><option value="PENYESUAIAN">PENYESUAIAN</option><option value="KOREKSI">KOREKSI</option></select>
           <select value={channel} onChange={(e) => setChannel(e.target.value)} className="bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none"><option value="SEMUA">Semua Saluran</option><option value="PSO">PSO</option><option value="KOM">KOM</option></select>
           <select data-testid="riwayat-kondisi-filter" value={kondisi} onChange={(e) => setKondisi(e.target.value)} className="bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none"><option value="SEMUA">SEMUA KONDISI</option><option value="BAIK">BAIK</option><option value="RUSAK">RUSAK</option><option value="DOKUMEN">DOKUMEN</option></select>
           <button onClick={() => { setType('MASUK'); setUnloadingOpen(true); }} className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-[#8a5a16] text-[#fbbf24] hover:bg-[#f59e0b]/10"><DollarSign size={15} /> Rekap Biaya Bongkar</button>
+          <button onClick={() => { setType('KELUAR'); setLoadingOpen(true); }} className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-[#2563eb] text-[#93c5fd] hover:bg-[#2563eb]/10"><DollarSign size={15} /> Rekap Biaya Muat</button>
           <button onClick={exportCurrentMonth} disabled={exporting} className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-[#242f3d] hover:bg-[#141a24] disabled:opacity-60 disabled:cursor-wait"><Download size={15} /> {exporting ? 'Menyiapkan…' : 'Unduh Excel Bulan Ini'}</button>
         </div>
         <p className="text-xs text-[#6b7688] mb-4">Transaksi yang dibatalkan tetap tampil sebagai audit trail dan tidak dihitung pada Masuk Aktif. Koreksi tidak pernah menghapus riwayat transaksi asli.</p>
@@ -170,6 +240,71 @@ const Riwayat = () => {
           </table>
         </div>
       </div>
+
+      {loadingOpen && createPortal(
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/75 p-4 sm:p-6 overflow-y-auto">
+          <div className="card-surface w-full max-w-6xl p-6 fade-up max-h-[calc(100dvh-3rem)] overflow-y-auto">
+            <div className="flex flex-wrap items-start justify-between gap-3 mb-5">
+              <div>
+                <div className="label-mono text-[10px] text-[#93c5fd]">History Pengeluaran</div>
+                <h2 className="font-display text-xl font-bold mt-1">Rekap Biaya Muat</h2>
+                <p className="text-xs text-[#8b93a1] mt-1">3 mandor pemuatan: GBB 17–20, MP1/GBB 21–24, dan RTR.</p>
+              </div>
+              <div className="flex items-start gap-3">
+                <div className="text-right"><div className="text-[10px] text-[#8b93a1]">Total tercatat</div><div className="font-mono font-bold text-[#93c5fd]">{formatRp(loadingGrandTotal)}</div></div>
+                <button onClick={() => setLoadingOpen(false)} className="text-[#8b93a1] hover:text-white"><X size={20} /></button>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              {loadingDays.length === 0 ? <div className="rounded-lg border border-[#242f3d] p-6 text-center text-sm text-[#6b7688]">Belum ada pemuatan selesai dengan biaya muat.</div> : loadingDays.map((day) => (
+                <div key={day.date} className="rounded-xl border border-[#2b3545] bg-[#0b0f17] p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+                    <div>
+                      <div className="font-semibold">{day.date}</div>
+                      <div className="text-xs text-[#8b93a1] mt-1">Buruh {formatRp(day.totals.labor)} · UH {formatRp(day.totals.daily)} · Gudang {formatRp(day.totals.warehouse)} · Total <b className="text-[#93c5fd]">{formatRp(day.totals.total)}</b></div>
+                    </div>
+                    <div className="text-xs text-right">
+                      <div>Tagihan pengambil <b className="text-[#fbbf24]">{formatRp(day.totals.chargeable)}</b></div>
+                      <div className="mt-1">Diterima <b className="text-[#4ade80]">{formatRp(day.totals.collected)}</b> · Belum dibayar <b className="text-[#f87171]">{formatRp(day.totals.outstanding)}</b></div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                    {['GRUP 1 - GBB 17-20', 'GRUP 2 - MP1/21-24', 'GRUP 3 - RTR'].map((group) => {
+                      const values = day.groups[group];
+                      if (!values) return null;
+                      return (
+                        <div key={group} className="rounded-lg border border-[#202a38] p-3">
+                          <div className="font-semibold text-sm">{group}</div>
+                          <div className="grid grid-cols-2 gap-2 mt-2 text-xs">
+                            <div><span className="text-[#8b93a1]">Buruh</span><div className="font-mono">{formatRp(values.labor)}</div></div>
+                            <div><span className="text-[#8b93a1]">UH</span><div className="font-mono">{formatRp(values.daily)}</div></div>
+                            <div><span className="text-[#8b93a1]">Gudang</span><div className="font-mono">{formatRp(values.warehouse)}</div></div>
+                            <div><span className="text-[#8b93a1]">Total</span><div className="font-mono font-bold text-[#93c5fd]">{formatRp(values.total)}</div></div>
+                          </div>
+                          <div className="flex flex-wrap gap-2 mt-3">
+                            <button onClick={() => printLoadingDay(day, group, 'BURUH')} className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-[#294263] text-[#93c5fd]"><Printer size={12} /> Buruh 80mm</button>
+                            <button onClick={() => printLoadingDay(day, group, 'HARIAN')} className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-[#294263] text-[#93c5fd]"><Printer size={12} /> UH 80mm</button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="overflow-x-auto mt-4">
+                    <table className="w-full text-xs">
+                      <thead><tr className="text-left border-b border-[#242f3d]"><th className="py-2 pr-3">Dokumen / Bon</th><th className="py-2 pr-3">Produk</th><th className="py-2 pr-3">Tumpukan</th><th className="py-2 pr-3">Mandor</th><th className="py-2 pr-3">Pengambil</th><th className="py-2 pr-3">Status Tagihan</th><th className="py-2 text-right">Biaya</th></tr></thead>
+                      <tbody>{day.items.map((item) => <tr key={item.id} className="border-b border-[#171e29]"><td className="py-2 pr-3 font-mono"><div>{item.documentNo || '—'}</div><div className="text-[10px] text-[#6b7688]">{item.bonNo || item.antrian || '—'}{item.suratJalanNo ? ` · ${item.suratJalanNo}` : ''}</div></td><td className="py-2 pr-3"><div className="font-medium">{item.product}</div><div className="text-[10px] text-[#6b7688]">{formatNum(item.qty)} {item.unit}{item.fee?.overtime ? ' · Lembur' : ''}{item.fee?.holiday ? ' · Hari Libur' : ''}</div></td><td className="py-2 pr-3 font-mono">{item.stackCode || '—'}</td><td className="py-2 pr-3">{item.crewGroup}</td><td className="py-2 pr-3">{item.pengambil || '—'}</td><td className="py-2 pr-3"><span className={item.paymentStatus === 'LUNAS' ? 'text-[#4ade80]' : item.paymentStatus === 'SEBAGIAN' ? 'text-[#fbbf24]' : item.paymentStatus === 'TIDAK_DITAGIH' ? 'text-[#8b93a1]' : 'text-[#f87171]'}>{item.paymentStatus === 'LUNAS' ? 'Sudah dibayar' : item.paymentStatus === 'SEBAGIAN' ? 'Dibayar sebagian' : item.paymentStatus === 'TIDAK_DITAGIH' ? 'Tidak ditagihkan' : 'Belum dibayar'}</span>{item.outstanding > 0 && <div className="font-mono text-[10px] mt-1">{formatRp(item.outstanding)}</div>}</td><td className="py-2 text-right font-mono">{formatRp(item.fee?.total || 0)}</td></tr>)}</tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
 
       {unloadingOpen && createPortal(
         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/75 p-4 sm:p-6 overflow-y-auto">
