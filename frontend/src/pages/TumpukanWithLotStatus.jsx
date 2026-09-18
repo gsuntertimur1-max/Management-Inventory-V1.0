@@ -55,8 +55,7 @@ const TumpukanWithLotStatus = () => {
         <div>
           <div className="label-mono text-[10px] text-[#93c5fd]">Status Lot Peta Tumpukan</div>
           <h2 className="font-display text-xl font-bold mt-1">Coverage Lot per Tumpukan</h2>
-          <p className="text-xs text-[#8b93a1] mt-1">Ringkasan ini berada langsung di halaman Peta Tumpukan. Tumpukan legacy/mixed/retur pending tetap terlihat tanpa harus membuka menu FEFO.</p>
-        </div>
+            </div>
         <button type="button" onClick={load} disabled={loading} className="px-3 py-2 rounded-lg border border-[#294263] text-xs inline-flex gap-2 items-center disabled:opacity-50"><RefreshCcw size={14} className={loading ? 'animate-spin' : ''} /> Perbarui status</button>
       </div>
 
