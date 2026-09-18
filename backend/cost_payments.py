@@ -5,6 +5,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from pymongo.errors import OperationFailure
 
 from backend.server import db, get_current_user, now_iso, require_write
 
@@ -13,17 +14,22 @@ router = APIRouter(prefix="/api")
 
 class DailyUnloadingSettlementInput(BaseModel):
     recipient: Literal["BURUH", "HARIAN"]
+    group: str = ""
     note: str = ""
 
 
-def unloading_total(transactions: list[dict], recipient: str) -> float:
+def unloading_total(transactions: list[dict], recipient: str, group: str = "") -> float:
     key = "labor" if recipient == "BURUH" else "daily"
-    return sum(float((row.get("unloading_cost") or {}).get(key, 0) or 0) for row in transactions)
+    return sum(float((row.get("unloading_cost") or {}).get(key, 0) or 0) for row in transactions if not group or str(row.get("unloading_group") or "") == group)
 
 
 async def ensure_cost_payment_indexes() -> None:
-    await db.loading_cost_settlements.create_index([("date", 1), ("recipient", 1)], unique=True)
-    await db.unloading_cost_settlements.create_index([("date", 1), ("recipient", 1)], unique=True)
+    for collection in (db.loading_cost_settlements, db.unloading_cost_settlements):
+        try:
+            await collection.drop_index("date_1_recipient_1")
+        except OperationFailure:
+            pass
+        await collection.create_index([("date", 1), ("recipient", 1), ("group", 1)], unique=True, name="date_recipient_group_unique")
 
 
 @router.get("/cost-settlements")
@@ -53,22 +59,24 @@ async def settle_unloading_cost(
                 {"operational_date": {"$in": ["", None]}, "time": {"$regex": f"^{date}"}},
             ],
         },
-        {"_id": 0, "unloading_cost": 1},
+        {"_id": 0, "unloading_cost": 1, "unloading_group": 1},
     ).to_list(10000)
-    amount = unloading_total(transactions, body.recipient)
+    group = body.group.strip()
+    amount = unloading_total(transactions, body.recipient, group)
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Tidak ada biaya bongkar yang perlu dibayarkan untuk tanggal ini")
 
     doc = {
         "date": date,
         "recipient": body.recipient,
+        "group": group,
         "amount": amount,
         "settledAt": now_iso(),
         "settledBy": user.get("name", ""),
         "note": body.note.strip(),
     }
     await db.unloading_cost_settlements.update_one(
-        {"date": date, "recipient": body.recipient},
+        {"date": date, "recipient": body.recipient, "group": group},
         {"$set": doc, "$push": {"history": dict(doc)}},
         upsert=True,
     )

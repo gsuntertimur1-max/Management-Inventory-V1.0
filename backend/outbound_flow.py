@@ -103,6 +103,7 @@ class OutboundEditInput(BaseModel):
 
 class DailyLoadingSettlementInput(BaseModel):
     recipient: Literal["BURUH", "HARIAN"]
+    group: str = ""
     note: str = ""
 
 
@@ -558,15 +559,21 @@ async def settle_loading_cost(date: str, body: DailyLoadingSettlementInput, user
         },
         {"_id": 0, "loading_cost": 1, "items": 1},
     ).to_list(5000)
+    group = body.group.strip()
     amount = 0.0
     for load in loads:
-        cost = load.get("loading_cost") or {}
-        amount += float(cost.get(key, 0) or 0)
+        if group:
+            for item in load.get("items", []):
+                item_group = item.get("crewGroup") or _crew_group(item.get("stackCode") or item.get("location") or load.get("unit_loading"))
+                if item_group == group:
+                    amount += float((item.get("loadingFee") or {}).get(key, 0) or 0)
+        else:
+            amount += float((load.get("loading_cost") or {}).get(key, 0) or 0)
     if amount <= 0:
-        raise HTTPException(status_code=400, detail="Tidak ada biaya yang perlu dibayarkan untuk tanggal ini")
-    doc = {"date": date, "recipient": body.recipient, "amount": amount, "settledAt": now_iso(), "settledBy": user.get("name", ""), "note": body.note.strip()}
+        raise HTTPException(status_code=400, detail="Tidak ada biaya yang perlu dibayarkan untuk grup/tanggal ini")
+    doc = {"date": date, "recipient": body.recipient, "group": group, "amount": amount, "settledAt": now_iso(), "settledBy": user.get("name", ""), "note": body.note.strip()}
     await db.loading_cost_settlements.update_one(
-        {"date": date, "recipient": body.recipient},
+        {"date": date, "recipient": body.recipient, "group": group},
         {"$set": doc, "$push": {"history": dict(doc)}},
         upsert=True,
     )
