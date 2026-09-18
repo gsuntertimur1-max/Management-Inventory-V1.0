@@ -50,7 +50,7 @@ export const canonicalRole = (role) => ({
 
 const ROLE_PERMISSIONS = {
   Administrator: new Set(['mainInventory', 'masterWrite', 'inbound', 'outbound', 'rebagging', 'qc', 'users', 'settings', 'costView', 'corrections', 'warehouseApprove', 'currentWrite', 'bazarView', 'bazarOps', 'ecomView', 'ecomOps', 'consignmentView', 'consignmentHistory']),
-  'Kepala Gudang': new Set(['mainInventory', 'inbound', 'outbound', 'costView', 'corrections', 'warehouseApprove', 'currentWrite', 'bazarView', 'bazarOps', 'ecomView', 'ecomOps', 'consignmentView']),
+  'Kepala Gudang': new Set(['mainInventory', 'inbound', 'outbound', 'costView', 'corrections', 'warehouseApprove', 'currentWrite', 'bazarView', 'bazarOps', 'ecomView', 'ecomOps', 'consignmentView', 'consignmentHistory']),
   Supervisor: new Set(['mainInventory', 'inbound', 'outbound', 'costView', 'currentWrite', 'bazarView', 'ecomView', 'consignmentView']),
   Operator: new Set(['bazarView', 'bazarOps', 'consignmentView', 'consignmentHistory']),
   QC: new Set(['ecomView', 'ecomOps', 'consignmentView', 'consignmentHistory']),
