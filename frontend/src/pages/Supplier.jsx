@@ -51,7 +51,6 @@ const Supplier = () => {
         <div>
           <div className="label-mono mb-2">Mitra Gudang</div>
           <h1 className="font-display text-4xl font-bold">Supplier</h1>
-          <p className="text-[#8b93a1] mt-2">{suppliers.length} supplier terdaftar</p>
         </div>
         {canManageMasterData && <button
           data-testid="add-supplier-btn"
