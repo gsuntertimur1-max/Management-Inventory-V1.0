@@ -116,9 +116,6 @@ const RiwayatConsignment = () => {
     <div>
       <div className="label-mono mb-2">Riwayat Operasional</div>
       <h1 className="font-display text-3xl sm:text-4xl font-bold">Riwayat Bazar & E-commerce</h1>
-      <p className="text-[#8b93a1] mt-2 text-sm">
-        Tarik histori pengeluaran, penjualan, distribusi paket, fulfillment, pembatalan dan retur berdasarkan periode.
-      </p>
     </div>
 
     <section className="card-surface p-5">
