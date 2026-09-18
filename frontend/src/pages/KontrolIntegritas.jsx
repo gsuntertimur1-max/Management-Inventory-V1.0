@@ -53,7 +53,6 @@ const KontrolIntegritas = () => {
         <div>
           <div className="label-mono mb-2">Database Health</div>
           <h1 className="font-display text-4xl font-bold">Kontrol Integritas</h1>
-          <p className="text-[#8b93a1] mt-2 max-w-3xl">Membandingkan stok master, tumpukan, PSO/KOM, stok rusak, reservasi outbound per tumpukan, PO, dan identitas transaksi.</p>
         </div>
         <button type="button" onClick={load} disabled={loading} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-[#2a3443] text-sm hover:bg-[#141a24] disabled:opacity-50">
           <RefreshCcw size={16} className={loading ? 'animate-spin' : ''} /> Periksa Ulang
