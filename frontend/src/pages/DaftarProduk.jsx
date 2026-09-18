@@ -14,6 +14,22 @@ const empty = {
   location: '', supplier: '', min: 0, unit: 'Pack', weight: 0, measureUnit: 'kg', secondary: '', secondaryQty: 0, channel: 'KOM', loadingFeeLabor: 0, loadingFeeDaily: 0, loadingFeeWarehouse: 0, loadingFeeChargeMode: 'TIDAK_ADA',
 };
 
+const normalizeLoadingFeeMode = (value) => {
+  const normalized = String(value ?? '').trim().toUpperCase();
+  return ['PENGAMBIL', 'TERMASUK', 'TIDAK_ADA'].includes(normalized) ? normalized : 'TIDAK_ADA';
+};
+
+const normalizeUnloadingFeeMode = (value) => {
+  const normalized = String(value ?? '').trim().toUpperCase();
+  return ['PENGIRIM', 'TERMASUK', 'TIDAK_ADA'].includes(normalized) ? normalized : 'TIDAK_ADA';
+};
+
+const normalizeProductForEdit = (product) => ({
+  ...product,
+  loadingFeeChargeMode: normalizeLoadingFeeMode(product?.loadingFeeChargeMode),
+  unloadingFeeChargeMode: normalizeUnloadingFeeMode(product?.unloadingFeeChargeMode),
+});
+
 const masterPayload = (data) => ({
   name: data.name || '',
   sku: data.sku || '',
@@ -31,8 +47,8 @@ const masterPayload = (data) => ({
   loadingFeeLabor: Number(data.loadingFeeLabor || 0),
   loadingFeeDaily: Number(data.loadingFeeDaily || 0),
   loadingFeeWarehouse: Number(data.loadingFeeWarehouse || 0),
-  loadingFeeChargeMode: data.loadingFeeChargeMode || 'TIDAK_ADA',
-  unloadingFeeChargeMode: data.unloadingFeeChargeMode || 'TIDAK_ADA',
+  loadingFeeChargeMode: normalizeLoadingFeeMode(data.loadingFeeChargeMode),
+  unloadingFeeChargeMode: normalizeUnloadingFeeMode(data.unloadingFeeChargeMode),
   ...Object.fromEntries(['unloadingFeeLabor','unloadingFeeDaily','unloadingFeeWarehouse','loadingOvertimeLabor','loadingOvertimeDaily','loadingOvertimeWarehouse','loadingHolidayLabor','loadingHolidayDaily','loadingHolidayWarehouse','loadingHolidayOvertimeLabor','loadingHolidayOvertimeDaily','loadingHolidayOvertimeWarehouse','unloadingOvertimeLabor','unloadingOvertimeDaily','unloadingOvertimeWarehouse','unloadingHolidayLabor','unloadingHolidayDaily','unloadingHolidayWarehouse','unloadingHolidayOvertimeLabor','unloadingHolidayOvertimeDaily','unloadingHolidayOvertimeWarehouse'].map((key) => [key, Number(data[key] || 0)])),
 });
 
@@ -145,7 +161,7 @@ const DaftarProduk = () => {
                   <td className="py-3 pr-4 font-mono whitespace-nowrap">{formatRp((p.stock || 0) * (p.cost || 0))}</td>
                   <td className="py-3 pr-4 text-xs"><div className="text-[#c7d0dc]">{p.supplier || '—'}</div><div className="text-[#6b7688]">{p.location || '—'}</div></td>
                   <td className="py-3 pr-4">{canManageMasterData ? <div className="flex gap-1.5">
-                    <button data-testid={`edit-product-btn-${p.sku}`} onClick={() => setModal({ mode: 'edit', data: { ...p } })} className="w-8 h-8 rounded-lg border border-[#242f3d] flex items-center justify-center text-[#8b93a1] hover:text-[#60a5fa] hover:border-[#2563eb] transition-colors"><Pencil size={14} /></button>
+                    <button data-testid={`edit-product-btn-${p.sku}`} onClick={() => setModal({ mode: 'edit', data: normalizeProductForEdit(p) })} className="w-8 h-8 rounded-lg border border-[#242f3d] flex items-center justify-center text-[#8b93a1] hover:text-[#60a5fa] hover:border-[#2563eb] transition-colors"><Pencil size={14} /></button>
                     <button data-testid={`delete-product-btn-${p.sku}`} onClick={() => { if (window.confirm('Hapus master produk ini?')) { deleteProduct(p.id); toast.success('Produk dihapus'); } }} className="w-8 h-8 rounded-lg border border-[#242f3d] flex items-center justify-center text-[#8b93a1] hover:text-[#ef4444] hover:border-[#ef4444] transition-colors"><Trash2 size={14} /></button>
                   </div> : <span className="text-xs text-[#6b7688]">Lihat saja</span>}</td>
                 </tr>
