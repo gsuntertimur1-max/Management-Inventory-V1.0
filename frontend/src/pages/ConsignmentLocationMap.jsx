@@ -5,6 +5,7 @@ import { useData } from '../context/DataContext';
 import { formatNum } from '../mock';
 import { apiError, downloadApiFile } from '../lib/api';
 import { hasPermission } from '../lib/permissions';
+import { consignmentAreaLabel, consignmentStackCodes, defaultConsignmentStack } from '../lib/consignmentLocations';
 
 const inputCls = 'w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]';
 
@@ -28,15 +29,14 @@ const arrangementText = (layout, secondary, secondaryQty) => {
   return `${detail || '0'}${Number(layout.extraSecondary || 0) ? ` + ${formatNum(layout.extraSecondary)} ${layout.secondary || secondary || 'sekunder'}` : ''}${Number(layout.extraPrimary || 0) ? ` + ${formatNum(layout.extraPrimary)} primer` : ''} = ${formatNum(primary)} primer`;
 };
 
-const emptyForm = (prefix) => ({
+const emptyForm = (destination) => ({
   productId: '',
-  stackSuffix: 'A01',
+  stackCode: defaultConsignmentStack(destination),
   arrangements: [{ hamparan: '', kaki: '', height: '' }],
   extraSecondary: '',
   extraPrimary: '',
   note: '',
   editingId: '',
-  prefix,
 });
 
 const ConsignmentLocationMap = ({ destination }) => {
@@ -48,10 +48,11 @@ const ConsignmentLocationMap = ({ destination }) => {
     saveConsignmentLayout,
     deleteConsignmentLayout,
   } = useData();
-  const prefix = destination === 'Gudang Bazar' ? 'BZR' : 'ECOM';
+  const prefix = destination === 'Gudang Bazar' ? 'BAZAR' : 'ECOM';
+  const stackCodeOptions = consignmentStackCodes(destination);
   const permission = destination === 'Gudang Bazar' ? 'bazarOps' : 'ecomOps';
   const canEdit = hasPermission(user?.role, permission);
-  const [form, setForm] = useState(() => emptyForm(prefix));
+  const [form, setForm] = useState(() => emptyForm(destination));
   const [saving, setSaving] = useState(false);
   const [printing, setPrinting] = useState('');
 
@@ -62,9 +63,9 @@ const ConsignmentLocationMap = ({ destination }) => {
   const layouts = useMemo(
     () => (consignmentLayouts || [])
       .filter((item) => item.destination === destination)
-      .map((item) => ({ ...item, stackCode: item.stackCode || `${prefix}/A01` }))
+      .map((item) => ({ ...item, stackCode: item.stackCode || defaultConsignmentStack(destination) }))
       .sort((a, b) => String(a.stackCode).localeCompare(String(b.stackCode)) || String(a.productName || '').localeCompare(String(b.productName || ''), 'id')),
-    [consignmentLayouts, destination, prefix],
+    [consignmentLayouts, destination],
   );
 
   const sourceStacks = useMemo(() => {
@@ -104,12 +105,12 @@ const ConsignmentLocationMap = ({ destination }) => {
   const totalAllocated = layouts.reduce((sum, row) => sum + primaryFromLayout(row), 0);
   const label = destination === 'Gudang Bazar' ? 'BAZAR' : 'E-COMMERCE';
 
-  const resetForm = () => setForm(emptyForm(prefix));
+  const resetForm = () => setForm(emptyForm(destination));
 
   const editLayout = (layout) => {
     setForm({
       productId: layout.productId || '',
-      stackSuffix: String(layout.stackCode || `${prefix}/A01`).split('/')[1] || 'A01',
+      stackCode: layout.stackCode || defaultConsignmentStack(destination),
       arrangements: (layout.arrangements || []).length
         ? layout.arrangements.map((row) => ({ hamparan: row.hamparan, kaki: row.kaki, height: row.height }))
         : [{ hamparan: '', kaki: '', height: '' }],
@@ -117,7 +118,6 @@ const ConsignmentLocationMap = ({ destination }) => {
       extraPrimary: layout.extraPrimary || '',
       note: layout.note || '',
       editingId: layout.id || '',
-      prefix,
     });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -131,8 +131,8 @@ const ConsignmentLocationMap = ({ destination }) => {
 
   const save = async () => {
     if (!form.productId) return toast.error('Pilih komoditi yang akan dihitung');
-    const suffix = String(form.stackSuffix || '').trim().toUpperCase();
-    if (!suffix) return toast.error('Isi kode tumpukan, contoh A01');
+    const stackCode = String(form.stackCode || '').trim().toUpperCase();
+    if (!stackCodeOptions.includes(stackCode)) return toast.error('Pilih kode tumpukan fisik yang tersedia');
     const arrangements = form.arrangements
       .map((row) => ({ hamparan: Number(row.hamparan || 0), kaki: Number(row.kaki || 0), height: Number(row.height || 0) }))
       .filter((row) => row.hamparan > 0 && row.kaki > 0 && row.height > 0);
@@ -144,13 +144,13 @@ const ConsignmentLocationMap = ({ destination }) => {
       await saveConsignmentLayout({
         destination,
         productId: form.productId,
-        stackCode: `${prefix}/${suffix}`,
+        stackCode,
         arrangements,
         extraSecondary: Number(form.extraSecondary || 0),
         extraPrimary: Number(form.extraPrimary || 0),
         note: form.note || '',
       });
-      toast.success(`Perkalian tumpukan ${prefix}/${suffix} tersimpan`);
+      toast.success(`Perkalian tumpukan ${stackCode} tersimpan`);
       resetForm();
     } catch (error) {
       toast.error(apiError(error));
@@ -175,7 +175,7 @@ const ConsignmentLocationMap = ({ destination }) => {
     try {
       await downloadApiFile(
         `/export/consignment-stack-card.pdf?stackCode=${encodeURIComponent(stackCode)}`,
-        `kartu_tumpukan_${stackCode.replace('/', '-')}.pdf`,
+        `kartu_tumpukan_${stackCode.replace(/[^A-Za-z0-9]+/g, '-')}.pdf`,
       );
       toast.success(`Kartu tumpukan ${stackCode} berhasil dibuat`);
     } catch (error) {
@@ -195,13 +195,13 @@ const ConsignmentLocationMap = ({ destination }) => {
 
     {canEdit && <section className="card-surface p-4 md:p-5">
       <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
-        <div><h2 className="font-display text-xl font-bold">{form.editingId ? 'Ubah Perkalian Tumpukan' : 'Input Perkalian Tumpukan'}</h2><p className="text-xs text-[#8b93a1] mt-1">Kode lokasi terpisah dari gudang induk. Gunakan {prefix}/A01, {prefix}/A02, dan seterusnya.</p></div>
+        <div><h2 className="font-display text-xl font-bold">{form.editingId ? 'Ubah Perkalian Tumpukan' : 'Input Perkalian Tumpukan'}</h2><p className="text-xs text-[#8b93a1] mt-1">Kode fisik tetap terpisah dari saldo gudang induk. Area {consignmentAreaLabel(destination)}.</p></div>
         {form.editingId && <button onClick={resetForm} className="inline-flex items-center gap-1 text-xs px-3 py-2 rounded-lg border border-[#334155] text-[#cbd5e1]"><X size={13}/> Batal Edit</button>}
       </div>
       <div className="grid grid-cols-1 md:grid-cols-[180px_1fr] gap-3">
         <div>
-          <label className="text-xs text-[#8b93a1] block mb-1">Kode Tumpukan</label>
-          <div className="flex"><div className="rounded-l-lg border border-r-0 border-[#242f3d] bg-[#111827] px-3 py-2.5 text-sm font-mono text-[#93c5fd]">{prefix}/</div><input disabled={Boolean(form.editingId)} className={inputCls + ' rounded-l-none font-mono disabled:opacity-60'} value={form.stackSuffix} onChange={(e) => setForm({ ...form, stackSuffix: e.target.value.toUpperCase() })} placeholder="A01"/></div>
+          <label className="text-xs text-[#8b93a1] block mb-1">Kode Tumpukan Fisik</label>
+          <select disabled={Boolean(form.editingId)} className={inputCls + ' font-mono disabled:opacity-60'} value={form.stackCode} onChange={(e) => setForm({ ...form, stackCode: e.target.value })}>{stackCodeOptions.map((code) => <option key={code} value={code}>{code}</option>)}</select>
           {form.editingId && <div className="text-[10px] text-[#8b93a1] mt-1">Kode tumpukan dikunci saat edit agar histori dan reservasi muatan tetap konsisten.</div>}
         </div>
         <div>
@@ -238,7 +238,7 @@ const ConsignmentLocationMap = ({ destination }) => {
       </div>
 
       {rows.length === 0 ? <div className="rounded-xl border border-dashed border-[#334155] p-10 text-center text-sm text-[#8b93a1]"><PackageSearch size={28} className="mx-auto mb-3 opacity-60" />Belum ada stok aktif di {destination}.</div> : <>
-        {stacks.length === 0 && <div className="rounded-xl border border-dashed border-[#334155] p-6 text-center text-sm text-[#8b93a1]">Belum ada perkalian tumpukan. {canEdit ? `Mulai dari ${prefix}/A01 di formulir di atas.` : 'Petugas operasional belum mencatat perkalian.'}</div>}
+        {stacks.length === 0 && <div className="rounded-xl border border-dashed border-[#334155] p-6 text-center text-sm text-[#8b93a1]">Belum ada perkalian tumpukan. {canEdit ? `Mulai dari ${defaultConsignmentStack(destination)} di formulir di atas.` : 'Petugas operasional belum mencatat perkalian.'}</div>}
         <div className="space-y-4">
           {stacks.map(([stackCode, stackLayouts]) => <div key={stackCode} className="rounded-xl border border-[#334155] bg-[#111827]/40 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
