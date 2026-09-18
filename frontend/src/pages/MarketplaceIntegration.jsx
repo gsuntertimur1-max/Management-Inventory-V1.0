@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Activity, Boxes, Link2, Plus, RefreshCcw, ShieldCheck } from 'lucide-react';
 import api, { apiError } from '../lib/api';
 import { toast } from 'sonner';
@@ -28,7 +28,7 @@ const MarketplaceIntegration = () => {
     accountId: '', productId: '', marketplaceSku: '', listingId: '',
   });
 
-  const loadAll = async () => {
+  const loadAll = useCallback(async () => {
     const [a, p, m, l, w] = await Promise.all([
       api.get('/marketplace/accounts'),
       api.get('/marketplace/products'),
@@ -41,13 +41,12 @@ const MarketplaceIntegration = () => {
     setMappings(m.data);
     setLogs(l.data);
     setWebhooks(w.data);
-    if (!selectedAccount && a.data.length) setSelectedAccount(a.data[0].id);
-  };
+    setSelectedAccount((prev) => prev || (a.data[0]?.id || ''));
+  }, []);
 
-  useEffect(() => { loadAll().catch(() => {}); }, []);
+  useEffect(() => { loadAll().catch(() => {}); }, [loadAll]);
 
   const accountMap = useMemo(() => Object.fromEntries(accounts.map((x) => [x.id, x])), [accounts]);
-  const productMap = useMemo(() => Object.fromEntries(products.map((x) => [x.id, x])), [products]);
 
   const createAccount = async () => {
     if (!accountForm.shopName.trim()) return toast.error('Nama toko wajib diisi');
