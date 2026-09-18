@@ -188,14 +188,14 @@ const ConsignmentLocationMap = ({ destination }) => {
   return <div className="space-y-5" data-testid={`consignment-map-${label.toLowerCase()}`}>
     <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
       <div className="card-surface p-4"><div className="label-mono">Lokasi</div><div className="font-display text-xl font-bold mt-2 flex items-center gap-2"><MapPin size={18} className="text-[#60a5fa]" />{destination}</div></div>
-      <div className="card-surface p-4"><div className="label-mono">Produk Aktif</div><div className="font-display text-2xl font-bold mt-2">{rows.length}</div><div className="text-xs text-[#8b93a1] mt-1">SKU dengan saldo sub-ledger</div></div>
-      <div className="card-surface p-4"><div className="label-mono">Saldo Primer</div><div className="font-display text-2xl font-bold mt-2">{formatNum(totalPrimary)}</div><div className="text-xs text-[#8b93a1] mt-1">Fisik {formatNum(totalWeight)}</div></div>
-      <div className="card-surface p-4"><div className="label-mono">Terpetakan di Tumpukan</div><div className="font-display text-2xl font-bold mt-2">{formatNum(totalAllocated)}</div><div className="text-xs text-[#8b93a1] mt-1">{stacks.length} kode tumpukan</div></div>
+      <div className="card-surface p-4"><div className="label-mono">Produk Aktif</div><div className="font-display text-2xl font-bold mt-2">{rows.length}</div></div>
+      <div className="card-surface p-4"><div className="label-mono">Saldo Primer</div><div className="font-display text-2xl font-bold mt-2">{formatNum(totalPrimary)}</div></div>
+      <div className="card-surface p-4"><div className="label-mono">Terpetakan di Tumpukan</div><div className="font-display text-2xl font-bold mt-2">{formatNum(totalAllocated)}</div></div>
     </div>
 
     {canEdit && <section className="card-surface p-4 md:p-5">
       <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
-        <div><h2 className="font-display text-xl font-bold">{form.editingId ? 'Ubah Perkalian Tumpukan' : 'Input Perkalian Tumpukan'}</h2><p className="text-xs text-[#8b93a1] mt-1">Kode fisik tetap terpisah dari saldo gudang induk. Area {consignmentAreaLabel(destination)}.</p></div>
+        <div><h2 className="font-display text-xl font-bold">{form.editingId ? 'Ubah Perkalian Tumpukan' : 'Input Perkalian Tumpukan'}</h2></div>
         {form.editingId && <button onClick={resetForm} className="inline-flex items-center gap-1 text-xs px-3 py-2 rounded-lg border border-[#334155] text-[#cbd5e1]"><X size={13}/> Batal Edit</button>}
       </div>
       <div className="grid grid-cols-1 md:grid-cols-[180px_1fr] gap-3">
@@ -233,7 +233,7 @@ const ConsignmentLocationMap = ({ destination }) => {
 
     <section className="card-surface p-4 md:p-5">
       <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
-        <div><h2 className="font-display text-xl font-bold">Tumpukan Persediaan {label}</h2><p className="text-xs text-[#8b93a1] mt-1">Saldo dan perkalian ini hanya milik {destination}; tidak menambah atau mengurangi alokasi tumpukan GBB/MP1 gudang induk.</p></div>
+        <div><h2 className="font-display text-xl font-bold">Tumpukan Persediaan {label}</h2></div>
         <div className="inline-flex items-center gap-2 rounded-lg border border-[#334155] px-3 py-2 text-xs text-[#93c5fd]"><Warehouse size={15} />Sub-ledger mandiri {label}</div>
       </div>
 
