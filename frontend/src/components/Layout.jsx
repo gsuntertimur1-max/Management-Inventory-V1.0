@@ -21,10 +21,9 @@ const NAV_GROUPS = [
   },
   {
     label: 'Bazar & E-commerce', icon: ShoppingBag, items: [
-      { to: '/bazar-operasional', label: 'Perjalanan Bazar', icon: Store, permission: 'bazarView' },
-      { to: '/bazar-paket', label: 'Paket Bazar', icon: PackagePlus, permission: 'bazarView' },
-      { to: '/ecom-operasional', label: 'Operasional E-commerce', icon: ShoppingBag, permission: 'ecomView' },
-      { to: '/marketplace', label: 'Marketplace', icon: Link2, permission: 'ecomView' },
+      { to: '/bazar-operasional', label: 'Perjalanan Bazar', icon: Store, permission: 'bazarOps' },
+      { to: '/bazar-paket', label: 'Paket Bazar', icon: PackagePlus, permission: 'bazarOps' },
+      { to: '/ecom-operasional', label: 'Operasional E-commerce', icon: ShoppingBag, permission: 'ecomOps' },
     ],
   },
   {
@@ -49,6 +48,7 @@ const NAV_GROUPS = [
       { to: '/kontrol-integritas', label: 'Kontrol Integritas', icon: Activity, permission: 'masterWrite' },
       { to: '/pengguna', label: 'Pengguna', icon: Users, permission: 'users' },
       { to: '/pengaturan', label: 'Pengaturan', icon: Settings, permission: 'settings' },
+      { to: '/pengaturan/marketplace', label: 'Integrasi Marketplace', icon: Link2, permission: 'settings' },
     ],
   },
 ];
