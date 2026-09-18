@@ -311,7 +311,7 @@ async def export_bon_muat_pdf(load_id: str, user: dict = Depends(get_current_use
     width = 80 * mm
     # Font besar dipertahankan. Jika item/SO bertambah, kertas thermal yang memanjang,
     # bukan ukuran font yang dikecilkan.
-    height = max(185 * mm, (148 + (len(grouped) * 34) + (remainder_rows * 7)) * mm)
+    height = max(185 * mm, (148 + (len(grouped) * 36) + (remainder_rows * 7)) * mm)
     c = canvas.Canvas(buffer, pagesize=(width, height))
     mid = width / 2
 
@@ -409,7 +409,7 @@ async def export_bon_muat_pdf(load_id: str, user: dict = Depends(get_current_use
         c.drawString(7 * mm, y, source_line[:52])
         y -= 5.5 * mm
 
-        header_h = 7 * mm
+        header_h = 9 * mm
         value_h = 10 * mm
         table_top = y
         table_bottom = y - header_h - value_h
@@ -434,15 +434,21 @@ async def export_bon_muat_pdf(load_id: str, user: dict = Depends(get_current_use
             f"{_num(item.get('berat', 0))} {measure_unit}",
         ]
 
-        c.setFont("Helvetica-Bold", 7.7)
-        header_y = table_top - 4.7 * mm
-        for center_x, label in zip(centers, headers):
-            c.drawCentredString(center_x, header_y, label)
+        c.setFont("Helvetica-Bold", 7.5)
+        c.drawCentredString(centers[0], table_top - 3.7 * mm, "KEMASAN")
+        c.drawCentredString(centers[0], table_top - 6.6 * mm, "SEKUNDER")
+        c.drawCentredString(centers[1], table_top - 5.2 * mm, "PACK / PCS")
+        c.drawCentredString(centers[2], table_top - 5.2 * mm, "BERAT / FISIK")
 
-        c.setFont("Helvetica-Bold", 12)
-        value_y = table_bottom + 3.2 * mm
-        for center_x, value in zip(centers, values):
-            c.drawCentredString(center_x, value_y, value)
+        value_y = table_bottom + 3.1 * mm
+        for center_x, value, cell_width in zip(centers, values, col_widths):
+            value_text = str(value)
+            font_size = 12.5
+            max_width = cell_width - (2.5 * mm)
+            while font_size > 9 and c.stringWidth(value_text, "Helvetica-Bold", font_size) > max_width:
+                font_size -= 0.5
+            c.setFont("Helvetica-Bold", font_size)
+            c.drawCentredString(center_x, value_y, value_text)
 
         y = table_bottom
 
