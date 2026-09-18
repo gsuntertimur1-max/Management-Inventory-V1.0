@@ -20,7 +20,7 @@ const BazarOperasional = () => {
     const [a, t, h] = await Promise.all([
       api.get('/bazar/availability'), api.get('/bazar/trips'), api.get('/consignment-operation-history?destination=Gudang%20Bazar'),
     ]);
-    setAvailability(a.data); setTrips(t.data); setHistory(h.data);
+    setAvailability(a.data); setTrips(t.data); setHistory(h.data.filter((x) => String(x.eventType || '').startsWith('BAZAR_')));
   };
 
   useEffect(() => { load().catch(() => {}); }, []);
