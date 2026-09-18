@@ -32,7 +32,6 @@ const TumpukanUnified = () => {
         {visibleLocations.map((item) => <button key={item.key} type="button" onClick={() => setLocation(item.key)} className={`inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors ${location === item.key ? 'bg-[#2563eb] text-white' : 'bg-[#1e293b] text-[#94a3b8] hover:text-white'}`}><item.icon size={16} />{item.label}</button>)}
         {!forcedLocation && canWrite && <button type="button" onClick={() => navigate('/mutasi-tumpukan')} className="ml-auto inline-flex items-center gap-2 rounded-lg border border-[#3b82f6] px-4 py-2.5 text-sm font-semibold text-[#93c5fd] hover:bg-[#2563eb]/10"><ArrowLeftRight size={16} />Mutasi Tumpukan</button>}
       </div>
-      <p className="text-[11px] text-[#8b93a1] mt-2">{forcedLocation ? `Akun ini dibatasi ke ${scopedDestination}.` : 'Perpindahan ke Bazar/E-commerce hanya mengubah lokasi/sub-ledger. Mutasi antar tumpukan Gudang Utama juga tidak mengubah total stok fisik.'}</p>
     </section>
 
     {location === 'MAIN' && !forcedLocation && <TumpukanWithLotStatus />}
