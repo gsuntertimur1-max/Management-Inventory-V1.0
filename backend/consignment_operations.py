@@ -4,10 +4,11 @@ from collections import defaultdict
 from typing import List, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from pymongo import ReturnDocument
 
-from backend.server import db, get_current_user, new_id, next_sequence, normalize_channel, now_iso, operational_now
+from backend.server import build_xlsx, db, get_current_user, new_id, next_sequence, normalize_channel, now_iso, operational_now
 from backend.role_four_config import has_role_permission, role_destination
 import backend.consignment as consignment_module
 
@@ -429,16 +430,142 @@ async def receive_ecom_return(order_id: str, body: EcomReturnBody, user: dict = 
     return await db.ecom_orders.find_one({"id": order_id}, {"_id": 0})
 
 
-@router.get("/consignment-operation-history")
-async def list_operation_history(destination: str = "", user: dict = Depends(get_current_user)):
+def _history_scope(user: dict, destination: str = "") -> str:
+    if not has_role_permission(user.get("role"), "consignmentHistory"):
+        raise HTTPException(status_code=403, detail="Tidak memiliki akses histori operasional Bazar/E-commerce")
     scoped = role_destination(user.get("role"))
-    resolved = scoped or destination.strip()
+    requested = str(destination or "").strip()
+    if scoped:
+        if requested and requested != scoped:
+            raise HTTPException(status_code=403, detail=f"Akun ini hanya memiliki akses histori {scoped}")
+        return scoped
+    if requested:
+        if requested not in {BAZAR, ECOM}:
+            raise HTTPException(status_code=400, detail="Lokasi histori tidak valid")
+        _ensure_access(user, requested, write=False)
+    return requested
+
+
+async def _operation_history_rows(
+    user: dict,
+    destination: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    event_type: str = "",
+    product_id: str = "",
+    search: str = "",
+) -> list[dict]:
+    resolved = _history_scope(user, destination)
+    query: dict = {}
     if resolved:
-        _ensure_access(user, resolved, write=False)
-    elif not has_role_permission(user.get("role"), "consignmentView"):
-        raise HTTPException(status_code=403, detail="Tidak memiliki akses histori Bazar/E-commerce")
-    query = {"destination": resolved} if resolved else {}
-    return await db.consignment_operation_history.find(query, {"_id": 0}).sort("time", -1).to_list(20000)
+        query["destination"] = resolved
+    if str(event_type or "").strip():
+        query["eventType"] = str(event_type).strip()
+    time_query = {}
+    if str(start_date or "").strip():
+        time_query["$gte"] = f"{str(start_date).strip()}T00:00:00"
+    if str(end_date or "").strip():
+        time_query["$lte"] = f"{str(end_date).strip()}T23:59:59.999999"
+    if time_query:
+        query["time"] = time_query
+
+    rows = await db.consignment_operation_history.find(query, {"_id": 0}).sort("time", -1).to_list(50000)
+    product_id = str(product_id or "").strip()
+    term = str(search or "").strip().lower()
+    filtered = []
+    for row in rows:
+        items = row.get("items", []) or []
+        if product_id and not any(str(item.get("productId") or "") == product_id for item in items):
+            continue
+        if term:
+            values = [
+                row.get("destination", ""), row.get("eventType", ""), row.get("referenceNo", ""),
+                row.get("operator", ""), row.get("note", ""), row.get("location", ""),
+                row.get("vehicleNo", ""), row.get("marketplace", ""),
+            ]
+            for item in items:
+                values.extend([item.get("sku", ""), item.get("name", ""), item.get("packageName", ""), item.get("packageCode", "")])
+            if term not in " ".join(str(value or "") for value in values).lower():
+                continue
+        filtered.append(row)
+    return filtered
+
+
+@router.get("/consignment-operation-history")
+async def list_operation_history(
+    destination: str = "",
+    startDate: str = "",
+    endDate: str = "",
+    eventType: str = "",
+    productId: str = "",
+    search: str = "",
+    user: dict = Depends(get_current_user),
+):
+    return await _operation_history_rows(
+        user,
+        destination=destination,
+        start_date=startDate,
+        end_date=endDate,
+        event_type=eventType,
+        product_id=productId,
+        search=search,
+    )
+
+
+@router.get("/export/consignment-operation-history.xlsx")
+async def export_operation_history(
+    destination: str = "",
+    startDate: str = "",
+    endDate: str = "",
+    eventType: str = "",
+    productId: str = "",
+    search: str = "",
+    user: dict = Depends(get_current_user),
+):
+    rows = await _operation_history_rows(
+        user,
+        destination=destination,
+        start_date=startDate,
+        end_date=endDate,
+        event_type=eventType,
+        product_id=productId,
+        search=search,
+    )
+    headers = [
+        "Tanggal", "Lokasi", "Jenis Transaksi", "Referensi", "SKU", "Komoditi", "Satuan",
+        "Qty", "Muat", "Terjual", "Disalurkan", "Retur Baik", "Retur Rusak",
+        "Marketplace/Lokasi", "Kendaraan", "Petugas", "Keterangan",
+    ]
+    values = []
+    for row in rows:
+        items = row.get("items", []) or [{}]
+        for item in items:
+            values.append([
+                row.get("time", ""),
+                row.get("destination", ""),
+                row.get("eventType", ""),
+                row.get("referenceNo", ""),
+                item.get("sku", ""),
+                item.get("name", "") or item.get("packageName", ""),
+                item.get("unit", ""),
+                item.get("qty", item.get("requiredQty", item.get("packageQty", ""))),
+                item.get("loadedQty", ""),
+                item.get("soldQty", ""),
+                item.get("deliveredQty", ""),
+                item.get("returnedGoodQty", item.get("goodQty", "")),
+                item.get("returnedDamagedQty", item.get("damagedQty", "")),
+                row.get("marketplace", "") or row.get("location", "") or row.get("destinationName", ""),
+                row.get("vehicleNo", ""),
+                row.get("operator", ""),
+                row.get("note", ""),
+            ])
+    output = build_xlsx(headers, values, "Riwayat Bazar Ecom")
+    filename = f"riwayat_bazar_ecom_{operational_now().strftime('%Y%m%d_%H%M')}.xlsx"
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 async def ensure_consignment_operation_indexes() -> None:
