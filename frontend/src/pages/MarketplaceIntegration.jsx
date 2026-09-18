@@ -2,11 +2,15 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Activity, Boxes, Link2, Plus, RefreshCcw, ShieldCheck } from 'lucide-react';
 import api, { apiError } from '../lib/api';
 import { toast } from 'sonner';
+import { useData } from '../context/DataContext';
+import { hasPermission } from '../lib/permissions';
 
 const inputCls = 'w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]';
 const tabs = ['Akun', 'Mapping SKU', 'Sinkron Stok', 'Log'];
 
 const MarketplaceIntegration = () => {
+  const { user } = useData();
+  const canManage = hasPermission(user?.role, 'ecomOps');
   const [activeTab, setActiveTab] = useState('Akun');
   const [accounts, setAccounts] = useState([]);
   const [products, setProducts] = useState([]);
@@ -113,7 +117,7 @@ const MarketplaceIntegration = () => {
     <div className="flex flex-wrap gap-2">{tabs.map(tabButton)}</div>
 
     {activeTab === 'Akun' && <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-      <section className="card-surface p-5 space-y-3">
+      {canManage && <section className="card-surface p-5 space-y-3">
         <div className="font-semibold flex items-center gap-2"><Link2 size={17}/> Tambah Akun Marketplace</div>
         <select className={inputCls} value={accountForm.provider} onChange={(e) => setAccountForm({ ...accountForm, provider: e.target.value })}>
           <option>Shopee</option><option>Tokopedia & Shop</option><option>TikTok Shop</option><option>Other</option>
@@ -127,9 +131,9 @@ const MarketplaceIntegration = () => {
         <button disabled={saving} onClick={createAccount} className="btn-primary w-full py-2.5 rounded-lg font-semibold">
           {saving ? 'Menyimpan…' : 'Simpan Akun'}
         </button>
-      </section>
+      </section>}
 
-      <section className="card-surface p-5 xl:col-span-2">
+      <section className={"card-surface p-5 " + (canManage ? "xl:col-span-2" : "xl:col-span-3")}>
         <div className="flex items-center justify-between mb-4">
           <div className="font-semibold">Akun Terdaftar</div>
           <button onClick={loadAll} className="text-xs inline-flex items-center gap-1 text-[#93c5fd]"><RefreshCcw size={13}/> Refresh</button>
@@ -155,7 +159,7 @@ const MarketplaceIntegration = () => {
             <div className="flex flex-wrap gap-2 mt-3">
               <button onClick={() => { setSelectedAccount(account.id); setActiveTab('Mapping SKU'); setMappingForm((p) => ({ ...p, accountId: account.id })); }} className="px-3 py-2 rounded-lg border border-[#3b82f6]/40 text-[#93c5fd] text-xs font-semibold">Mapping SKU</button>
               <button onClick={() => { setActiveTab('Sinkron Stok'); loadPreview(account.id, false); }} className="px-3 py-2 rounded-lg border border-[#22c55e]/40 text-[#86efac] text-xs font-semibold">Preview Stok</button>
-              <button onClick={() => toggleAccount(account)} className="px-3 py-2 rounded-lg border border-[#64748b]/40 text-[#cbd5e1] text-xs font-semibold">{account.active ? 'Nonaktifkan' : 'Aktifkan'}</button>
+              {canManage && <button onClick={() => toggleAccount(account)} className="px-3 py-2 rounded-lg border border-[#64748b]/40 text-[#cbd5e1] text-xs font-semibold">{account.active ? 'Nonaktifkan' : 'Aktifkan'}</button>}
             </div>
           </div>)}
         </div>
@@ -163,7 +167,7 @@ const MarketplaceIntegration = () => {
     </div>}
 
     {activeTab === 'Mapping SKU' && <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-      <section className="card-surface p-5 space-y-3">
+      {canManage && <section className="card-surface p-5 space-y-3">
         <div className="font-semibold flex items-center gap-2"><Boxes size={17}/> Mapping SKU</div>
         <select className={inputCls} value={mappingForm.accountId} onChange={(e) => setMappingForm({ ...mappingForm, accountId: e.target.value })}>
           <option value="">Pilih akun marketplace</option>
@@ -176,9 +180,9 @@ const MarketplaceIntegration = () => {
         <input className={inputCls} placeholder="SKU marketplace" value={mappingForm.marketplaceSku} onChange={(e) => setMappingForm({ ...mappingForm, marketplaceSku: e.target.value })}/>
         <input className={inputCls} placeholder="Listing / Item ID (opsional)" value={mappingForm.listingId} onChange={(e) => setMappingForm({ ...mappingForm, listingId: e.target.value })}/>
         <button disabled={saving} onClick={saveMapping} className="btn-primary w-full py-2.5 rounded-lg font-semibold"><Plus size={16} className="inline mr-1"/> Simpan Mapping</button>
-      </section>
+      </section>}
 
-      <section className="card-surface p-5 xl:col-span-2">
+      <section className={"card-surface p-5 " + (canManage ? "xl:col-span-2" : "xl:col-span-3")}>
         <div className="font-semibold mb-4">Daftar Mapping</div>
         <div className="space-y-2 max-h-[560px] overflow-auto">
           {mappings.length === 0 && <div className="text-sm text-[#8b93a1]">Belum ada mapping SKU.</div>}
@@ -203,7 +207,7 @@ const MarketplaceIntegration = () => {
               {accounts.map((x) => <option key={x.id} value={x.id}>{x.provider} · {x.shopName}</option>)}
             </select>
           </div>
-          <button onClick={() => loadPreview(selectedAccount, true)} className="btn-primary px-5 py-2.5 rounded-lg font-semibold">Buat Preview Sinkron</button>
+          {canManage && <button onClick={() => loadPreview(selectedAccount, true)} className="btn-primary px-5 py-2.5 rounded-lg font-semibold">Buat Preview Sinkron</button>}
         </div>
         <div className="mt-3 flex items-start gap-2 text-xs text-[#fbbf24]"><ShieldCheck size={15} className="mt-0.5 shrink-0"/> Preview tidak mengirim atau mengubah stok marketplace. Push stok baru diaktifkan setelah konektor API resmi dan kredensial Railway tersedia.</div>
       </section>
