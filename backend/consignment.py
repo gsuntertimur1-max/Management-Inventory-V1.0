@@ -12,27 +12,47 @@ from backend.role_four_config import has_role_permission, role_destination
 router = APIRouter(prefix="/api")
 
 DESTINATIONS = {"Gudang Bazar", "Gudang E-commerce"}
-STACK_PREFIX = {"Gudang Bazar": "BZR", "Gudang E-commerce": "ECOM"}
-STACK_CODE_RE = re.compile(r"^(BZR|ECOM)/[A-Z]{1,2}\d{2,3}$")
+
+from backend.consignment_locations import BAZAR as BAZAR_DESTINATION, normalize_consignment_stack_code
 
 
-def consignment_stack_prefix(destination: str) -> str:
-    return STACK_PREFIX.get(str(destination or "").strip(), "")
+async def ensure_consignment_location_codes() -> None:
+    """Migrate live virtual codes only; audit/history rows remain immutable."""
+    layouts = await db.consignment_layouts.find(
+        {"destination": {"$in": list(DESTINATIONS)}},
+        {"_id": 0, "id": 1, "destination": 1, "stackCode": 1},
+    ).to_list(5000)
+    for row in layouts:
+        try:
+            canonical = normalize_consignment_stack_code(row.get("destination", ""), row.get("stackCode", ""))
+        except HTTPException:
+            continue
+        if canonical != row.get("stackCode"):
+            await db.consignment_layouts.update_one({"id": row.get("id")}, {"$set": {"stackCode": canonical}})
 
-
-def normalize_consignment_stack_code(destination: str, value: str) -> str:
-    prefix = consignment_stack_prefix(destination)
-    if not prefix:
-        raise HTTPException(status_code=400, detail="Lokasi konsinyasi tidak valid")
-    raw = str(value or "").strip().upper()
-    if not raw:
-        raise HTTPException(status_code=400, detail=f"Kode tumpukan wajib diisi, contoh {prefix}/A01")
-    code = raw if "/" in raw else f"{prefix}/{raw}"
-    if not STACK_CODE_RE.fullmatch(code):
-        raise HTTPException(status_code=400, detail=f"Format kode tumpukan tidak valid. Gunakan contoh {prefix}/A01")
-    if not code.startswith(f"{prefix}/"):
-        raise HTTPException(status_code=400, detail=f"Kode tumpukan {destination} harus diawali {prefix}/")
-    return code
+    trips = await db.bazar_trips.find({}, {"_id": 0, "id": 1, "items": 1, "resultItems": 1}).to_list(5000)
+    for trip in trips:
+        patch = {}
+        for field in ("items", "resultItems"):
+            source = trip.get(field)
+            if not isinstance(source, list):
+                continue
+            changed = False
+            normalized_rows = []
+            for item in source:
+                row = dict(item)
+                try:
+                    canonical = normalize_consignment_stack_code(BAZAR_DESTINATION, row.get("stackCode", ""))
+                except HTTPException:
+                    canonical = row.get("stackCode", "")
+                if canonical and canonical != row.get("stackCode"):
+                    row["stackCode"] = canonical
+                    changed = True
+                normalized_rows.append(row)
+            if changed:
+                patch[field] = normalized_rows
+        if patch:
+            await db.bazar_trips.update_one({"id": trip.get("id")}, {"$set": patch})
 
 
 def _layout_primary_qty(layout: dict) -> float:
