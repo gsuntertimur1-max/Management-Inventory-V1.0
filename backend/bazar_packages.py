@@ -332,7 +332,7 @@ async def create_package_load(body: PackageLoadCreate, user: dict = Depends(get_
             "measureUnit": identity.get("measureUnit", "kg") or "kg",
             "secondary": identity.get("secondary", ""),
             "secondaryQty": _n(identity.get("secondaryQty")),
-            "stackCode": "BZR/PKT",
+            "stackCode": "AREA PAKET BAZAR",
             "qty": qty,
             "documentNo": load_no,
         })
