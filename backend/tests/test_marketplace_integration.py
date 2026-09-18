@@ -18,6 +18,7 @@ from backend.marketplace_integration import (
     NormalizedMarketplaceEvent,
     NormalizedMarketplaceItem,
     _provider_key,
+    _connection_env_status,
 )
 
 
@@ -66,3 +67,19 @@ def test_normalized_marketplace_event_supports_multi_sku_order():
     )
     assert len(event.items) == 2
     assert sum(item.qty for item in event.items) == 5
+
+
+def test_connection_status_exposes_only_boolean_secret_readiness(monkeypatch):
+    monkeypatch.setenv("MARKETPLACE_SHOPEE_APP_ID", "app-123")
+    monkeypatch.setenv("MARKETPLACE_SHOPEE_APP_SECRET", "super-secret")
+    monkeypatch.setenv("MARKETPLACE_SHOPEE_ACCESS_TOKEN", "token-value")
+    monkeypatch.setenv("MARKETPLACE_WEBHOOK_KEY_SHOPEE", "hook-secret")
+    status = _connection_env_status("Shopee")
+    assert status["clientConfigured"] is True
+    assert status["secretConfigured"] is True
+    assert status["tokenConfigured"] is True
+    assert status["gatewayConfigured"] is True
+    serialized = str(status)
+    assert "super-secret" not in serialized
+    assert "token-value" not in serialized
+    assert "hook-secret" not in serialized
