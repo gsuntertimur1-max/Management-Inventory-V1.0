@@ -90,7 +90,7 @@ async def _trip_items(trip: dict) -> list[dict]:
             "measureUnit": item.get("measureUnit", product.get("measureUnit", "kg")) or "kg",
             "secondary": item.get("secondary", product.get("secondary", "")),
             "secondaryQty": float(item.get("secondaryQty", product.get("secondaryQty", 0)) or 0),
-            "stackCode": item.get("stackCode") or "BZR/A01",
+            "stackCode": item.get("stackCode") or "18/A01-BAZAR",
             "documentNo": trip.get("tripNo", ""),
             "qty": qty,
             "berat": qty * weight,
@@ -113,7 +113,7 @@ async def _package_items(load: dict) -> list[dict]:
                 "secondary": item.get("secondary", product.get("secondary", "")),
                 "secondaryQty": float(item.get("secondaryQty", product.get("secondaryQty", 0)) or 0),
                 "documentNo": item.get("documentNo") or load.get("loadNo", ""),
-                "stackCode": item.get("stackCode") or "BZR/PKT",
+                "stackCode": item.get("stackCode") or "AREA PAKET BAZAR",
                 "berat": qty * weight,
             })
         return result
@@ -136,7 +136,7 @@ async def _package_items(load: dict) -> list[dict]:
             "measureUnit": product.get("measureUnit", "kg") or "kg",
             "secondary": product.get("secondary", ""),
             "secondaryQty": float(product.get("secondaryQty", 0) or 0),
-            "stackCode": "BZR/PKT",
+            "stackCode": "AREA PAKET BAZAR",
             "documentNo": load.get("loadNo", ""),
             "qty": qty,
             "berat": qty * weight,
