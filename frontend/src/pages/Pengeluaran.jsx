@@ -71,7 +71,7 @@ const Pengeluaran = () => {
     return (filter === 'Semua Status' || load.status === filter) && (!needle || searchable.includes(needle));
   });
   const findFinalSJ = (load) => suratJalan.find((sj) => sj.id === load.surat_jalan_id || sj.load_id === load.id);
-  const downloadBon = (load) => downloadApiFile(`/export/bon-muat/${load.id}.pdf`, `bon_pemuatan_${load.bon_no || load.id}.pdf`).catch((e) => toast.error(apiError(e)));
+  const downloadBon = (load) => downloadApiFile(`/export/bon-muat-v2/${load.id}.pdf`, `bon_pemuatan_${load.bon_no || load.id}_72mm.pdf`).catch((e) => toast.error(apiError(e)));
   const downloadSuratJalan = (sj) => sj ? downloadApiFile(`/export/surat-jalan/${sj.id}.pdf`, `surat_jalan_${(sj.ref || sj.no || sj.id).replaceAll('/', '-')}.pdf`).catch((e) => toast.error(apiError(e))) : toast.error('Surat Jalan belum tersedia');
   const downloadWeighingForm = (load) => downloadApiFile(`/export/weighing-form/outbound/${load.id}.pdf`, `form_timbangan_keluar_${load.antrian || load.id}.pdf`).catch((e) => toast.error(apiError(e)));
   const sourceDocumentFor = (load, item) => item.documentNo || load.ref || '';
@@ -311,7 +311,7 @@ const Pengeluaran = () => {
     setBusyId(load.id);
     try {
       const updated = await startOutboundLoad(load.id);
-      await downloadApiFile(`/export/bon-muat/${updated.id}.pdf`, `bon_pemuatan_${updated.bon_no || updated.id}.pdf`);
+      await downloadApiFile(`/export/bon-muat-v2/${updated.id}.pdf`, `bon_pemuatan_${updated.bon_no || updated.id}_72mm.pdf`);
       toast.success(`Pemuatan ${updated.antrian} dimulai · Bon Pemuatan PDF diunduh`);
     } catch (e) {
       toast.error(apiError(e) || 'Gagal memulai pemuatan');
