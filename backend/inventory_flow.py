@@ -86,13 +86,26 @@ def _unloading_user_key(user: dict) -> str:
 @router.post("/unloading-sessions/start")
 async def start_unloading_session(user: dict = Depends(require_write)):
     user_key = _unloading_user_key(user)
+    now = operational_now()
     existing = await db.unloading_sessions.find_one(
         {"startedByKey": user_key, "status": "BERJALAN"},
         {"_id": 0},
     )
     if existing:
-        return existing
-    now = operational_now()
+        try:
+            started = datetime.fromisoformat(str(existing.get("startedAt") or "").replace("Z", "+00:00"))
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=now.tzinfo)
+            else:
+                started = started.astimezone(now.tzinfo)
+        except ValueError:
+            started = None
+        if started and started.date() == now.date():
+            return existing
+        await db.unloading_sessions.update_one(
+            {"id": existing.get("id"), "status": "BERJALAN"},
+            {"$set": {"status": "DIBATALKAN_OTOMATIS", "cancelledAt": now_iso(), "cancelledBy": "Sistem"}},
+        )
     doc = {
         "id": new_id(),
         "status": "BERJALAN",
