@@ -4,6 +4,7 @@ import api, { apiError } from '../lib/api';
 import { toast } from 'sonner';
 import { useData } from '../context/DataContext';
 import { hasPermission } from '../lib/permissions';
+import SearchableProductSelect from '../components/SearchableProductSelect';
 
 const inputCls = 'w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]';
 const tabs = ['Akun', 'Mapping SKU', 'Sinkron Stok', 'Log'];
@@ -233,10 +234,13 @@ const MarketplaceIntegration = () => {
           <option value="">Pilih akun marketplace</option>
           {accounts.filter((x) => x.active).map((x) => <option key={x.id} value={x.id}>{x.provider} · {x.shopName}</option>)}
         </select>
-        <select className={inputCls} value={mappingForm.productId} onChange={(e) => setMappingForm({ ...mappingForm, productId: e.target.value })}>
-          <option value="">Pilih produk internal</option>
-          {products.map((x) => <option key={x.id} value={x.id}>{x.sku} · {x.name}</option>)}
-        </select>
+        <SearchableProductSelect
+          products={products}
+          value={mappingForm.productId}
+          onChange={(productId) => setMappingForm({ ...mappingForm, productId })}
+          placeholder="Ketik nama / SKU produk internal..."
+          getDescription={(product) => `${product.channel || 'KOM'} · ${product.unit || ''}`}
+        />
         <input className={inputCls} placeholder="SKU marketplace" value={mappingForm.marketplaceSku} onChange={(e) => setMappingForm({ ...mappingForm, marketplaceSku: e.target.value })}/>
         <input className={inputCls} placeholder="Listing / Item ID (opsional)" value={mappingForm.listingId} onChange={(e) => setMappingForm({ ...mappingForm, listingId: e.target.value })}/>
         <button disabled={saving} onClick={saveMapping} className="btn-primary w-full py-2.5 rounded-lg font-semibold"><Plus size={16} className="inline mr-1"/> Simpan Mapping</button>
