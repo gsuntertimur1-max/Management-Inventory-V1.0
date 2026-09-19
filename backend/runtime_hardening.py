@@ -109,6 +109,7 @@ async def _cleanup_new_operational_collections() -> None:
         db.stock_opnames, db.stack_lots, db.stack_lot_movements,
         db.operation_requests, db.operation_locks,
         db.consignment_movements, db.consignment_operation_history,
+        db.consignment_damaged_balances, db.consignment_damaged_movements,
         db.bazar_trips, db.ecom_orders,
         db.bazar_package_templates, db.bazar_package_batches, db.bazar_package_loads,
         db.unloading_cost_settlements,

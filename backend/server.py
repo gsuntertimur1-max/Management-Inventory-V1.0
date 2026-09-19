@@ -329,6 +329,7 @@ async def seed_master(force: bool = False):
             db.consignment_layout_history, db.consignment_opnames,
             db.loading_cost_settlements, db.unloading_cost_settlements,
             db.consignment_movements, db.consignment_operation_history,
+            db.consignment_damaged_balances, db.consignment_damaged_movements,
             db.bazar_trips, db.ecom_orders,
             db.bazar_package_templates, db.bazar_package_batches, db.bazar_package_loads,
             db.stock_opnames, db.stack_lots, db.stack_lot_movements,

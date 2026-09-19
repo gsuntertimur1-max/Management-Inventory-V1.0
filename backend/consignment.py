@@ -217,13 +217,34 @@ async def monitoring_stock(destination_scope: str = "", include_main: bool = Tru
                     "damaged": damaged, "weight": weight, "measureUnit": product.get("measureUnit", "kg") or "kg", "totalWeight": qty * weight,
                     "secondary": product.get("secondary", ""), "secondaryQty": float(product.get("secondaryQty", 0) or 0), "documents": [],
                 })
+    damaged_query = {"destination": destination_scope} if destination_scope else {}
+    damaged_rows = await db.consignment_damaged_balances.find(damaged_query, {"_id": 0}).to_list(10000)
+    damaged_map = {
+        (row.get("destination", ""), row.get("productId", ""), normalize_channel(row.get("channel"), "KOM")): float(row.get("qty", 0) or 0)
+        for row in damaged_rows
+    }
+    seen_consignment = set()
     for item in await consignment_stock(destination_scope):
+        key = (item["destination"], item["productId"], normalize_channel(item.get("channel"), "KOM"))
+        seen_consignment.add(key)
         rows.append({
-            "channel": normalize_channel(item.get("channel"), "KOM"), "location": item["destination"],
+            "channel": key[2], "location": item["destination"],
             "locationType": "KONSINYASI", "productId": item["productId"], "sku": item.get("sku", ""),
             "name": item.get("name", ""), "unit": item.get("unit", ""), "qty": float(item.get("qty", 0) or 0),
-            "damaged": 0.0, "weight": float(item.get("weight", 0) or 0), "measureUnit": item.get("measureUnit", "kg") or "kg", "totalWeight": float(item.get("totalWeight", 0) or 0),
+            "damaged": damaged_map.get(key, 0.0), "weight": float(item.get("weight", 0) or 0), "measureUnit": item.get("measureUnit", "kg") or "kg", "totalWeight": float(item.get("totalWeight", 0) or 0),
             "secondary": item.get("secondary", ""), "secondaryQty": float(item.get("secondaryQty", 0) or 0), "documents": item.get("documents", []),
+        })
+    for damaged in damaged_rows:
+        key = (damaged.get("destination", ""), damaged.get("productId", ""), normalize_channel(damaged.get("channel"), "KOM"))
+        if key in seen_consignment or float(damaged.get("qty", 0) or 0) <= 0:
+            continue
+        weight = float(damaged.get("weight", 0) or 0)
+        rows.append({
+            "channel": key[2], "location": damaged.get("destination", ""),
+            "locationType": "KONSINYASI", "productId": damaged.get("productId", ""), "sku": damaged.get("sku", ""),
+            "name": damaged.get("name", ""), "unit": damaged.get("unit", ""), "qty": 0.0,
+            "damaged": float(damaged.get("qty", 0) or 0), "weight": weight, "measureUnit": damaged.get("measureUnit", "kg") or "kg",
+            "totalWeight": 0.0, "secondary": "", "secondaryQty": 0.0, "documents": [],
         })
     return sorted(rows, key=lambda row: (row["location"] not in {"Gudang Bazar", "Gudang E-commerce"}, row["location"], row["channel"], row["name"].lower(), row["sku"]))
 

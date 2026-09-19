@@ -12,6 +12,7 @@ from backend.server import build_xlsx, db, get_current_user, new_id, next_sequen
 from backend.role_four_config import has_role_permission, role_destination
 from backend.consignment_documents import next_bazar_document_numbers
 import backend.consignment as consignment_module
+from backend.consignment_damaged import credit_consignment_damaged
 
 router = APIRouter(prefix="/api")
 EPS = 1e-9
@@ -368,6 +369,21 @@ async def close_bazar_trip(trip_id: str, body: BazarTripClose, user: dict = Depe
                 strict_preferred=True,
                 operation_key=f"bazar-close:{trip_id}:{item.get('productId', '')}:{item.get('stackCode', '')}",
             )
+    for item in final_items:
+        damaged_qty = _n(item.get("returnedDamagedQty"))
+        if damaged_qty > EPS:
+            await credit_consignment_damaged(
+                BAZAR,
+                item,
+                damaged_qty,
+                f"bazar-damaged-return:{trip_id}:{item.get('productId', '')}:{item.get('stackCode', '')}",
+                "BAZAR_RETUR_RUSAK",
+                trip_id,
+                trip.get("tripNo", ""),
+                user.get("name", ""),
+                body.note,
+            )
+
     await db.bazar_trips.update_one({"id": trip_id, "status": "BERJALAN"}, {"$set": {
         "status": "SELESAI", "resultItems": final_items, "closedAt": now, "closedBy": user.get("name", ""), "closeNote": body.note.strip(),
     }})
@@ -533,6 +549,18 @@ async def receive_ecom_return(order_id: str, body: EcomReturnBody, user: dict = 
             "returnId": return_id, "operator": user.get("name", ""),
         }
         await db.consignment_movements.insert_one(move)
+        if float(item.damagedQty) > EPS:
+            await credit_consignment_damaged(
+                ECOM,
+                identity,
+                float(item.damagedQty),
+                f"ecom-damaged-return:{return_id}:{item.productId}",
+                "ECOM_RETUR_RUSAK",
+                order_id,
+                order.get("orderNo", ""),
+                user.get("name", ""),
+                body.note,
+            )
         history_items.append({**identity, "goodQty": float(item.goodQty), "damagedQty": float(item.damagedQty)})
         prior[item.productId] += total
 
