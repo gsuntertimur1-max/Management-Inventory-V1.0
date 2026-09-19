@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { History, PackageCheck, PackagePlus, Plus, RefreshCcw, RotateCcw, Truck } from 'lucide-react';
+import { AlertTriangle, History, PackageCheck, PackagePlus, Plus, RefreshCcw, RotateCcw, ShoppingCart, Truck } from 'lucide-react';
 import api, { apiError } from '../lib/api';
 import { toast } from 'sonner';
 import { useData } from '../context/DataContext';
@@ -16,12 +16,20 @@ const EcomOperasional = () => {
   const [orderItems, setOrderItems] = useState([]);
   const [returnOrder, setReturnOrder] = useState(null);
   const [returnRows, setReturnRows] = useState({});
+  const [damagedStock, setDamagedStock] = useState([]);
+  const [damagedSale, setDamagedSale] = useState({ productId: '', qty: '', recipient: '', referenceNo: '', note: '' });
 
   const load = async () => {
-    const [a, o, h] = await Promise.all([
-      api.get('/ecom/availability'), api.get('/ecom/orders'), api.get('/consignment-operation-history?destination=Gudang%20E-commerce'),
+    const [a, o, h, d] = await Promise.all([
+      api.get('/ecom/availability'),
+      api.get('/ecom/orders'),
+      api.get('/consignment-operation-history?destination=Gudang%20E-commerce'),
+      api.get('/consignment-damaged-stock?destination=Gudang%20E-commerce'),
     ]);
-    setAvailability(a.data); setOrders(o.data); setHistory(h.data);
+    setAvailability(a.data);
+    setOrders(o.data);
+    setHistory(h.data);
+    setDamagedStock(d.data);
   };
 
   useEffect(() => { load().catch(() => {}); }, []);
@@ -79,11 +87,31 @@ const EcomOperasional = () => {
     setReturnRows(rows); setReturnOrder(order);
   };
 
+  const sellDamaged = async () => {
+    const row = damagedStock.find((item) => item.productId === damagedSale.productId);
+    const qty = Number(damagedSale.qty || 0);
+    if (!row || qty <= 0) return toast.error('Pilih barang rusak dan isi jumlah yang dijual');
+    if (qty > Number(row.qty || 0)) return toast.error(`Saldo rusak ${row.name} hanya ${row.qty} ${row.unit}`);
+    try {
+      await api.post('/consignment-damaged/sales', {
+        destination: 'Gudang E-commerce',
+        productId: row.productId,
+        qty,
+        recipient: damagedSale.recipient.trim(),
+        referenceNo: damagedSale.referenceNo.trim(),
+        note: damagedSale.note.trim(),
+      });
+      toast.success('Penjualan barang rusak E-commerce tersimpan');
+      setDamagedSale({ productId: '', qty: '', recipient: '', referenceNo: '', note: '' });
+      await Promise.all([load(), refreshConsignmentFlow()]);
+    } catch (e) { toast.error(apiError(e)); }
+  };
+
   const submitReturn = async () => {
     try {
       const items = (returnOrder.items || []).map((item) => ({ productId: item.productId, goodQty: Number(returnRows[item.productId]?.goodQty || 0), damagedQty: Number(returnRows[item.productId]?.damagedQty || 0) }));
       await api.post(`/ecom/orders/${returnOrder.id}/return`, { items, note: 'Retur E-commerce diterima' });
-      toast.success('Retur E-commerce diterima'); setReturnOrder(null); await Promise.all([load(), refreshConsignmentFlow()]);
+      toast.success('Retur E-commerce diterima · barang rusak masuk Area Barang Rusak E-commerce'); setReturnOrder(null); await Promise.all([load(), refreshConsignmentFlow()]);
     } catch (e) { toast.error(apiError(e)); }
   };
 
@@ -125,9 +153,38 @@ const EcomOperasional = () => {
       </div>
     </div>
 
+
+    <div className="card-surface p-5">
+      <div className="flex items-center gap-2 mb-4"><AlertTriangle size={17} className="text-[#f59e0b]"/><div className="font-semibold">Area Barang Rusak E-commerce</div></div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div>
+          {damagedStock.length === 0 ? <div className="text-sm text-[#8b93a1]">Belum ada saldo barang rusak E-commerce.</div> : <div className="space-y-2">
+            {damagedStock.map((row) => <div key={`${row.productId}-${row.channel}`} className="rounded-lg border border-[#7c5a1f] bg-[#191307] px-3 py-2.5 flex items-center justify-between gap-3 text-sm">
+              <div><div className="font-semibold">{row.name}</div><div className="text-[10px] text-[#c9b783]">{row.sku || 'Tanpa SKU'} · {row.location || 'Area Barang Rusak E-commerce'}</div></div>
+              <div className="font-mono font-bold text-[#fbbf24]">{row.qty} {row.unit}</div>
+            </div>)}
+          </div>}
+        </div>
+        <div className="rounded-xl border border-[#243044] p-4 space-y-2">
+          <div className="font-semibold text-sm flex items-center gap-2"><ShoppingCart size={15}/> Penjualan Barang Rusak</div>
+          <select className={inputCls} value={damagedSale.productId} onChange={(e) => setDamagedSale((p) => ({ ...p, productId: e.target.value, qty: '' }))}>
+            <option value="">Pilih barang rusak</option>
+            {damagedStock.map((row) => <option key={row.productId} value={row.productId}>{row.name} · saldo {row.qty} {row.unit}</option>)}
+          </select>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <input type="number" min="0" className={inputCls} placeholder="Jumlah dijual" value={damagedSale.qty} onChange={(e) => setDamagedSale((p) => ({ ...p, qty: e.target.value }))}/>
+            <input className={inputCls} placeholder="Pembeli / penerima" value={damagedSale.recipient} onChange={(e) => setDamagedSale((p) => ({ ...p, recipient: e.target.value }))}/>
+          </div>
+          <input className={inputCls} placeholder="No. referensi (opsional)" value={damagedSale.referenceNo} onChange={(e) => setDamagedSale((p) => ({ ...p, referenceNo: e.target.value }))}/>
+          <textarea className={inputCls} placeholder="Catatan penjualan (opsional)" value={damagedSale.note} onChange={(e) => setDamagedSale((p) => ({ ...p, note: e.target.value }))}/>
+          <button onClick={sellDamaged} disabled={!damagedStock.length} className="w-full py-2.5 rounded-lg border border-[#f59e0b]/50 text-[#fbbf24] font-semibold disabled:opacity-40">Jual Barang Rusak E-commerce</button>
+        </div>
+      </div>
+    </div>
+
     <div className="card-surface p-5"><div className="font-semibold flex items-center gap-2 mb-4"><History size={17}/> History E-commerce</div><div className="space-y-2 max-h-[420px] overflow-auto">{history.map((row) => <div key={row.id} className="border-b border-[#1f2937] pb-2 text-xs"><div className="font-medium">{row.eventType} · {row.referenceNo}</div><div className="text-[#8b93a1]">{new Date(row.time).toLocaleString('id-ID')} · {row.operator}</div></div>)}</div></div>
 
-    {returnOrder && <div className="fixed inset-0 z-[90] bg-black/75 flex items-center justify-center p-4"><div className="card-surface w-full max-w-2xl p-6"><h2 className="font-display text-xl font-bold">Retur {returnOrder.orderNo}</h2><p className="text-xs text-[#8b93a1] mt-1 mb-4">Retur baik kembali ke stok jual E-commerce. Retur rusak dicatat di histori dan tidak menambah stok jual.</p>{(returnOrder.items || []).map((item) => <div key={item.productId} className="border border-[#243044] rounded-xl p-4 mb-3"><div className="font-semibold text-sm">{item.name} · Dikirim {item.qty} {item.unit}</div><div className="grid grid-cols-2 gap-2 mt-3"><input type="number" min="0" className={inputCls} placeholder="Retur baik" value={returnRows[item.productId]?.goodQty || ''} onChange={(e) => setReturnRows((p) => ({ ...p, [item.productId]: { ...p[item.productId], goodQty: e.target.value } }))}/><input type="number" min="0" className={inputCls} placeholder="Retur rusak" value={returnRows[item.productId]?.damagedQty || ''} onChange={(e) => setReturnRows((p) => ({ ...p, [item.productId]: { ...p[item.productId], damagedQty: e.target.value } }))}/></div></div>)}<div className="flex justify-end gap-2 mt-5"><button onClick={() => setReturnOrder(null)} className="px-4 py-2 rounded-lg border border-[#243044]">Batal</button><button onClick={submitReturn} className="btn-primary px-5 py-2 rounded-lg font-semibold">Simpan Retur</button></div></div></div>}
+    {returnOrder && <div className="fixed inset-0 z-[90] bg-black/75 flex items-center justify-center p-4"><div className="card-surface w-full max-w-2xl p-6"><h2 className="font-display text-xl font-bold">Retur {returnOrder.orderNo}</h2><p className="text-xs text-[#8b93a1] mt-1 mb-4">Retur baik kembali ke stok jual E-commerce. Retur rusak otomatis masuk Area Barang Rusak E-commerce dan tidak menambah stok jual.</p>{(returnOrder.items || []).map((item) => <div key={item.productId} className="border border-[#243044] rounded-xl p-4 mb-3"><div className="font-semibold text-sm">{item.name} · Dikirim {item.qty} {item.unit}</div><div className="grid grid-cols-2 gap-2 mt-3"><input type="number" min="0" className={inputCls} placeholder="Retur baik" value={returnRows[item.productId]?.goodQty || ''} onChange={(e) => setReturnRows((p) => ({ ...p, [item.productId]: { ...p[item.productId], goodQty: e.target.value } }))}/><input type="number" min="0" className={inputCls} placeholder="Retur rusak" value={returnRows[item.productId]?.damagedQty || ''} onChange={(e) => setReturnRows((p) => ({ ...p, [item.productId]: { ...p[item.productId], damagedQty: e.target.value } }))}/></div></div>)}<div className="flex justify-end gap-2 mt-5"><button onClick={() => setReturnOrder(null)} className="px-4 py-2 rounded-lg border border-[#243044]">Batal</button><button onClick={submitReturn} className="btn-primary px-5 py-2 rounded-lg font-semibold">Simpan Retur</button></div></div></div>}
   </div>;
 };
 
