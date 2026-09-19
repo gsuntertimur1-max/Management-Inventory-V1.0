@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Car, CheckCircle2, FileText, History, Plus, Printer, RefreshCcw, Trash2 } from 'lucide-react';
+import { AlertTriangle, Car, CheckCircle2, FileText, History, Plus, Printer, RefreshCcw, ShoppingCart, Trash2 } from 'lucide-react';
 import api, { apiError, downloadApiFile } from '../lib/api';
 import { toast } from 'sonner';
 import { useData } from '../context/DataContext';
@@ -19,12 +19,20 @@ const BazarOperasional = () => {
   const [items, setItems] = useState([]);
   const [closing, setClosing] = useState(null);
   const [closeRows, setCloseRows] = useState({});
+  const [damagedStock, setDamagedStock] = useState([]);
+  const [damagedSale, setDamagedSale] = useState({ productId: '', qty: '', recipient: '', referenceNo: '', note: '' });
 
   const load = async () => {
-    const [a, t, h] = await Promise.all([
-      api.get('/bazar/availability'), api.get('/bazar/trips'), api.get('/consignment-operation-history?destination=Gudang%20Bazar'),
+    const [a, t, h, d] = await Promise.all([
+      api.get('/bazar/availability'),
+      api.get('/bazar/trips'),
+      api.get('/consignment-operation-history?destination=Gudang%20Bazar'),
+      api.get('/consignment-damaged-stock?destination=Gudang%20Bazar'),
     ]);
-    setAvailability(a.data); setTrips(t.data); setHistory(h.data.filter((x) => String(x.eventType || '').startsWith('BAZAR_')));
+    setAvailability(a.data);
+    setTrips(t.data);
+    setHistory(h.data.filter((x) => String(x.eventType || '').startsWith('BAZAR_')));
+    setDamagedStock(d.data);
   };
 
   useEffect(() => { load().catch(() => {}); }, []);
@@ -85,6 +93,26 @@ const BazarOperasional = () => {
     setCloseRows(rows); setClosing(trip);
   };
 
+  const sellDamaged = async () => {
+    const row = damagedStock.find((item) => item.productId === damagedSale.productId);
+    const qty = Number(damagedSale.qty || 0);
+    if (!row || qty <= 0) return toast.error('Pilih barang rusak dan isi jumlah yang dijual');
+    if (qty > Number(row.qty || 0)) return toast.error(`Saldo rusak ${row.name} hanya ${row.qty} ${row.unit}`);
+    try {
+      await api.post('/consignment-damaged/sales', {
+        destination: 'Gudang Bazar',
+        productId: row.productId,
+        qty,
+        recipient: damagedSale.recipient.trim(),
+        referenceNo: damagedSale.referenceNo.trim(),
+        note: damagedSale.note.trim(),
+      });
+      toast.success('Penjualan barang rusak Bazar tersimpan');
+      setDamagedSale({ productId: '', qty: '', recipient: '', referenceNo: '', note: '' });
+      await Promise.all([load(), refreshConsignmentFlow()]);
+    } catch (e) { toast.error(apiError(e)); }
+  };
+
   const closeTrip = async () => {
     try {
       const resultItems = (closing.items || []).map((item) => {
@@ -96,7 +124,7 @@ const BazarOperasional = () => {
         return { productId: item.productId, stackCode: item.stackCode || '', soldQty: sold, returnedDamagedQty: damaged, returnedGoodQty: returnedGood };
       });
       await api.post(`/bazar/trips/${closing.id}/close`, { items: resultItems, note: 'Rekonsiliasi penutupan bazar' });
-      toast.success('Perjalanan Bazar selesai dan stok direkonsiliasi');
+      toast.success('Perjalanan Bazar selesai · retur rusak masuk Area Barang Rusak Bazar');
       setClosing(null); await Promise.all([load(), refreshConsignmentFlow()]);
     } catch (e) { toast.error(e?.response ? apiError(e) : e.message); }
   };
@@ -143,9 +171,38 @@ const BazarOperasional = () => {
       </div>
     </div>
 
+
+    <div className="card-surface p-5">
+      <div className="flex items-center gap-2 mb-4"><AlertTriangle size={17} className="text-[#f59e0b]"/><div className="font-semibold">Area Barang Rusak Bazar</div></div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div>
+          {damagedStock.length === 0 ? <div className="text-sm text-[#8b93a1]">Belum ada saldo barang rusak Bazar.</div> : <div className="space-y-2">
+            {damagedStock.map((row) => <div key={`${row.productId}-${row.channel}`} className="rounded-lg border border-[#7c5a1f] bg-[#191307] px-3 py-2.5 flex items-center justify-between gap-3 text-sm">
+              <div><div className="font-semibold">{row.name}</div><div className="text-[10px] text-[#c9b783]">{row.sku || 'Tanpa SKU'} · {row.location || 'Area Barang Rusak Bazar'}</div></div>
+              <div className="font-mono font-bold text-[#fbbf24]">{row.qty} {row.unit}</div>
+            </div>)}
+          </div>}
+        </div>
+        <div className="rounded-xl border border-[#243044] p-4 space-y-2">
+          <div className="font-semibold text-sm flex items-center gap-2"><ShoppingCart size={15}/> Penjualan Barang Rusak</div>
+          <select className={inputCls} value={damagedSale.productId} onChange={(e) => setDamagedSale((p) => ({ ...p, productId: e.target.value, qty: '' }))}>
+            <option value="">Pilih barang rusak</option>
+            {damagedStock.map((row) => <option key={row.productId} value={row.productId}>{row.name} · saldo {row.qty} {row.unit}</option>)}
+          </select>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <input type="number" min="0" className={inputCls} placeholder="Jumlah dijual" value={damagedSale.qty} onChange={(e) => setDamagedSale((p) => ({ ...p, qty: e.target.value }))}/>
+            <input className={inputCls} placeholder="Pembeli / penerima" value={damagedSale.recipient} onChange={(e) => setDamagedSale((p) => ({ ...p, recipient: e.target.value }))}/>
+          </div>
+          <input className={inputCls} placeholder="No. referensi (opsional)" value={damagedSale.referenceNo} onChange={(e) => setDamagedSale((p) => ({ ...p, referenceNo: e.target.value }))}/>
+          <textarea className={inputCls} placeholder="Catatan penjualan (opsional)" value={damagedSale.note} onChange={(e) => setDamagedSale((p) => ({ ...p, note: e.target.value }))}/>
+          <button onClick={sellDamaged} disabled={!damagedStock.length} className="w-full py-2.5 rounded-lg border border-[#f59e0b]/50 text-[#fbbf24] font-semibold disabled:opacity-40">Jual Barang Rusak Bazar</button>
+        </div>
+      </div>
+    </div>
+
     <div className="card-surface p-5"><div className="font-semibold flex items-center gap-2 mb-4"><History size={17}/> History Bazar</div><div className="space-y-2 max-h-[420px] overflow-auto">{history.map((row) => <div key={row.id} className="border-b border-[#1f2937] pb-2 text-xs"><div className="font-medium">{row.eventType} · {row.referenceNo}</div><div className="text-[#8b93a1]">{new Date(row.time).toLocaleString('id-ID')} · {row.operator}</div></div>)}</div></div>
 
-    {closing && <div className="fixed inset-0 z-[90] bg-black/75 flex items-center justify-center p-4"><div className="card-surface w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto"><h2 className="font-display text-xl font-bold">Rekonsiliasi {closing.tripNo}</h2><p className="text-xs text-[#8b93a1] mt-1 mb-4">Isi terjual dan retur rusak. Retur baik dihitung otomatis = Muat − Terjual − Retur Rusak.</p>{(closing.items || []).map((item, index) => { const rowKey = `${item.productId}|${item.stackCode || ''}`; const sold = Number(closeRows[rowKey]?.soldQty || 0); const damaged = Number(closeRows[rowKey]?.returnedDamagedQty || 0); const good = Number(item.loadedQty || 0) - sold - damaged; return <div key={`${rowKey}-${index}`} className="border border-[#243044] rounded-xl p-4 mb-3"><div className="font-semibold text-sm">{item.name} · {item.stackCode || defaultConsignmentStack('Gudang Bazar')} · Muat {item.loadedQty} {item.unit}</div><div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3"><input type="number" min="0" className={inputCls} placeholder="Terjual" value={closeRows[rowKey]?.soldQty || ''} onChange={(e) => setCloseRows((p) => ({ ...p, [rowKey]: { ...p[rowKey], soldQty: e.target.value } }))}/><input type="number" min="0" className={inputCls} placeholder="Retur rusak" value={closeRows[rowKey]?.returnedDamagedQty || ''} onChange={(e) => setCloseRows((p) => ({ ...p, [rowKey]: { ...p[rowKey], returnedDamagedQty: e.target.value } }))}/><div className="rounded-lg border border-[#243044] px-3 py-2.5 text-sm">Retur baik: <b>{good}</b></div></div></div>; })}<div className="flex justify-end gap-2 mt-5"><button onClick={() => setClosing(null)} className="px-4 py-2 rounded-lg border border-[#243044]">Batal</button><button onClick={closeTrip} className="btn-primary px-5 py-2 rounded-lg font-semibold">Selesaikan Bazar</button></div></div></div>}
+    {closing && <div className="fixed inset-0 z-[90] bg-black/75 flex items-center justify-center p-4"><div className="card-surface w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto"><h2 className="font-display text-xl font-bold">Rekonsiliasi {closing.tripNo}</h2><p className="text-xs text-[#8b93a1] mt-1 mb-4">Isi terjual dan retur rusak. Retur baik dihitung otomatis = Muat − Terjual − Retur Rusak. Retur rusak otomatis masuk Area Barang Rusak Bazar.</p>{(closing.items || []).map((item, index) => { const rowKey = `${item.productId}|${item.stackCode || ''}`; const sold = Number(closeRows[rowKey]?.soldQty || 0); const damaged = Number(closeRows[rowKey]?.returnedDamagedQty || 0); const good = Number(item.loadedQty || 0) - sold - damaged; return <div key={`${rowKey}-${index}`} className="border border-[#243044] rounded-xl p-4 mb-3"><div className="font-semibold text-sm">{item.name} · {item.stackCode || defaultConsignmentStack('Gudang Bazar')} · Muat {item.loadedQty} {item.unit}</div><div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3"><input type="number" min="0" className={inputCls} placeholder="Terjual" value={closeRows[rowKey]?.soldQty || ''} onChange={(e) => setCloseRows((p) => ({ ...p, [rowKey]: { ...p[rowKey], soldQty: e.target.value } }))}/><input type="number" min="0" className={inputCls} placeholder="Retur rusak" value={closeRows[rowKey]?.returnedDamagedQty || ''} onChange={(e) => setCloseRows((p) => ({ ...p, [rowKey]: { ...p[rowKey], returnedDamagedQty: e.target.value } }))}/><div className="rounded-lg border border-[#243044] px-3 py-2.5 text-sm">Retur baik: <b>{good}</b></div></div></div>; })}<div className="flex justify-end gap-2 mt-5"><button onClick={() => setClosing(null)} className="px-4 py-2 rounded-lg border border-[#243044]">Batal</button><button onClick={closeTrip} className="btn-primary px-5 py-2 rounded-lg font-semibold">Selesaikan Bazar</button></div></div></div>}
   </div>;
 };
 
