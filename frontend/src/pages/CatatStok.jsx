@@ -453,7 +453,11 @@ const CatatStok = ({ panel = '' }) => {
         navigate('/pengeluaran');
       }
     } catch (e) {
-      toast.error(e?.response?.data?.detail || 'Gagal menyimpan');
+      const detail = e?.response?.data?.detail || 'Gagal menyimpan';
+      if (type === 'MASUK' && String(detail).includes('melewati pukul 16.00')) {
+        setShowUnloadingSplit(true);
+      }
+      toast.error(detail);
     } finally {
       setSaving(false);
     }
