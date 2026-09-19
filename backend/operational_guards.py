@@ -258,6 +258,8 @@ async def guarded_receive_stock(body: ReceiptInput, request: Request, user: dict
     keys = product_lock_keys(item.productId for item in body.items)
     if body.poId:
         keys.append(f"po:{body.poId}")
+    if body.unloadingSessionId:
+        keys.append(f"unloading-session:{body.unloadingSessionId}")
     return await idempotent_operation(request, user, "receipt", keys, lambda: receive_stock(body, user))
 
 

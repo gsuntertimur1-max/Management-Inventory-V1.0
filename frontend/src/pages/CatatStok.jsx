@@ -51,8 +51,9 @@ const CatatStok = ({ panel = '' }) => {
   const [dispatchPurpose, setDispatchPurpose] = useState('LAINNYA');
   const [consignmentDestination, setConsignmentDestination] = useState('');
   const [consignmentZone, setConsignmentZone] = useState('');
-  const [unloadingStartTime, setUnloadingStartTime] = useState('');
+  const [unloadingSession, setUnloadingSession] = useState(null);
   const [showUnloadingSplit, setShowUnloadingSplit] = useState(false);
+  const [startingUnloading, setStartingUnloading] = useState(false);
   const [saving, setSaving] = useState(false);
   const consignmentZoneOptions = consignmentStackCodes(consignmentDestination);
   const [weighingForm, setWeighingForm] = useState(false);
@@ -74,6 +75,47 @@ const CatatStok = ({ panel = '' }) => {
     [purchaseOrders],
   );
   const selectedPO = purchaseOrders.find((po) => po.id === poId);
+
+  const startUnloading = async () => {
+    if (startingUnloading) return;
+    setStartingUnloading(true);
+    try {
+      const { data } = await api.post('/unloading-sessions/start');
+      setUnloadingSession(data);
+      setShowUnloadingSplit(false);
+      toast.success('Waktu mulai bongkar tercatat oleh sistem');
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || e.message || 'Gagal memulai bongkar');
+    } finally {
+      setStartingUnloading(false);
+    }
+  };
+
+  const cancelUnloading = async () => {
+    if (!unloadingSession?.id) return;
+    try {
+      await api.post(`/unloading-sessions/${unloadingSession.id}/cancel`);
+      setUnloadingSession(null);
+      setShowUnloadingSplit(false);
+      setRows((prev) => prev.map((row) => ({ ...row, normalQtyBefore1600: '' })));
+      toast.success('Sesi bongkar dibatalkan');
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || e.message || 'Gagal membatalkan sesi bongkar');
+    }
+  };
+
+  const unloadingStartedMinutes = () => {
+    if (!unloadingSession?.startedAt) return null;
+    const date = new Date(unloadingSession.startedAt);
+    const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(date);
+    const map = Object.fromEntries(parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+    return Number(map.hour) * 60 + Number(map.minute);
+  };
+
+  const unloadingStartedLabel = () => {
+    if (!unloadingSession?.startedAt) return '—';
+    return new Intl.DateTimeFormat('id-ID', { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(unloadingSession.startedAt));
+  };
   const selectedOutboundProductIds = useMemo(() => type === 'KELUAR' && kondisi === 'BAIK' ? [...new Set(rows.map((row) => row.productId).filter(Boolean))] : [], [rows, type, kondisi]);
 
   useEffect(() => {
@@ -277,11 +319,11 @@ const CatatStok = ({ panel = '' }) => {
       return;
     }
     if (type === 'MASUK') {
-      if (!unloadingStartTime) {
-        toast.error('Isi waktu mulai bongkar agar perhitungan lembur akurat');
+      if (!unloadingSession?.id) {
+        toast.error('Tekan Mulai Bongkar sebelum menyelesaikan penerimaan');
         return;
       }
-      const startMinutes = timeMinutes(unloadingStartTime);
+      const startMinutes = unloadingStartedMinutes();
       const nowMinutes = wibMinutesNow();
       const splitRequired = startMinutes !== null && startMinutes < 16 * 60 && nowMinutes >= 16 * 60;
       if (splitRequired) {
@@ -378,10 +420,11 @@ const CatatStok = ({ panel = '' }) => {
           grossMin: Number(grossMin || 0),
           grossMax: Number(grossMax || 0),
           unloadingFeeChargeMode: feeChargeMode,
-          unloadingStartTime,
+          unloadingSessionId: unloadingSession.id,
         });
         const poStatus = result?.purchaseOrder?.status;
-        toast.success(poStatus ? `Penerimaan tersimpan · Status PO: ${poStatus}` : 'Stok masuk tersimpan');
+        setUnloadingSession(null);
+        toast.success(poStatus ? `Bongkar selesai & penerimaan tersimpan · Status PO: ${poStatus}` : 'Bongkar selesai & stok masuk tersimpan');
         if (weighingForm && result?.operationId) await downloadApiFile(`/export/weighing-form/inbound/${result.operationId}.pdf`, `form_timbangan_masuk_${result.operationId}.pdf`);
         navigate('/riwayat');
       } else {
@@ -474,11 +517,14 @@ const CatatStok = ({ panel = '' }) => {
 
           {type === 'MASUK' && <div className="mb-5 rounded-xl border border-[#7c5a1f] bg-[#191307] p-4">
             <div className="text-sm font-semibold text-[#fde68a]">Waktu Kerja Bongkar</div>
-            <p className="text-xs text-[#c9b783] mt-1">Waktu selesai mengikuti saat tombol <b>Simpan Stok Masuk</b> ditekan. Cutoff lembur pukul 16.00 WIB.</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3 items-end">
-              <div><label className="text-xs text-[#fcd34d] block mb-1">Mulai bongkar</label><input type="time" value={unloadingStartTime} onChange={(e) => { setUnloadingStartTime(e.target.value); setShowUnloadingSplit(false); }} className="w-full bg-[#0b0f17] border border-[#7c5a1f] rounded-lg px-3 py-2.5 font-mono" /></div>
-              <div className="rounded-lg border border-[#4b3b1c] px-3 py-2.5 text-xs text-[#d8c995]">{(() => { const start = timeMinutes(unloadingStartTime); const now = wibMinutesNow(); if (start === null) return 'Isi waktu mulai bongkar.'; if (start >= 16 * 60) return 'Lembur penuh: seluruh kuantitas mendapat tambahan lembur.'; if (now >= 16 * 60) return 'Lembur parsial: isi kuantitas selesai sampai 16.00 di bawah.'; return 'Masih jam normal. Jika penyelesaian melewati 16.00, sistem akan meminta split kuantitas.'; })()}</div>
+              <div>
+                <label className="text-xs text-[#fcd34d] block mb-1">Mulai bongkar</label>
+                {unloadingSession ? <div className="w-full rounded-lg border border-[#166534] bg-[#14532d]/10 px-3 py-2.5 font-mono text-sm text-[#86efac]">Tercatat {unloadingStartedLabel()} WIB</div> : <button type="button" onClick={startUnloading} disabled={startingUnloading} className="w-full rounded-lg border border-[#2563eb] px-3 py-2.5 text-sm font-semibold text-[#93c5fd] hover:bg-[#2563eb]/10 disabled:opacity-50">{startingUnloading ? 'Mencatat…' : 'Mulai Bongkar'}</button>}
+              </div>
+              <div className="rounded-lg border border-[#4b3b1c] px-3 py-2.5 text-xs text-[#d8c995]">{(() => { const start = unloadingStartedMinutes(); const now = wibMinutesNow(); if (start === null) return 'Tekan Mulai Bongkar saat pekerjaan fisik dimulai.'; if (start >= 16 * 60) return 'LEMBUR PENUH · seluruh kuantitas mendapat tambahan lembur.'; if (now >= 16 * 60) return 'LEMBUR PARSIAL · isi kuantitas selesai sampai 16.00 di bawah.'; return 'NORMAL · jika selesai melewati 16.00, sistem akan meminta split kuantitas.'; })()}</div>
             </div>
+            {unloadingSession && <button type="button" onClick={cancelUnloading} className="mt-3 text-xs text-[#fca5a5] underline">Batalkan sesi bongkar</button>}
           </div>}
 
           <div className="mb-5 rounded-xl border border-[#294263] bg-[#0d1728] p-4">
@@ -534,7 +580,7 @@ const CatatStok = ({ panel = '' }) => {
               );
             })}
           </div>
-          {type === 'MASUK' && unloadingStartTime && (showUnloadingSplit || (timeMinutes(unloadingStartTime) < 16 * 60 && wibMinutesNow() >= 16 * 60)) && <div className="mb-4 rounded-xl border border-[#b45309] bg-[#1f1408] p-4">
+          {type === 'MASUK' && unloadingSession && (showUnloadingSplit || (unloadingStartedMinutes() < 16 * 60 && wibMinutesNow() >= 16 * 60)) && <div className="mb-4 rounded-xl border border-[#b45309] bg-[#1f1408] p-4">
             <div className="font-semibold text-[#fbbf24]">Kuantitas selesai sampai pukul 16.00</div>
             <p className="text-xs text-[#d6b77c] mt-1 mb-3">Isi per komoditas. Sistem menghitung <b>lembur = total bongkar − selesai s.d. 16.00</b>.</p>
             <div className="space-y-2">{rows.map((row, index) => {
@@ -561,7 +607,7 @@ const CatatStok = ({ panel = '' }) => {
             {type === 'KELUAR' && <div><label className="text-sm font-medium mb-1.5 block">Kondisi Barang</label><select value={kondisi} onChange={(e) => { const next = e.target.value; setKondisi(next); if (next === 'RUSAK') setRows((prev) => prev.map((row) => ({ ...row, stackCode: '' }))); }} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm"><option value="BAIK">Baik (Good)</option><option value="RUSAK">Rusak (Damage)</option></select>{kondisi === 'RUSAK' && <p className="text-[10px] text-[#fca5a5] mt-1">Sumber fisik otomatis: {DAMAGED_AREA} · antrean R-xxx.</p>}</div>}
           </div>
           <div className="mt-4"><label className="text-sm font-medium mb-1.5 block">Keterangan</label><textarea value={ket} onChange={(e) => setKet(e.target.value)} rows={2} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm resize-none" /></div>
-          <button onClick={submit} disabled={saving} className="btn-primary w-full mt-5 flex items-center justify-center gap-2 py-3 rounded-lg font-semibold text-sm disabled:opacity-60"><Save size={16} /> {saving ? 'Menyimpan…' : type === 'MASUK' ? 'Simpan Stok Masuk' : 'Buat Antrian Pemuatan'}</button>
+          <button onClick={submit} disabled={saving || (type === 'MASUK' && !unloadingSession)} className="btn-primary w-full mt-5 flex items-center justify-center gap-2 py-3 rounded-lg font-semibold text-sm disabled:opacity-60"><Save size={16} /> {saving ? 'Menyimpan…' : type === 'MASUK' ? (unloadingSession ? 'Selesai Bongkar & Simpan Stok Masuk' : 'Mulai Bongkar terlebih dahulu') : 'Buat Antrian Pemuatan'}</button>
         </div>
 
         <div className="card-surface p-6 h-fit">

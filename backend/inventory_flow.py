@@ -75,7 +75,46 @@ class ReceiptInput(BaseModel):
     grossMax: float = Field(default=0, ge=0)
     # PENGIRIM ditagihkan pada pengirim; TERMAKSUK berarti sudah masuk harga/dokumen.
     unloadingFeeChargeMode: Literal["", "PENGIRIM", "TERMASUK"] = ""
-    unloadingStartTime: str = ""
+    unloadingSessionId: str = ""
+    unloadingStartTime: str = ""  # legacy client compatibility only
+
+
+def _unloading_user_key(user: dict) -> str:
+    return str(user.get("id") or user.get("username") or user.get("name") or "").strip()
+
+
+@router.post("/unloading-sessions/start")
+async def start_unloading_session(user: dict = Depends(require_write)):
+    user_key = _unloading_user_key(user)
+    existing = await db.unloading_sessions.find_one(
+        {"startedByKey": user_key, "status": "BERJALAN"},
+        {"_id": 0},
+    )
+    if existing:
+        return existing
+    now = operational_now()
+    doc = {
+        "id": new_id(),
+        "status": "BERJALAN",
+        "startedAt": now.isoformat(),
+        "startedBy": user.get("name", ""),
+        "startedByKey": user_key,
+        "createdAt": now_iso(),
+    }
+    await db.unloading_sessions.insert_one(dict(doc))
+    return doc
+
+
+@router.post("/unloading-sessions/{session_id}/cancel")
+async def cancel_unloading_session(session_id: str, user: dict = Depends(require_write)):
+    user_key = _unloading_user_key(user)
+    result = await db.unloading_sessions.update_one(
+        {"id": session_id, "startedByKey": user_key, "status": "BERJALAN"},
+        {"$set": {"status": "DIBATALKAN", "cancelledAt": now_iso(), "cancelledBy": user.get("name", "")}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=409, detail="Sesi bongkar tidak aktif atau bukan milik pengguna ini")
+    return {"ok": True}
 
 
 def receipt_condition_quantities(item: ReceiptItemInput, kondisi: str) -> tuple[float, float]:
@@ -399,7 +438,28 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
                 )
 
     op_now = operational_now()
-    unloading_started_at = _unloading_started_at(body.unloadingStartTime, op_now)
+    unloading_session = None
+    if body.unloadingSessionId.strip():
+        unloading_session = await db.unloading_sessions.find_one(
+            {
+                "id": body.unloadingSessionId.strip(),
+                "startedByKey": _unloading_user_key(user),
+                "status": "BERJALAN",
+            },
+            {"_id": 0},
+        )
+        if not unloading_session:
+            raise HTTPException(status_code=409, detail="Sesi bongkar tidak aktif. Tekan Mulai Bongkar kembali.")
+        try:
+            unloading_started_at = datetime.fromisoformat(str(unloading_session.get("startedAt") or "").replace("Z", "+00:00"))
+            if unloading_started_at.tzinfo is None:
+                unloading_started_at = unloading_started_at.replace(tzinfo=op_now.tzinfo)
+            else:
+                unloading_started_at = unloading_started_at.astimezone(op_now.tzinfo)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail="Waktu sesi bongkar tidak valid. Batalkan sesi dan mulai kembali.") from exc
+    else:
+        unloading_started_at = _unloading_started_at(body.unloadingStartTime, op_now)
     fee_settings = await db.settings.find_one({"_id": "app"}, {"_id": 0, "holidays": 1}) or {}
     unloading_holiday = holiday_from_settings(op_now, fee_settings.get("holidays") or [])
     operation_id = new_id()
@@ -408,6 +468,7 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
     stock_changes = []
     stack_changes = []
     txns = []
+    unloading_session_completed = False
 
     try:
         for item, product in zip(body.items, products):
@@ -454,7 +515,7 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
                 unloading_started_at,
                 op_now,
                 total_qty,
-                item.normalQtyBefore1600 if body.unloadingStartTime else None,
+                item.normalQtyBefore1600 if (body.unloadingSessionId or body.unloadingStartTime) else None,
             )
             if location_config and bool(location_config.get("unloadingCostEnabled", False)):
                 unloading_group = str(location_config.get("unloadingGroup", "") or "")
@@ -528,6 +589,20 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
         if txns:
             await db.transactions.insert_many([dict(txn) for txn in txns])
 
+        if unloading_session:
+            session_result = await db.unloading_sessions.update_one(
+                {"id": unloading_session["id"], "status": "BERJALAN"},
+                {"$set": {
+                    "status": "SELESAI",
+                    "completedAt": op_now.isoformat(),
+                    "completedBy": user.get("name", ""),
+                    "operationId": operation_id,
+                }},
+            )
+            if session_result.matched_count == 0:
+                raise HTTPException(status_code=409, detail="Sesi bongkar sudah digunakan. Muat ulang halaman.")
+            unloading_session_completed = True
+
         updated_po = None
         if po:
             updated_items = []
@@ -553,6 +628,11 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
             updated_po = {**po, "items": updated_items, "status": new_status}
 
     except Exception:
+        if unloading_session_completed and unloading_session:
+            await db.unloading_sessions.update_one(
+                {"id": unloading_session["id"], "operationId": operation_id},
+                {"$set": {"status": "BERJALAN"}, "$unset": {"completedAt": "", "completedBy": "", "operationId": ""}},
+            )
         await db.transactions.delete_many({"operation_id": operation_id})
         for change in reversed(stack_changes):
             try:
