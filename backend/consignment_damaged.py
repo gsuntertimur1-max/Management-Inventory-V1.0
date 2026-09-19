@@ -132,6 +132,7 @@ async def credit_consignment_damaged(
 class DamagedSaleInput(BaseModel):
     destination: Literal["Gudang Bazar", "Gudang E-commerce"]
     productId: str
+    channel: str = ""
     qty: float = Field(gt=0)
     recipient: str = ""
     referenceNo: str = ""
@@ -174,9 +175,11 @@ async def sell_consignment_damaged(body: DamagedSaleInput, request: Request, use
     if not product_id:
         raise HTTPException(status_code=400, detail="Produk barang rusak wajib dipilih")
 
+    channel = normalize_channel(body.channel, "KOM")
+
     async def action():
         balance = await db.consignment_damaged_balances.find_one(
-            {"destination": destination, "productId": product_id},
+            {"destination": destination, "productId": product_id, "channel": channel},
             {"_id": 0},
         )
         if not balance:
@@ -186,7 +189,7 @@ async def sell_consignment_damaged(body: DamagedSaleInput, request: Request, use
             {
                 "destination": destination,
                 "productId": product_id,
-                "channel": balance.get("channel", "KOM"),
+                "channel": channel,
                 "qty": {"$gte": qty},
             },
             {"$inc": {"qty": -qty}, "$set": {"updatedAt": now_iso()}},
@@ -221,7 +224,7 @@ async def sell_consignment_damaged(body: DamagedSaleInput, request: Request, use
             await db.consignment_damaged_movements.insert_one(dict(movement))
         except Exception:
             await db.consignment_damaged_balances.update_one(
-                {"destination": destination, "productId": product_id, "channel": balance.get("channel", "KOM")},
+                {"destination": destination, "productId": product_id, "channel": channel},
                 {"$inc": {"qty": qty}},
             )
             raise
@@ -252,7 +255,7 @@ async def sell_consignment_damaged(body: DamagedSaleInput, request: Request, use
     return await idempotent_operation(
         request,
         user,
-        f"consignment-damaged-sale:{destination}:{product_id}",
-        [f"consignment-damaged:{destination}:{product_id}"],
+        f"consignment-damaged-sale:{destination}:{product_id}:{channel}",
+        [f"consignment-damaged:{destination}:{product_id}:{channel}"],
         action,
     )
