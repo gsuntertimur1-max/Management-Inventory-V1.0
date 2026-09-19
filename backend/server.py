@@ -332,6 +332,7 @@ async def seed_master(force: bool = False):
             db.consignment_damaged_balances, db.consignment_damaged_movements,
             db.bazar_trips, db.ecom_orders,
             db.bazar_package_templates, db.bazar_package_batches, db.bazar_package_loads,
+            db.bazar_external_nd,
             db.stock_opnames, db.stack_lots, db.stack_lot_movements,
             db.operation_requests, db.operation_locks, db.unloading_sessions,
             db.marketplace_sync_logs, db.marketplace_auth_sessions, db.marketplace_webhook_events,

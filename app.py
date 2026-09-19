@@ -19,6 +19,7 @@ from backend.outbound_completion_hardening import router as outbound_completion_
 from backend.consignment import router as consignment_router, ensure_consignment_location_codes
 from backend.consignment_operations import router as consignment_operations_router, ensure_consignment_operation_indexes
 from backend.bazar_packages import router as bazar_packages_router, ensure_bazar_package_indexes
+from backend.bazar_external_nd import router as bazar_external_nd_router, ensure_bazar_external_nd_indexes
 from backend.consignment_hardening import router as consignment_hardening_router
 from backend.consignment_damaged import router as consignment_damaged_router, ensure_consignment_damaged_indexes
 from backend.marketplace_integration import router as marketplace_integration_router, ensure_marketplace_indexes
@@ -98,6 +99,7 @@ app.include_router(consignment_hardening_router)
 # Bazar/E-commerce operations patch consignment balances before the public consignment routes execute.
 app.include_router(consignment_operations_router)
 app.include_router(bazar_packages_router)
+app.include_router(bazar_external_nd_router)
 app.include_router(marketplace_integration_router)
 app.include_router(marketplace_oauth_router)
 app.include_router(consignment_router)
@@ -133,6 +135,7 @@ async def hardened_lifespan(application):
         await ensure_consignment_operation_indexes()
         await ensure_consignment_damaged_indexes()
         await ensure_bazar_package_indexes()
+        await ensure_bazar_external_nd_indexes()
         await ensure_marketplace_indexes()
         await ensure_marketplace_oauth_indexes()
         await ensure_cost_payment_indexes()
