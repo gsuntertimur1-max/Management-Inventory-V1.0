@@ -20,7 +20,7 @@ const BazarOperasional = () => {
   const [closing, setClosing] = useState(null);
   const [closeRows, setCloseRows] = useState({});
   const [damagedStock, setDamagedStock] = useState([]);
-  const [damagedSale, setDamagedSale] = useState({ productId: '', qty: '', recipient: '', referenceNo: '', note: '' });
+  const [damagedSale, setDamagedSale] = useState({ productId: '', channel: '', qty: '', recipient: '', referenceNo: '', note: '' });
 
   const load = async () => {
     const [a, t, h, d] = await Promise.all([
@@ -94,7 +94,7 @@ const BazarOperasional = () => {
   };
 
   const sellDamaged = async () => {
-    const row = damagedStock.find((item) => item.productId === damagedSale.productId);
+    const row = damagedStock.find((item) => item.productId === damagedSale.productId && item.channel === damagedSale.channel);
     const qty = Number(damagedSale.qty || 0);
     if (!row || qty <= 0) return toast.error('Pilih barang rusak dan isi jumlah yang dijual');
     if (qty > Number(row.qty || 0)) return toast.error(`Saldo rusak ${row.name} hanya ${row.qty} ${row.unit}`);
@@ -102,13 +102,14 @@ const BazarOperasional = () => {
       await api.post('/consignment-damaged/sales', {
         destination: 'Gudang Bazar',
         productId: row.productId,
+        channel: row.channel,
         qty,
         recipient: damagedSale.recipient.trim(),
         referenceNo: damagedSale.referenceNo.trim(),
         note: damagedSale.note.trim(),
       });
       toast.success('Penjualan barang rusak Bazar tersimpan');
-      setDamagedSale({ productId: '', qty: '', recipient: '', referenceNo: '', note: '' });
+      setDamagedSale({ productId: '', channel: '', qty: '', recipient: '', referenceNo: '', note: '' });
       await Promise.all([load(), refreshConsignmentFlow()]);
     } catch (e) { toast.error(apiError(e)); }
   };
@@ -185,9 +186,9 @@ const BazarOperasional = () => {
         </div>
         <div className="rounded-xl border border-[#243044] p-4 space-y-2">
           <div className="font-semibold text-sm flex items-center gap-2"><ShoppingCart size={15}/> Penjualan Barang Rusak</div>
-          <select className={inputCls} value={damagedSale.productId} onChange={(e) => setDamagedSale((p) => ({ ...p, productId: e.target.value, qty: '' }))}>
+          <select className={inputCls} value={damagedSale.productId ? `${damagedSale.productId}|${damagedSale.channel}` : ''} onChange={(e) => { const [productId, channel = ''] = e.target.value.split('|'); setDamagedSale((p) => ({ ...p, productId, channel, qty: '' })); }}>
             <option value="">Pilih barang rusak</option>
-            {damagedStock.map((row) => <option key={row.productId} value={row.productId}>{row.name} · saldo {row.qty} {row.unit}</option>)}
+            {damagedStock.map((row) => <option key={`${row.productId}-${row.channel}`} value={`${row.productId}|${row.channel}`}>{row.name} · {row.channel} · saldo {row.qty} {row.unit}</option>)}
           </select>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <input type="number" min="0" className={inputCls} placeholder="Jumlah dijual" value={damagedSale.qty} onChange={(e) => setDamagedSale((p) => ({ ...p, qty: e.target.value }))}/>
