@@ -3,6 +3,7 @@ import { Boxes, CheckCircle2, FileText, History, PackagePlus, Plus, Printer, Ref
 import api, { apiError, downloadApiFile } from '../lib/api';
 import { toast } from 'sonner';
 import { useData } from '../context/DataContext';
+import SearchableProductSelect from '../components/SearchableProductSelect';
 
 const inputCls = 'w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]';
 
@@ -176,10 +177,13 @@ const BazarPaket = () => {
           <input className={inputCls} placeholder="Nama paket" value={master.name} onChange={(e) => setMaster({ ...master, name: e.target.value })}/>
         </div>
         <div className="grid grid-cols-[1fr_120px_auto] gap-2">
-          <select className={inputCls} value={master.productId} onChange={(e) => setMaster({ ...master, productId: e.target.value })}>
-            <option value="">Pilih komoditi</option>
-            {availability.map((x) => <option key={x.productId} value={x.productId}>{x.name} · loose {x.availableQty} {x.unit}</option>)}
-          </select>
+          <SearchableProductSelect
+            products={availability.map((x) => ({ ...x, id: x.productId }))}
+            value={master.productId}
+            onChange={(productId) => setMaster({ ...master, productId })}
+            placeholder="Ketik nama / SKU komoditi..."
+            getDescription={(x) => `loose ${x.availableQty} ${x.unit}`}
+          />
           <input type="number" min="0" className={inputCls} placeholder="Isi/paket" value={master.qty} onChange={(e) => setMaster({ ...master, qty: e.target.value })}/>
           <button onClick={addComponent} className="px-3 rounded-lg border border-[#3b82f6]/50 text-[#93c5fd]"><Plus size={17}/></button>
         </div>
