@@ -3,6 +3,7 @@ import { ArrowDownToLine, BadgeCheck, FileCheck2, FilePlus2, RefreshCcw, RotateC
 import api, { apiError } from '../lib/api';
 import { toast } from 'sonner';
 import { useData } from '../context/DataContext';
+import SearchableProductSelect from '../components/SearchableProductSelect';
 
 const inputCls = 'w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]';
 const today = () => new Date().toISOString().slice(0, 10);
@@ -100,7 +101,13 @@ const BazarNDExternal = () => {
         <select className={inputCls} value={form.activityType} onChange={(e) => setForm({ ...form, activityType: e.target.value })}><option value="BAZAR">Bazar</option><option value="PAKET">Paket</option><option value="BAZAR_DAN_PAKET">Bazar & Paket</option></select>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-[1fr_160px_auto] gap-2">
-        <select className={inputCls} value={draft.productId} onChange={(e) => setDraft({ ...draft, productId: e.target.value })}><option value="">Pilih komoditi</option>{activeProducts.map((row) => <option key={row.id} value={row.id}>{row.sku} · {row.name}</option>)}</select>
+        <SearchableProductSelect
+          products={activeProducts}
+          value={draft.productId}
+          onChange={(productId) => setDraft({ ...draft, productId })}
+          placeholder="Ketik nama / SKU komoditi..."
+          getDescription={(row) => `${row.channel || 'KOM'} · ${row.unit || ''}`}
+        />
         <input type="number" min="0" className={inputCls} placeholder="Kuantum ND" value={draft.qty} onChange={(e) => setDraft({ ...draft, qty: e.target.value })}/>
         <button onClick={addItem} className="px-4 rounded-lg border border-[#3b82f6]/50 text-[#93c5fd]">Tambah</button>
       </div>
