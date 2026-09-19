@@ -3,6 +3,7 @@ import { AlertTriangle, History, PackageCheck, PackagePlus, Plus, RefreshCcw, Ro
 import api, { apiError } from '../lib/api';
 import { toast } from 'sonner';
 import { useData } from '../context/DataContext';
+import SearchableProductSelect from '../components/SearchableProductSelect';
 
 const inputCls = 'w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]';
 
@@ -158,7 +159,13 @@ const EcomOperasional = () => {
         <input className={inputCls} placeholder="Nomor pesanan" value={form.orderNo} onChange={(e) => setForm({ ...form, orderNo: e.target.value })}/>
         <input className={inputCls} placeholder="Pembeli (opsional)" value={form.buyer} onChange={(e) => setForm({ ...form, buyer: e.target.value })}/>
         <div className="grid grid-cols-[1fr_120px_auto] gap-2">
-          <select className={inputCls} value={form.productId} onChange={(e) => setForm({ ...form, productId: e.target.value })}><option value="">Pilih komoditi</option>{availability.map((x) => <option key={x.productId} value={x.productId}>{x.name} · tersedia {x.availableQty} {x.unit}</option>)}</select>
+          <SearchableProductSelect
+            products={availability.map((x) => ({ ...x, id: x.productId }))}
+            value={form.productId}
+            onChange={(productId) => setForm({ ...form, productId })}
+            placeholder="Ketik nama / SKU komoditi..."
+            getDescription={(x) => `${x.channel || 'KOM'} · tersedia ${x.availableQty} ${x.unit}`}
+          />
           <input type="number" min="0" className={inputCls} placeholder="Jumlah" value={form.qty} onChange={(e) => setForm({ ...form, qty: e.target.value })}/>
           <button type="button" onClick={addOrderItem} className="px-3 rounded-lg border border-[#3b82f6]/50 text-[#93c5fd]"><Plus size={17}/></button>
         </div>
@@ -200,10 +207,13 @@ const EcomOperasional = () => {
         </div>
         <div className="rounded-xl border border-[#7c5a1f] p-4 space-y-2">
           <div className="font-semibold text-sm flex items-center gap-2"><AlertTriangle size={15}/> Temuan Kerusakan Stok</div>
-          <select className={inputCls} value={damageDiscovery.productId ? `${damageDiscovery.productId}|${damageDiscovery.channel}` : ''} onChange={(e) => chooseDamageProduct(e.target.value)}>
-            <option value="">Pilih stok baik</option>
-            {availability.map((row) => <option key={`${row.productId}-${row.channel || 'KOM'}`} value={`${row.productId}|${row.channel || 'KOM'}`}>{row.name} · {row.channel || 'KOM'} · tersedia {row.availableQty} {row.unit}</option>)}
-          </select>
+          <SearchableProductSelect
+            products={availability.map((row) => ({ ...row, id: `${row.productId}|${row.channel || 'KOM'}` }))}
+            value={damageDiscovery.productId ? `${damageDiscovery.productId}|${damageDiscovery.channel}` : ''}
+            onChange={chooseDamageProduct}
+            placeholder="Cari stok baik..."
+            getDescription={(row) => `${row.channel || 'KOM'} · tersedia ${row.availableQty} ${row.unit}`}
+          />
           <select className={inputCls} value={damageDiscovery.stackCode} onChange={(e) => setDamageDiscovery((p) => ({ ...p, stackCode: e.target.value }))}>
             <option value="">Pilih lokasi fisik</option>
             {damageStackOptions.map((row) => <option key={row.id} value={row.stackCode}>{row.stackCode} · {row.primaryQty} {row.unit}</option>)}
@@ -217,10 +227,13 @@ const EcomOperasional = () => {
         </div>
         <div className="rounded-xl border border-[#243044] p-4 space-y-2">
           <div className="font-semibold text-sm flex items-center gap-2"><ShoppingCart size={15}/> Penjualan Barang Rusak</div>
-          <select className={inputCls} value={damagedSale.productId ? `${damagedSale.productId}|${damagedSale.channel}` : ''} onChange={(e) => { const [productId, channel = ''] = e.target.value.split('|'); setDamagedSale((p) => ({ ...p, productId, channel, qty: '' })); }}>
-            <option value="">Pilih barang rusak</option>
-            {damagedStock.map((row) => <option key={`${row.productId}-${row.channel}`} value={`${row.productId}|${row.channel}`}>{row.name} · {row.channel} · saldo {row.qty} {row.unit}</option>)}
-          </select>
+          <SearchableProductSelect
+            products={damagedStock.map((row) => ({ ...row, id: `${row.productId}|${row.channel}` }))}
+            value={damagedSale.productId ? `${damagedSale.productId}|${damagedSale.channel}` : ''}
+            onChange={(value) => { const [productId, channel = ''] = value.split('|'); setDamagedSale((p) => ({ ...p, productId, channel, qty: '' })); }}
+            placeholder="Cari barang rusak..."
+            getDescription={(row) => `${row.channel} · saldo ${row.qty} ${row.unit}`}
+          />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <input type="number" min="0" className={inputCls} placeholder="Jumlah dijual" value={damagedSale.qty} onChange={(e) => setDamagedSale((p) => ({ ...p, qty: e.target.value }))}/>
             <input className={inputCls} placeholder="Pembeli / penerima" value={damagedSale.recipient} onChange={(e) => setDamagedSale((p) => ({ ...p, recipient: e.target.value }))}/>
