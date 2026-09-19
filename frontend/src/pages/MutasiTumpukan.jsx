@@ -5,6 +5,7 @@ import api, { apiError } from '../lib/api';
 import { useData } from '../context/DataContext';
 import { formatNum } from '../mock';
 import { stackCodes } from '../lib/warehouses';
+import SearchableProductSelect from '../components/SearchableProductSelect';
 
 const MutasiTumpukan = () => {
   const { products, stackAllocations, settings, fetchAll } = useData();
@@ -88,7 +89,7 @@ const MutasiTumpukan = () => {
 
     <div className="card-surface p-5 md:p-6">
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-        <div><label className="text-xs text-[#8b93a1] block mb-1">Komoditi</label><select value={productId} onChange={(e) => chooseProduct(e.target.value)} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5"><option value="">Pilih komoditi...</option>{productOptions.map((p) => <option key={p.id} value={p.id}>{p.name} · {p.sku}</option>)}</select></div>
+        <div><label className="text-xs text-[#8b93a1] block mb-1">Komoditi</label><SearchableProductSelect products={productOptions} value={productId} onChange={chooseProduct} placeholder="Ketik nama / SKU komoditi..." getDescription={(p) => p.unit || ''} /></div>
         <div><label className="text-xs text-[#8b93a1] block mb-1">Tumpukan asal</label><select value={sourceStackCode} onChange={(e) => { setSourceStackCode(e.target.value); setDestinationStackCode(''); setQty(''); }} disabled={!productId} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 disabled:opacity-50"><option value="">Pilih asal...</option>{sourceOptions.map((row) => <option key={row.id} value={row.stackCode}>{row.stackCode} · fisik {formatNum(row.primaryQty)} {row.unit}</option>)}</select></div>
         <div><label className="text-xs text-[#8b93a1] block mb-1">Tumpukan tujuan</label><select value={destinationStackCode} onChange={(e) => setDestinationStackCode(e.target.value)} disabled={!sourceStackCode} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 disabled:opacity-50"><option value="">Pilih tujuan...</option>{stacks.filter((code) => code !== sourceStackCode).map((code) => <option key={code} value={code}>{code}</option>)}</select></div>
         <div><label className="text-xs text-[#8b93a1] block mb-1">Jumlah dipindahkan</label><input type="number" min="0.01" step="any" value={qty} onChange={(e) => setQty(e.target.value)} disabled={!sourceStackCode} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 disabled:opacity-50" placeholder={product?.unit ? `Dalam ${product.unit}` : 'Jumlah'} /></div>
