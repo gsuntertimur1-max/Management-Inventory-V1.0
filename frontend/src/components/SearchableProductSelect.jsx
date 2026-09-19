@@ -13,6 +13,7 @@ const SearchableProductSelect = ({
   emptyText = 'Produk tidak ditemukan',
   maxResults = 60,
   className = '',
+  dataTestId,
 }) => {
   const rootRef = useRef(null);
   const selected = products.find((item) => item.id === value);
@@ -58,6 +59,7 @@ const SearchableProductSelect = ({
         <Search size={14} className="ml-3 shrink-0 text-[#6b7688]" />
         <input
           type="text"
+          data-testid={dataTestId}
           role="combobox"
           aria-expanded={open}
           aria-autocomplete="list"
