@@ -7,7 +7,7 @@ import { useData } from '../context/DataContext';
 const inputCls = 'w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]';
 
 const EcomOperasional = () => {
-  const { refreshConsignmentFlow } = useData();
+  const { refreshConsignmentFlow, consignmentLayouts } = useData();
   const [availability, setAvailability] = useState([]);
   const [orders, setOrders] = useState([]);
   const [history, setHistory] = useState([]);
@@ -17,6 +17,7 @@ const EcomOperasional = () => {
   const [returnOrder, setReturnOrder] = useState(null);
   const [returnRows, setReturnRows] = useState({});
   const [damagedStock, setDamagedStock] = useState([]);
+  const [damageDiscovery, setDamageDiscovery] = useState({ productId: '', channel: '', stackCode: '', qty: '', cause: '', note: '' });
   const [damagedSale, setDamagedSale] = useState({ productId: '', channel: '', qty: '', recipient: '', referenceNo: '', note: '' });
 
   const load = async () => {
@@ -48,6 +49,37 @@ const EcomOperasional = () => {
     };
   }, []);
   const selected = useMemo(() => availability.find((x) => x.productId === form.productId), [availability, form.productId]);
+  const damageStackOptions = useMemo(
+    () => (consignmentLayouts || []).filter((row) => row.destination === 'Gudang E-commerce' && row.productId === damageDiscovery.productId),
+    [consignmentLayouts, damageDiscovery.productId],
+  );
+
+  const chooseDamageProduct = (value) => {
+    const [productId, channel = 'KOM'] = value.split('|');
+    const first = (consignmentLayouts || []).find((row) => row.destination === 'Gudang E-commerce' && row.productId === productId);
+    setDamageDiscovery((prev) => ({ ...prev, productId, channel, stackCode: first?.stackCode || '', qty: '' }));
+  };
+
+  const recordDamageDiscovery = async () => {
+    const qty = Number(damageDiscovery.qty || 0);
+    if (!damageDiscovery.productId || !damageDiscovery.stackCode || qty <= 0 || !damageDiscovery.cause.trim()) {
+      return toast.error('Pilih produk, lokasi, jumlah, dan penyebab kerusakan');
+    }
+    try {
+      await api.post('/consignment-damaged/discoveries', {
+        destination: 'Gudang E-commerce',
+        productId: damageDiscovery.productId,
+        channel: damageDiscovery.channel,
+        stackCode: damageDiscovery.stackCode,
+        qty,
+        cause: damageDiscovery.cause.trim(),
+        note: damageDiscovery.note.trim(),
+      });
+      toast.success('Temuan rusak dipindahkan ke Area Barang Rusak E-commerce');
+      setDamageDiscovery({ productId: '', channel: '', stackCode: '', qty: '', cause: '', note: '' });
+      await Promise.all([load(), refreshConsignmentFlow()]);
+    } catch (e) { toast.error(apiError(e)); }
+  };
 
   const addOrderItem = () => {
     if (!form.productId || Number(form.qty) <= 0) return toast.error('Pilih produk dan isi jumlah');
@@ -157,7 +189,7 @@ const EcomOperasional = () => {
 
     <div className="card-surface p-5">
       <div className="flex items-center gap-2 mb-4"><AlertTriangle size={17} className="text-[#f59e0b]"/><div className="font-semibold">Area Barang Rusak E-commerce</div></div>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
         <div>
           {damagedStock.length === 0 ? <div className="text-sm text-[#8b93a1]">Belum ada saldo barang rusak E-commerce.</div> : <div className="space-y-2">
             {damagedStock.map((row) => <div key={`${row.productId}-${row.channel}`} className="rounded-lg border border-[#7c5a1f] bg-[#191307] px-3 py-2.5 flex items-center justify-between gap-3 text-sm">
@@ -165,6 +197,23 @@ const EcomOperasional = () => {
               <div className="font-mono font-bold text-[#fbbf24]">{row.qty} {row.unit}</div>
             </div>)}
           </div>}
+        </div>
+        <div className="rounded-xl border border-[#7c5a1f] p-4 space-y-2">
+          <div className="font-semibold text-sm flex items-center gap-2"><AlertTriangle size={15}/> Temuan Kerusakan Stok</div>
+          <select className={inputCls} value={damageDiscovery.productId ? `${damageDiscovery.productId}|${damageDiscovery.channel}` : ''} onChange={(e) => chooseDamageProduct(e.target.value)}>
+            <option value="">Pilih stok baik</option>
+            {availability.map((row) => <option key={`${row.productId}-${row.channel || 'KOM'}`} value={`${row.productId}|${row.channel || 'KOM'}`}>{row.name} · {row.channel || 'KOM'} · tersedia {row.availableQty} {row.unit}</option>)}
+          </select>
+          <select className={inputCls} value={damageDiscovery.stackCode} onChange={(e) => setDamageDiscovery((p) => ({ ...p, stackCode: e.target.value }))}>
+            <option value="">Pilih lokasi fisik</option>
+            {damageStackOptions.map((row) => <option key={row.id} value={row.stackCode}>{row.stackCode} · {row.primaryQty} {row.unit}</option>)}
+          </select>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <input type="number" min="0" className={inputCls} placeholder="Jumlah rusak" value={damageDiscovery.qty} onChange={(e) => setDamageDiscovery((p) => ({ ...p, qty: e.target.value }))}/>
+            <input className={inputCls} placeholder="Penyebab kerusakan" value={damageDiscovery.cause} onChange={(e) => setDamageDiscovery((p) => ({ ...p, cause: e.target.value }))}/>
+          </div>
+          <textarea className={inputCls} placeholder="Catatan (opsional)" value={damageDiscovery.note} onChange={(e) => setDamageDiscovery((p) => ({ ...p, note: e.target.value }))}/>
+          <button onClick={recordDamageDiscovery} className="w-full py-2.5 rounded-lg border border-[#f59e0b]/50 text-[#fbbf24] font-semibold">Pindahkan ke Area Barang Rusak E-commerce</button>
         </div>
         <div className="rounded-xl border border-[#243044] p-4 space-y-2">
           <div className="font-semibold text-sm flex items-center gap-2"><ShoppingCart size={15}/> Penjualan Barang Rusak</div>

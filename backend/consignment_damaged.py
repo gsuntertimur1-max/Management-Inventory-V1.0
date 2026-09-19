@@ -11,6 +11,8 @@ from pymongo.errors import DuplicateKeyError
 from backend.server import db, get_current_user, new_id, now_iso, normalize_channel
 from backend.role_four_config import has_role_permission, role_destination
 from backend.operational_guards import idempotent_operation
+from backend.consignment_locations import normalize_consignment_stack_code
+import backend.consignment as consignment_module
 
 router = APIRouter(prefix="/api")
 
@@ -22,6 +24,54 @@ DAMAGED_LOCATIONS = {
     ECOM: "Area Barang Rusak E-commerce",
 }
 EPS = 1e-9
+
+
+def _n(value) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+async def _good_stock_state(destination: str, product_id: str, channel: str, stack_code: str) -> tuple[dict, float, float]:
+    rows = await consignment_module.consignment_stock(destination)
+    matches = [
+        row for row in rows
+        if row.get("productId") == product_id and normalize_channel(row.get("channel"), "KOM") == channel
+    ]
+    if not matches:
+        raise HTTPException(status_code=404, detail="Stok baik konsinyasi tidak ditemukan")
+    identity = dict(matches[0])
+    physical = sum(_n(row.get("qty")) for row in matches)
+
+    reserved_total = 0.0
+    reserved_stack = 0.0
+    if destination == BAZAR:
+        trips = await db.bazar_trips.find({"status": "BERJALAN"}, {"_id": 0, "items": 1}).to_list(5000)
+        for trip in trips:
+            for item in trip.get("items", []):
+                if item.get("productId") != product_id or normalize_channel(item.get("channel"), "KOM") != channel:
+                    continue
+                qty = _n(item.get("loadedQty"))
+                reserved_total += qty
+                if str(item.get("stackCode") or "").strip().upper() == stack_code:
+                    reserved_stack += qty
+    else:
+        orders = await db.ecom_orders.find({"status": {"$in": ["RESERVED", "PACKING"]}}, {"_id": 0, "items": 1}).to_list(10000)
+        for order in orders:
+            for item in order.get("items", []):
+                if item.get("productId") == product_id and normalize_channel(item.get("channel"), "KOM") == channel:
+                    reserved_total += _n(item.get("qty"))
+
+    layout = await db.consignment_layouts.find_one(
+        {"destination": destination, "productId": product_id, "stackCode": stack_code},
+        {"_id": 0},
+    )
+    if not layout:
+        raise HTTPException(status_code=404, detail=f"Perkalian lokasi {stack_code} tidak ditemukan")
+    stack_available = max(_n(layout.get("primaryQty")) - reserved_stack, 0.0)
+    total_available = max(physical - reserved_total, 0.0)
+    return identity, total_available, stack_available
 
 
 def _ensure_access(user: dict, destination: str, write: bool = False) -> str:
@@ -127,6 +177,144 @@ async def credit_consignment_damaged(
         await db.consignment_damaged_balances.update_one(balance_filter, {"$inc": {"qty": -qty}})
         raise
     return movement
+
+
+class DamagedDiscoveryInput(BaseModel):
+    destination: Literal["Gudang Bazar", "Gudang E-commerce"]
+    productId: str
+    channel: str = ""
+    stackCode: str
+    qty: float = Field(gt=0)
+    cause: str = Field(min_length=3, max_length=200)
+    referenceNo: str = ""
+    note: str = ""
+
+
+@router.post("/consignment-damaged/discoveries")
+async def record_consignment_damage(body: DamagedDiscoveryInput, request: Request, user: dict = Depends(get_current_user)):
+    destination = _ensure_access(user, body.destination, write=True)
+    product_id = body.productId.strip()
+    if not product_id:
+        raise HTTPException(status_code=400, detail="Produk wajib dipilih")
+    channel = normalize_channel(body.channel, "KOM")
+    stack_code = normalize_consignment_stack_code(destination, body.stackCode)
+    qty = float(body.qty)
+    cause = body.cause.strip()
+
+    async def action():
+        identity, total_available, stack_available = await _good_stock_state(destination, product_id, channel, stack_code)
+        if qty > total_available + EPS:
+            raise HTTPException(status_code=409, detail=f"Stok baik tersedia hanya {total_available:g} {identity.get('unit', '')} setelah reservasi")
+        if qty > stack_available + EPS:
+            raise HTTPException(status_code=409, detail=f"Stok tersedia di {stack_code} hanya {stack_available:g} {identity.get('unit', '')}")
+
+        now = now_iso()
+        operation_id = new_id()
+        good_event = f"consignment-damage-good:{operation_id}"
+        damaged_event = f"consignment-damage-credit:{operation_id}"
+        reference_no = body.referenceNo.strip() or f"TR-RUSAK-{now[:10].replace('-', '')}"
+        movement = {
+            "id": new_id(),
+            "eventKey": good_event,
+            "time": now,
+            "destination": destination,
+            "movementType": "BAZAR_TEMUAN_RUSAK" if destination == BAZAR else "ECOM_TEMUAN_RUSAK",
+            "referenceId": operation_id,
+            "referenceNo": reference_no,
+            "productId": product_id,
+            "sku": identity.get("sku", ""),
+            "name": identity.get("name", ""),
+            "unit": identity.get("unit", ""),
+            "channel": channel,
+            "delta": -qty,
+            "damagedQty": qty,
+            "stackCode": stack_code,
+            "cause": cause,
+            "operator": user.get("name", ""),
+            "note": body.note.strip(),
+        }
+
+        layout_changed = False
+        damaged_credited = False
+        try:
+            await db.consignment_movements.insert_one(dict(movement))
+            await consignment_module.decrease_consignment_layouts(
+                destination,
+                product_id,
+                qty,
+                user.get("name", ""),
+                stack_code,
+                strict_preferred=True,
+                operation_key=good_event,
+            )
+            layout_changed = True
+            await credit_consignment_damaged(
+                destination,
+                {**identity, "productId": product_id, "channel": channel},
+                qty,
+                damaged_event,
+                movement["movementType"],
+                operation_id,
+                reference_no,
+                user.get("name", ""),
+                f"{cause}{' · ' + body.note.strip() if body.note.strip() else ''}",
+            )
+            damaged_credited = True
+            await db.consignment_operation_history.insert_one({
+                "id": new_id(),
+                "time": now,
+                "destination": destination,
+                "eventType": "BAZAR_TEMUAN_RUSAK" if destination == BAZAR else "ECOM_TEMUAN_RUSAK",
+                "referenceId": operation_id,
+                "referenceNo": reference_no,
+                "operator": user.get("name", ""),
+                "items": [{
+                    "productId": product_id,
+                    "sku": identity.get("sku", ""),
+                    "name": identity.get("name", ""),
+                    "unit": identity.get("unit", ""),
+                    "channel": channel,
+                    "qty": qty,
+                    "stackCode": stack_code,
+                    "cause": cause,
+                }],
+                "note": body.note.strip(),
+                "damagedArea": DAMAGED_LOCATIONS[destination],
+            })
+        except Exception:
+            if damaged_credited:
+                await db.consignment_damaged_movements.delete_one({"eventKey": damaged_event})
+                await db.consignment_damaged_balances.update_one(
+                    {"destination": destination, "productId": product_id, "channel": channel},
+                    {"$inc": {"qty": -qty}, "$set": {"updatedAt": now_iso()}},
+                )
+            if layout_changed:
+                await db.consignment_layouts.update_one(
+                    {"destination": destination, "productId": product_id, "stackCode": stack_code},
+                    {"$inc": {"primaryQty": qty}, "$pull": {"appliedOperations": {"key": good_event}}},
+                )
+                await db.consignment_layout_history.delete_many({"operationKey": good_event})
+            await db.consignment_movements.delete_one({"eventKey": good_event})
+            raise
+
+        return {
+            "operationId": operation_id,
+            "referenceNo": reference_no,
+            "destination": destination,
+            "damagedArea": DAMAGED_LOCATIONS[destination],
+            "productId": product_id,
+            "channel": channel,
+            "stackCode": stack_code,
+            "qty": qty,
+        }
+
+    return await idempotent_operation(
+        request,
+        user,
+        f"consignment-damage-discovery:{destination}:{product_id}:{channel}:{stack_code}",
+        [f"consignment:{destination}:{product_id}", f"consignment-damaged:{destination}:{product_id}:{channel}"],
+        action,
+    )
 
 
 class DamagedSaleInput(BaseModel):
