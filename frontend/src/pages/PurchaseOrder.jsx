@@ -6,6 +6,7 @@ import { apiError } from '../lib/api';
 import { formatRp, formatDate, formatNum } from '../mock';
 import { toast } from 'sonner';
 import { packagingText, quantityFromInput, quantityIsValid, totalWeight } from '../lib/packaging';
+import SearchableProductSelect from '../components/SearchableProductSelect';
 
 const STATUS = {
   'Belum Diterima': '#eab308',
@@ -187,10 +188,14 @@ const PurchaseOrder = () => {
                     <div key={index} className="grid grid-cols-1 sm:grid-cols-[minmax(180px,1fr)_105px_145px_40px] gap-2 items-end p-3 rounded-lg bg-[#0b0f17] border border-[#1a222e]">
                       <div>
                         <label className="text-[10px] text-[#6b7688] mb-1 block">Produk</label>
-                        <select data-testid={`po-product-select-${index}`} value={item.productId} onChange={(e) => setItem(index, { productId: e.target.value, inputMode: 'QTY', inputValue: 1 })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]">
-                          <option value="">Pilih produk...</option>
-                          {products.map((product) => <option key={product.id} value={product.id}>{product.name} ({product.sku})</option>)}
-                        </select>
+                        <SearchableProductSelect
+                          products={products}
+                          value={item.productId}
+                          onChange={(productId) => setItem(index, { productId, inputMode: 'QTY', inputValue: 1 })}
+                          placeholder="Ketik nama / SKU produk..."
+                          getDescription={(product) => `${product.category || 'Produk'} · ${product.unit || ''}`}
+                          dataTestId={`po-product-select-${index}`}
+                        />
                       </div>
                       <div>
                         <label className="text-[10px] text-[#6b7688] mb-1 block">Input Berdasarkan</label>
