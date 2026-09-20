@@ -32,7 +32,10 @@ def _doc_set(values) -> set[str]:
 
 def _print_item_key(item: dict, fallback_document: str = "") -> tuple[str, str, str]:
     document = str(item.get("documentNo") or fallback_document or "").strip().upper()
-    product = str(item.get("productId") or item.get("sku") or item.get("name") or "").strip().upper()
+    # SKU adalah identitas cetak yang stabil pada dokumen lama maupun baru.
+    # productId baru ditambahkan ke snapshot SJ versi baru, sehingga tidak boleh
+    # dijadikan kunci utama saat mengaudit arsip historis.
+    product = str(item.get("sku") or item.get("productId") or item.get("name") or "").strip().upper()
     stack = str(item.get("stackCode") or item.get("location") or "").strip().upper()
     return document, product, stack
 
