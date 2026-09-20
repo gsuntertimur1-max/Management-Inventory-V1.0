@@ -67,6 +67,7 @@ async def ensure_operational_guard_indexes() -> None:
         (db.supplier_returns, [("return_no", 1)], "supplier_return_no_unique"),
         (db.outbound_loads, [("bon_no", 1)], "bon_no_unique"),
         (db.outbound_loads, [("operational_date", 1), ("antrian", 1)], "queue_daily_unique"),
+        (db.outbound_documents, [("documentNo", 1)], "outbound_so_document_no_unique"),
     ):
         try:
             await collection.create_index(keys, unique=True, sparse=True, name=name)
