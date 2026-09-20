@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api")
 
 DESTINATIONS = {"Gudang Bazar", "Gudang E-commerce"}
 
-from backend.consignment_locations import BAZAR as BAZAR_DESTINATION, normalize_consignment_stack_code
+from backend.consignment_locations import BAZAR as BAZAR_DESTINATION, consignment_stack_codes, normalize_consignment_stack_code
 
 
 async def ensure_consignment_location_codes() -> None:
@@ -54,6 +54,10 @@ async def ensure_consignment_location_codes() -> None:
         if patch:
             await db.bazar_trips.update_one({"id": trip.get("id")}, {"$set": patch})
 
+    # Once modules are fully imported, consignment_stock points to the adjusted
+    # operational balance. Repair legacy/missing physical locations on every start.
+    await reconcile_all_consignment_layouts(operator="Sistem (startup)")
+
 
 def _layout_primary_qty(layout: dict) -> float:
     if "primaryQty" in layout:
@@ -64,6 +68,235 @@ def _layout_primary_qty(layout: dict) -> float:
         for row in (layout.get("arrangements") or [])
     ) + float(layout.get("extraSecondary", 0) or 0)
     return secondary_count * secondary_qty + float(layout.get("extraPrimary", 0) or 0)
+
+
+async def sync_consignment_layout_balance(
+    destination: str,
+    product_id: str,
+    operator: str = "Sistem",
+    preferred_stack: str = "",
+    operation_key: str = "",
+    note: str = "Sinkronisasi otomatis saldo konsinyasi dan lokasi fisik",
+) -> dict:
+    """Keep live Bazar/E-commerce locations equal to the physical consignment balance.
+
+    primaryQty is authoritative after an automatic adjustment. Existing manual
+    arrangements are retained for audit/display and marked arrangementAdjusted.
+    """
+    destination = str(destination or "").strip()
+    if destination not in DESTINATIONS:
+        raise HTTPException(status_code=400, detail="Lokasi konsinyasi tidak valid")
+
+    stock_rows = await consignment_stock(destination)
+    matching = [row for row in stock_rows if row.get("productId") == product_id]
+    target_qty = sum(float(row.get("qty", 0) or 0) for row in matching)
+
+    identity = matching[0] if matching else await db.products.find_one({"id": product_id}, {"_id": 0})
+    if not identity:
+        raise HTTPException(status_code=404, detail="Produk konsinyasi tidak ditemukan")
+
+    allowed = consignment_stack_codes(destination)
+    if not allowed:
+        raise HTTPException(status_code=400, detail="Lokasi konsinyasi tidak memiliki master tumpukan")
+    try:
+        preferred = normalize_consignment_stack_code(destination, preferred_stack) if preferred_stack else allowed[0]
+    except HTTPException:
+        preferred = allowed[0]
+
+    layouts = await db.consignment_layouts.find(
+        {"destination": destination, "productId": product_id},
+        {"_id": 0},
+    ).sort("stackCode", 1).to_list(5000)
+
+    # Hydrate legacy rows that pre-date primaryQty/secondaryQty so old multiplication
+    # remains meaningful instead of being read as zero.
+    secondary_qty = float(identity.get("secondaryQty", 0) or 0)
+    hydrated = []
+    for layout in layouts:
+        row = dict(layout)
+        patch = {}
+        secondary_count = sum(
+            float(item.get("hamparan", 0) or 0)
+            * float(item.get("kaki", 0) or 0)
+            * float(item.get("height", 0) or 0)
+            for item in (row.get("arrangements") or [])
+        ) + float(row.get("extraSecondary", 0) or 0)
+        if "secondaryQty" not in row:
+            patch["secondaryQty"] = secondary_qty
+        if "secondaryCount" not in row:
+            patch["secondaryCount"] = secondary_count
+        if "primaryQty" not in row:
+            patch["primaryQty"] = secondary_count * secondary_qty + float(row.get("extraPrimary", 0) or 0)
+        for field, value in (
+            ("sku", identity.get("sku", "")),
+            ("productName", identity.get("name", identity.get("productName", ""))),
+            ("unit", identity.get("unit", "")),
+            ("weight", float(identity.get("weight", 0) or 0)),
+            ("measureUnit", identity.get("measureUnit", "kg") or "kg"),
+            ("secondary", identity.get("secondary", "")),
+        ):
+            if field not in row:
+                patch[field] = value
+        if patch:
+            patch.update({"updatedAt": now_iso(), "updatedBy": operator})
+            await db.consignment_layouts.update_one({"id": row["id"]}, {"$set": patch})
+            row.update(patch)
+        hydrated.append(row)
+    layouts = hydrated
+
+    current_qty = sum(_layout_primary_qty(row) for row in layouts)
+    difference = target_qty - current_qty
+    if abs(difference) <= 1e-9:
+        return {
+            "destination": destination,
+            "productId": product_id,
+            "targetQty": target_qty,
+            "layoutQty": current_qty,
+            "difference": 0.0,
+            "adjusted": False,
+        }
+
+    now = now_iso()
+    if difference > 1e-9:
+        target_layout = next((row for row in layouts if row.get("stackCode") == preferred), None)
+        if not target_layout:
+            target_layout = {
+                "id": new_id(),
+                "destination": destination,
+                "productId": product_id,
+                "stackCode": preferred,
+                "sku": identity.get("sku", ""),
+                "productName": identity.get("name", identity.get("productName", "")),
+                "unit": identity.get("unit", ""),
+                "weight": float(identity.get("weight", 0) or 0),
+                "measureUnit": identity.get("measureUnit", "kg") or "kg",
+                "secondary": identity.get("secondary", ""),
+                "secondaryQty": secondary_qty,
+                "arrangements": [],
+                "extraSecondary": 0,
+                "extraPrimary": difference,
+                "secondaryCount": 0,
+                "primaryQty": difference,
+                "arrangementAdjusted": True,
+                "note": "Saldo ditempatkan otomatis; atur perkalian fisik bila diperlukan.",
+                "createdAt": now,
+                "updatedAt": now,
+                "updatedBy": operator,
+                "appliedOperations": [],
+            }
+            await db.consignment_layouts.insert_one(dict(target_layout))
+            before = {}
+            after = target_layout
+            action = "SINKRON_OTOMATIS_DIBUAT"
+        else:
+            before = dict(target_layout)
+            next_qty = _layout_primary_qty(target_layout) + difference
+            patch = {
+                "primaryQty": next_qty,
+                "arrangementAdjusted": True,
+                "updatedAt": now,
+                "updatedBy": operator,
+            }
+            await db.consignment_layouts.update_one({"id": target_layout["id"]}, {"$set": patch})
+            after = {**target_layout, **patch}
+            action = "SINKRON_OTOMATIS_TAMBAH"
+
+        await db.consignment_layout_history.insert_one({
+            "id": new_id(),
+            "time": now,
+            "destination": destination,
+            "productId": product_id,
+            "stackCode": preferred,
+            "action": action,
+            "before": before,
+            "after": after,
+            "operator": operator,
+            "operationKey": operation_key,
+            "note": note,
+        })
+    else:
+        excess = -difference
+        ordered = sorted(layouts, key=lambda row: (row.get("stackCode") != preferred, row.get("stackCode", "")))
+        for layout in ordered:
+            if excess <= 1e-9:
+                break
+            current = _layout_primary_qty(layout)
+            if current <= 1e-9:
+                continue
+            take = min(current, excess)
+            next_qty = current - take
+            patch = {
+                "primaryQty": next_qty,
+                "arrangementAdjusted": True,
+                "updatedAt": now,
+                "updatedBy": operator,
+            }
+            await db.consignment_layouts.update_one({"id": layout["id"]}, {"$set": patch})
+            after = {**layout, **patch}
+            await db.consignment_layout_history.insert_one({
+                "id": new_id(),
+                "time": now,
+                "destination": destination,
+                "productId": product_id,
+                "stackCode": layout.get("stackCode", ""),
+                "action": "SINKRON_OTOMATIS_KURANG",
+                "before": layout,
+                "after": after,
+                "operator": operator,
+                "operationKey": operation_key,
+                "note": note,
+            })
+            excess -= take
+        if excess > 1e-9:
+            raise HTTPException(status_code=409, detail="Saldo lokasi konsinyasi tidak dapat direkonsiliasi penuh")
+
+    final_rows = await db.consignment_layouts.find(
+        {"destination": destination, "productId": product_id},
+        {"_id": 0},
+    ).to_list(5000)
+    final_qty = sum(_layout_primary_qty(row) for row in final_rows)
+    if abs(final_qty - target_qty) > 1e-9:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Sinkronisasi lokasi belum seimbang. Saldo {target_qty:g}, lokasi {final_qty:g}",
+        )
+    return {
+        "destination": destination,
+        "productId": product_id,
+        "targetQty": target_qty,
+        "layoutQty": final_qty,
+        "difference": target_qty - final_qty,
+        "adjusted": True,
+    }
+
+
+async def reconcile_all_consignment_layouts(operator: str = "Sistem") -> list[dict]:
+    """Repair live location balances for every product currently or historically located in Bazar/E-commerce."""
+    stock_rows = await consignment_stock()
+    keys = {
+        (str(row.get("destination") or ""), str(row.get("productId") or ""))
+        for row in stock_rows
+        if row.get("destination") in DESTINATIONS and row.get("productId")
+    }
+    existing = await db.consignment_layouts.find(
+        {"destination": {"$in": list(DESTINATIONS)}},
+        {"_id": 0, "destination": 1, "productId": 1},
+    ).to_list(10000)
+    keys.update(
+        (str(row.get("destination") or ""), str(row.get("productId") or ""))
+        for row in existing
+        if row.get("destination") in DESTINATIONS and row.get("productId")
+    )
+    results = []
+    for destination, product_id in sorted(keys):
+        results.append(await sync_consignment_layout_balance(
+            destination,
+            product_id,
+            operator=operator,
+            operation_key=f"consignment-layout-reconcile:{destination}:{product_id}",
+            note="Rekonsiliasi otomatis agar saldo konsinyasi sama dengan jumlah lokasi fisik.",
+        ))
+    return results
 
 
 class Arrangement(BaseModel):
@@ -140,9 +373,11 @@ def _settled_qty(load: dict, product_id: str, source_document_no: str = "") -> f
             if item.get("productId") != product_id:
                 continue
             if link.get("type") in {"CR", "RETUR"}:
+                # CR/RETUR physically returns goods to the main warehouse.
                 settled += float(item.get("goodQty", 0) or 0) + float(item.get("damagedQty", 0) or 0)
-            elif link.get("type") == "SO":
-                settled += float(item.get("qty", 0) or 0)
+            # SO is administrative settlement only. Physical Bazar/E-commerce
+            # reductions are recorded by their operational movements, so counting
+            # SO here would deduct the same goods twice.
     return settled
 
 
@@ -513,6 +748,12 @@ async def decrease_consignment_layouts(
             "note": f"Pengurangan otomatis {take:g} {layout.get('unit', '')}",
         })
         remaining -= take
+
+    if remaining > 1e-9:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Saldo lokasi {destination} tidak cukup untuk mengurangi {qty:g}. Jalankan sinkronisasi lokasi terlebih dahulu.",
+        )
 
 
 @router.post("/consignment-opnames")
