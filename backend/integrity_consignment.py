@@ -306,6 +306,91 @@ async def analyze_consignment_integrity() -> dict:
                 "issue": "Saldo Area Barang Rusak negatif atau tidak sama dengan total movement.",
             })
 
+    # Jangan hanya membandingkan balance vs movement. Legacy activity bisa
+    # kehilangan KEDUANYA sekaligus sehingga selisih ledger tampak nol.
+    damaged_event_keys = {
+        str(row.get("eventKey") or "")
+        for row in damaged_movements
+        if str(row.get("eventKey") or "")
+    }
+
+    completed_trips = await db.bazar_trips.find(
+        {"status": "SELESAI"},
+        {"_id": 0, "id": 1, "tripNo": 1, "resultItems": 1},
+    ).to_list(10000)
+    for trip in completed_trips:
+        trip_id = str(trip.get("id") or "")
+        for item in trip.get("resultItems") or []:
+            qty = _n(item.get("returnedDamagedQty"))
+            product_id = str(item.get("productId") or "")
+            if qty <= EPS or not trip_id or not product_id:
+                continue
+            stack_code = str(item.get("stackCode") or "").strip().upper()
+            expected_key = f"bazar-damaged-return:{trip_id}:{product_id}:{stack_code}"
+            if expected_key not in damaged_event_keys:
+                damaged_issues.append({
+                    "severity": "ERROR",
+                    "code": "BAZAR_DAMAGED_RETURN_MISSING",
+                    "destination": BAZAR,
+                    "referenceId": trip_id,
+                    "referenceNo": trip.get("tripNo", ""),
+                    "productId": product_id,
+                    "qty": qty,
+                    "issue": "Retur rusak Bazar tercatat pada perjalanan tetapi belum masuk Area Barang Rusak.",
+                })
+
+    completed_package_loads = await db.bazar_package_loads.find(
+        {"status": "SELESAI"},
+        {"_id": 0, "id": 1, "loadNo": 1, "resultItems": 1},
+    ).to_list(10000)
+    for load in completed_package_loads:
+        load_id = str(load.get("id") or "")
+        for item in load.get("resultItems") or []:
+            damaged_packages = _n(item.get("returnedDamagedQty"))
+            template_id = str(item.get("templateId") or "")
+            if damaged_packages <= EPS or not load_id or not template_id:
+                continue
+            for component in item.get("components") or []:
+                product_id = str(component.get("productId") or "")
+                qty = damaged_packages * _n(component.get("qty"))
+                if qty <= EPS or not product_id:
+                    continue
+                expected_key = f"package-damaged-return:{load_id}:{template_id}:{product_id}"
+                if expected_key not in damaged_event_keys:
+                    damaged_issues.append({
+                        "severity": "ERROR",
+                        "code": "PACKAGE_DAMAGED_RETURN_MISSING",
+                        "destination": BAZAR,
+                        "referenceId": load_id,
+                        "referenceNo": load.get("loadNo", ""),
+                        "productId": product_id,
+                        "qty": qty,
+                        "issue": "Retur rusak Paket tercatat tetapi belum masuk Area Barang Rusak.",
+                    })
+
+    ecom_return_moves = await db.consignment_movements.find(
+        {"destination": ECOM, "movementType": "ECOM_RETUR", "damagedQty": {"$gt": EPS}},
+        {"_id": 0},
+    ).to_list(20000)
+    for movement in ecom_return_moves:
+        return_id = str(movement.get("returnId") or "")
+        product_id = str(movement.get("productId") or "")
+        qty = _n(movement.get("damagedQty"))
+        if not return_id or not product_id or qty <= EPS:
+            continue
+        expected_key = f"ecom-damaged-return:{return_id}:{product_id}"
+        if expected_key not in damaged_event_keys:
+            damaged_issues.append({
+                "severity": "ERROR",
+                "code": "ECOM_DAMAGED_RETURN_MISSING",
+                "destination": ECOM,
+                "referenceId": movement.get("referenceId", ""),
+                "referenceNo": movement.get("referenceNo", ""),
+                "productId": product_id,
+                "qty": qty,
+                "issue": "Retur rusak E-commerce tercatat tetapi belum masuk Area Barang Rusak.",
+            })
+
     active_opnames = await db.consignment_opnames.find(
         {"status": {"$in": ["DRAFT", "SUBMITTED"]}},
         {"_id": 0},
