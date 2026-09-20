@@ -310,6 +310,10 @@ async def analyze_consignment_integrity() -> dict:
         {"status": {"$in": ["DRAFT", "SUBMITTED"]}},
         {"_id": 0},
     ).sort("createdAt", -1).to_list(1000)
+    damaged_active_opnames = await db.consignment_damaged_opnames.find(
+        {"status": {"$in": ["DRAFT", "SUBMITTED"]}},
+        {"_id": 0},
+    ).sort("createdAt", -1).to_list(1000)
     opname_issues = [{
         "severity": "WARNING",
         "code": "CONSIGNMENT_OPNAME_PENDING",
@@ -317,9 +321,21 @@ async def analyze_consignment_integrity() -> dict:
         "opnameNo": row.get("no", ""),
         "destination": row.get("destination", ""),
         "status": row.get("status", ""),
+        "stockType": "BAIK",
         "createdAt": row.get("createdAt", ""),
-        "issue": "Stock opname konsinyasi masih aktif; selesaikan atau tolak agar snapshot tidak tertinggal.",
+        "issue": "Stock opname konsinyasi stok Baik masih aktif; selesaikan atau tolak agar snapshot tidak tertinggal.",
     } for row in active_opnames]
+    opname_issues.extend({
+        "severity": "WARNING",
+        "code": "CONSIGNMENT_DAMAGED_OPNAME_PENDING",
+        "opnameId": row.get("id", ""),
+        "opnameNo": row.get("no", ""),
+        "destination": row.get("destination", ""),
+        "status": row.get("status", ""),
+        "stockType": "RUSAK",
+        "createdAt": row.get("createdAt", ""),
+        "issue": "Stock opname Area Barang Rusak masih aktif; selesaikan atau tolak agar snapshot tidak tertinggal.",
+    } for row in damaged_active_opnames)
 
     external_nd_docs = await db.bazar_external_nd.find({}, {"_id": 0}).to_list(10000)
     nd_issues: list[dict] = []
