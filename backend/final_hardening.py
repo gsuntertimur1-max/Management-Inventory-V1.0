@@ -366,9 +366,9 @@ async def operational_report_pdf(
         item_text = "; ".join(f"{item.get('name','')}: {_n(item.get('qty')):g} {item.get('unit','')}" for item in load.get("items") or [])
         data.append([
             load.get("operational_date",""), load.get("bon_no",""), load.get("ref",""), load.get("status",""),
-            item_text[:160], load.get("surat_jalan_no",""),
+            Paragraph(item_text[:220] or "-", small), load.get("surat_jalan_no",""),
         ])
-    table = Table(data, colWidths=[25*mm,35*mm,42*mm,25*mm,105*mm,45*mm], repeatRows=1)
+    table = Table(data, colWidths=[24*mm,34*mm,40*mm,24*mm,105*mm,44*mm], repeatRows=1)
     table.setStyle(TableStyle([
         ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#1f4e78")),("TEXTCOLOR",(0,0),(-1,0),colors.white),
         ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),6.5),
