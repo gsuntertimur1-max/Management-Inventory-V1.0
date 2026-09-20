@@ -6,6 +6,7 @@ import { useData } from '../context/DataContext';
 import { apiError } from '../lib/api';
 import { toast } from 'sonner';
 import { DEFAULT_WAREHOUSES, warehousesFromSettings } from '../lib/warehouses';
+import ProductionSafetyPanel from '../components/ProductionSafetyPanel';
 
 const Toggle = ({ on, onClick, disabled = false }) => (
   <button
@@ -383,6 +384,8 @@ const Pengaturan = () => {
             <Link2 size={15} /> Buka Pengaturan Marketplace
           </Link>
         </div>
+
+        {isAdmin && <ProductionSafetyPanel />}
 
         <div className="card-surface p-6">
           <div className="flex items-center gap-2 mb-5">
