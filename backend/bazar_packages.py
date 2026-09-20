@@ -246,36 +246,96 @@ async def list_package_stock(user: dict = Depends(get_current_user)):
 
 
 @router.post("/bazar/packages/assemble")
-async def assemble_package(body: PackageAssembleInput, user: dict = Depends(get_current_user)):
+async def assemble_package(
+    body: PackageAssembleInput,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
     _ensure_bazar(user, write=True)
-    template = await _template(body.templateId)
-    package_qty = float(body.qty)
-    requirements = []
-    for component in template.get("components", []):
-        required = package_qty * _n(component.get("qty"))
-        _, _, available = await operations._available(BAZAR, component["productId"])
-        if required > available + EPS:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Stok loose {component.get('name', '')} hanya {available:g} {component.get('unit', '')}; kebutuhan paket {required:g}",
+    initial = await _template(body.templateId)
+    product_ids = sorted({
+        str(component.get("productId") or "")
+        for component in initial.get("components", [])
+        if str(component.get("productId") or "")
+    })
+
+    async def action():
+        template = await _template(body.templateId)
+        package_qty = float(body.qty)
+        requirements = []
+
+        # Re-read availability inside locks so two assemblers cannot consume the same
+        # loose availability by creating overlapping package holds.
+        for component in template.get("components", []):
+            required = package_qty * _n(component.get("qty"))
+            _, _, available = await operations._available(BAZAR, component["productId"])
+            if required > available + EPS:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Stok loose {component.get('name', '')} hanya {available:g} {component.get('unit', '')}; kebutuhan paket {required:g}",
+                )
+            requirements.append({**component, "requiredQty": required})
+
+        today = operational_now().strftime("%Y%m%d")
+        seq = await next_sequence(f"bazar-package-batch:{today}")
+        batch_no = f"PKT-{today}-{seq:03d}"
+        now = now_iso()
+        operation_id = f"package-assemble:{new_id()}"
+        doc = {
+            "id": new_id(),
+            "batchNo": batch_no,
+            "templateId": template["id"],
+            "packageCode": template.get("code", ""),
+            "packageName": template.get("name", ""),
+            "components": template.get("components", []),
+            "assembledQty": package_qty,
+            "remainingQty": package_qty,
+            "note": body.note.strip(),
+            "operationId": operation_id,
+            "createdAt": now,
+            "createdBy": user.get("name", ""),
+        }
+
+        batch_saved = False
+        history_saved = False
+        try:
+            await db.bazar_package_batches.insert_one(dict(doc))
+            batch_saved = True
+            await operations._history(
+                BAZAR,
+                "PAKET_DIRAKIT",
+                doc["id"],
+                batch_no,
+                user.get("name", ""),
+                requirements,
+                body.note,
+                {
+                    "packageCode": template.get("code", ""),
+                    "packageName": template.get("name", ""),
+                    "packageQty": package_qty,
+                    "operationId": operation_id,
+                },
             )
-        requirements.append({**component, "requiredQty": required})
+            history_saved = True
+            return doc
+        except Exception:
+            if history_saved:
+                await db.consignment_operation_history.delete_many({"operationId": operation_id})
+            if batch_saved:
+                await db.bazar_package_batches.delete_one({"id": doc["id"], "operationId": operation_id})
+            raise
 
-    today = operational_now().strftime("%Y%m%d")
-    seq = await next_sequence(f"bazar-package-batch:{today}")
-    batch_no = f"PKT-{today}-{seq:03d}"
-    now = now_iso()
-    doc = {
-        "id": new_id(), "batchNo": batch_no, "templateId": template["id"], "packageCode": template.get("code", ""),
-        "packageName": template.get("name", ""), "components": template.get("components", []),
-        "assembledQty": package_qty, "remainingQty": package_qty, "note": body.note.strip(),
-        "createdAt": now, "createdBy": user.get("name", ""),
-    }
-    await db.bazar_package_batches.insert_one(dict(doc))
-    await operations._history(BAZAR, "PAKET_DIRAKIT", doc["id"], batch_no, user.get("name", ""), requirements, body.note,
-                              {"packageCode": template.get("code", ""), "packageName": template.get("name", ""), "packageQty": package_qty})
-    return doc
-
+    keys = lock_keys(
+        [f"package-template:{body.templateId}"],
+        (f"consignment:{BAZAR}:{product_id}" for product_id in product_ids),
+    )
+    return await idempotent_operation(
+        request,
+        user,
+        f"package-assemble:{body.templateId}",
+        keys,
+        action,
+    )
 
 @router.get("/bazar/package-batches")
 async def list_package_batches(user: dict = Depends(get_current_user)):
@@ -284,28 +344,96 @@ async def list_package_batches(user: dict = Depends(get_current_user)):
 
 
 @router.post("/bazar/package-batches/{batch_id}/unpack")
-async def unpack_package(batch_id: str, body: PackageUnpackInput, user: dict = Depends(get_current_user)):
+async def unpack_package(
+    batch_id: str,
+    body: PackageUnpackInput,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
     _ensure_bazar(user, write=True)
-    batch = await db.bazar_package_batches.find_one({"id": batch_id}, {"_id": 0})
-    if not batch:
+    initial = await db.bazar_package_batches.find_one({"id": batch_id}, {"_id": 0})
+    if not initial:
         raise HTTPException(status_code=404, detail="Batch paket tidak ditemukan")
-    qty = float(body.qty)
-    template_id = batch.get("templateId", "")
-    physical, reserved, available = await package_availability(template_id)
-    batch_remaining = _n(batch.get("remainingQty"))
-    max_unpack = min(batch_remaining, available)
-    if qty > max_unpack + EPS:
-        raise HTTPException(status_code=409, detail=f"Paket yang bebas dibongkar pada batch ini maksimal {max_unpack:g}")
-    result = await db.bazar_package_batches.update_one(
-        {"id": batch_id, "remainingQty": {"$gte": qty}},
-        {"$inc": {"remainingQty": -qty}, "$set": {"updatedAt": now_iso(), "updatedBy": user.get("name", "")}},
-    )
-    if result.matched_count == 0:
-        raise HTTPException(status_code=409, detail="Stok paket berubah. Muat ulang lalu coba kembali.")
-    await operations._history(BAZAR, "PAKET_DIBONGKAR", batch_id, batch.get("batchNo", ""), user.get("name", ""),
-                              batch.get("components", []), body.note, {"packageQty": qty, "packageName": batch.get("packageName", "")})
-    return await db.bazar_package_batches.find_one({"id": batch_id}, {"_id": 0})
+    template_id = str(initial.get("templateId") or "")
+    product_ids = sorted({
+        str(component.get("productId") or "")
+        for component in initial.get("components", [])
+        if str(component.get("productId") or "")
+    })
 
+    async def action():
+        batch = await db.bazar_package_batches.find_one({"id": batch_id}, {"_id": 0})
+        if not batch:
+            raise HTTPException(status_code=404, detail="Batch paket tidak ditemukan")
+
+        qty = float(body.qty)
+        current_template_id = str(batch.get("templateId") or "")
+        _, _, available = await package_availability(current_template_id)
+        batch_remaining = _n(batch.get("remainingQty"))
+        max_unpack = min(batch_remaining, available)
+        if qty > max_unpack + EPS:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Paket yang bebas dibongkar pada batch ini maksimal {max_unpack:g}. Paket yang sedang dimuat tidak boleh dibongkar.",
+            )
+
+        operation_id = f"package-unpack:{new_id()}"
+        result = await db.bazar_package_batches.update_one(
+            {"id": batch_id, "remainingQty": {"$gte": qty}},
+            {
+                "$inc": {"remainingQty": -qty},
+                "$set": {
+                    "updatedAt": now_iso(),
+                    "updatedBy": user.get("name", ""),
+                    "lastUnpackOperationId": operation_id,
+                },
+            },
+        )
+        if result.matched_count == 0:
+            raise HTTPException(status_code=409, detail="Stok paket berubah. Muat ulang lalu coba kembali.")
+
+        history_saved = False
+        try:
+            await operations._history(
+                BAZAR,
+                "PAKET_DIBONGKAR",
+                batch_id,
+                batch.get("batchNo", ""),
+                user.get("name", ""),
+                batch.get("components", []),
+                body.note,
+                {
+                    "packageQty": qty,
+                    "packageName": batch.get("packageName", ""),
+                    "operationId": operation_id,
+                },
+            )
+            history_saved = True
+            return await db.bazar_package_batches.find_one({"id": batch_id}, {"_id": 0})
+        except Exception:
+            if history_saved:
+                await db.consignment_operation_history.delete_many({"operationId": operation_id})
+            await db.bazar_package_batches.update_one(
+                {"id": batch_id, "lastUnpackOperationId": operation_id},
+                {
+                    "$inc": {"remainingQty": qty},
+                    "$set": {"updatedAt": now_iso(), "updatedBy": "Sistem (rollback Paket)"},
+                    "$unset": {"lastUnpackOperationId": ""},
+                },
+            )
+            raise
+
+    keys = lock_keys(
+        [f"package-batch:{batch_id}", f"package-template:{template_id}"],
+        (f"consignment:{BAZAR}:{product_id}" for product_id in product_ids),
+    )
+    return await idempotent_operation(
+        request,
+        user,
+        f"package-unpack:{batch_id}",
+        keys,
+        action,
+    )
 
 @router.get("/bazar/package-loads")
 async def list_package_loads(user: dict = Depends(get_current_user)):
@@ -314,90 +442,128 @@ async def list_package_loads(user: dict = Depends(get_current_user)):
 
 
 @router.post("/bazar/package-loads")
-async def create_package_load(body: PackageLoadCreate, user: dict = Depends(get_current_user)):
+async def create_package_load(
+    body: PackageLoadCreate,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
     _ensure_bazar(user, write=True)
     if not body.destination.strip() or not body.vehicleNo.strip():
         raise HTTPException(status_code=400, detail="Tujuan dan nomor kendaraan wajib diisi")
+
     grouped = defaultdict(float)
     for item in body.items:
         grouped[item.templateId] += float(item.qty)
-    items = []
-    for template_id, qty in grouped.items():
-        template = await _template(template_id)
-        _, _, available = await package_availability(template_id)
-        if qty > available + EPS:
-            raise HTTPException(status_code=409, detail=f"Paket {template.get('name', '')} tersedia hanya {available:g}")
-        items.append({
-            "templateId": template_id,
-            "packageCode": template.get("code", ""),
-            "packageName": template.get("name", ""),
-            "components": template.get("components", []),
-            "loadedQty": qty,
-        })
+    template_ids = sorted(grouped)
 
-    today = operational_now().strftime("%Y%m%d")
-    seq = await next_sequence(f"bazar-package-load:{today}")
-    load_no = f"PKL-{today}-{seq:03d}"
-    event_date = body.date or operational_now().strftime("%Y-%m-%d")
-    document_numbers = await next_bazar_document_numbers("PAKET", event_date)
+    async def action():
+        items = []
+        # Re-read availability under template locks. A second operator cannot reserve
+        # the same Paket Jadi while this load is being created.
+        for template_id, qty in grouped.items():
+            template = await _template(template_id)
+            _, _, available = await package_availability(template_id)
+            if qty > available + EPS:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Paket {template.get('name', '')} tersedia hanya {available:g}. Muat ulang stok Paket Jadi.",
+                )
+            items.append({
+                "templateId": template_id,
+                "packageCode": template.get("code", ""),
+                "packageName": template.get("name", ""),
+                "components": template.get("components", []),
+                "loadedQty": qty,
+            })
 
-    flattened = defaultdict(float)
-    for loaded in items:
-        for component in loaded.get("components", []):
-            flattened[component["productId"]] += _n(loaded.get("loadedQty")) * _n(component.get("qty"))
-    document_items = []
-    for product_id, qty in flattened.items():
-        identity = await operations._identity(BAZAR, product_id)
-        document_items.append({
-            "productId": product_id,
-            "sku": identity.get("sku", ""),
-            "name": identity.get("name", ""),
-            "unit": identity.get("unit", ""),
-            "channel": normalize_channel(identity.get("channel"), "KOM"),
-            "weight": _n(identity.get("weight")),
-            "measureUnit": identity.get("measureUnit", "kg") or "kg",
-            "secondary": identity.get("secondary", ""),
-            "secondaryQty": _n(identity.get("secondaryQty")),
-            "stackCode": "AREA PAKET BAZAR",
-            "qty": qty,
-            "documentNo": load_no,
-        })
+        today = operational_now().strftime("%Y%m%d")
+        seq = await next_sequence(f"bazar-package-load:{today}")
+        load_no = f"PKL-{today}-{seq:03d}"
+        event_date = body.date or operational_now().strftime("%Y-%m-%d")
+        document_numbers = await next_bazar_document_numbers("PAKET", event_date)
 
-    now = now_iso()
-    doc = {
-        "id": new_id(),
-        "loadNo": load_no,
-        "date": event_date,
-        "destination": body.destination.strip(),
-        "vehicleNo": body.vehicleNo.strip().upper(),
-        "driver": body.driver.strip(),
-        "items": items,
-        "documentItems": document_items,
-        "status": "BERJALAN",
-        "bonNo": document_numbers["bonNo"],
-        "suratJalanNo": document_numbers["suratJalanNo"],
-        "note": body.note.strip(),
-        "createdAt": now,
-        "createdBy": user.get("name", ""),
-    }
-    await db.bazar_package_loads.insert_one(dict(doc))
-    await operations._history(
-        BAZAR,
-        "PAKET_DIMUAT",
-        doc["id"],
-        load_no,
-        user.get("name", ""),
-        items,
-        body.note,
-        {
-            "destinationName": doc["destination"],
-            "vehicleNo": doc["vehicleNo"],
-            "bonNo": doc["bonNo"],
-            "suratJalanNo": doc["suratJalanNo"],
-        },
+        flattened = defaultdict(float)
+        for loaded in items:
+            for component in loaded.get("components", []):
+                flattened[component["productId"]] += _n(loaded.get("loadedQty")) * _n(component.get("qty"))
+        document_items = []
+        for product_id, qty in flattened.items():
+            identity = await operations._identity(BAZAR, product_id)
+            document_items.append({
+                "productId": product_id,
+                "sku": identity.get("sku", ""),
+                "name": identity.get("name", ""),
+                "unit": identity.get("unit", ""),
+                "channel": normalize_channel(identity.get("channel"), "KOM"),
+                "weight": _n(identity.get("weight")),
+                "measureUnit": identity.get("measureUnit", "kg") or "kg",
+                "secondary": identity.get("secondary", ""),
+                "secondaryQty": _n(identity.get("secondaryQty")),
+                "stackCode": "AREA PAKET BAZAR",
+                "qty": qty,
+                "documentNo": load_no,
+            })
+
+        now = now_iso()
+        operation_id = f"package-load-create:{new_id()}"
+        doc = {
+            "id": new_id(),
+            "loadNo": load_no,
+            "date": event_date,
+            "destination": body.destination.strip(),
+            "vehicleNo": body.vehicleNo.strip().upper(),
+            "driver": body.driver.strip(),
+            "items": items,
+            "documentItems": document_items,
+            "status": "BERJALAN",
+            "bonNo": document_numbers["bonNo"],
+            "suratJalanNo": document_numbers["suratJalanNo"],
+            "note": body.note.strip(),
+            "operationId": operation_id,
+            "createdAt": now,
+            "createdBy": user.get("name", ""),
+        }
+
+        load_saved = False
+        history_saved = False
+        try:
+            await db.bazar_package_loads.insert_one(dict(doc))
+            load_saved = True
+            await operations._history(
+                BAZAR,
+                "PAKET_DIMUAT",
+                doc["id"],
+                load_no,
+                user.get("name", ""),
+                items,
+                body.note,
+                {
+                    "destinationName": doc["destination"],
+                    "vehicleNo": doc["vehicleNo"],
+                    "bonNo": doc["bonNo"],
+                    "suratJalanNo": doc["suratJalanNo"],
+                    "operationId": operation_id,
+                },
+            )
+            history_saved = True
+            return doc
+        except Exception:
+            if history_saved:
+                await db.consignment_operation_history.delete_many({"operationId": operation_id})
+            if load_saved:
+                await db.bazar_package_loads.delete_one({"id": doc["id"], "operationId": operation_id})
+            raise
+
+    keys = lock_keys(
+        (f"package-template:{template_id}" for template_id in template_ids),
     )
-    return doc
-
+    return await idempotent_operation(
+        request,
+        user,
+        "package-load-create",
+        keys,
+        action,
+    )
 
 @router.post("/bazar/package-loads/{load_id}/close")
 async def close_package_load(
@@ -652,5 +818,7 @@ async def close_package_load(
 
 async def ensure_bazar_package_indexes() -> None:
     await db.bazar_package_templates.create_index("code", unique=True, sparse=True, name="bazar_package_code_unique")
+    await db.bazar_package_batches.create_index("batchNo", unique=True, sparse=True, name="bazar_package_batch_no_unique")
     await db.bazar_package_batches.create_index([("templateId", 1), ("createdAt", 1)], name="bazar_package_batch_fifo")
+    await db.bazar_package_loads.create_index("loadNo", unique=True, sparse=True, name="bazar_package_load_no_unique")
     await db.bazar_package_loads.create_index([("status", 1), ("createdAt", -1)], name="bazar_package_load_status")
