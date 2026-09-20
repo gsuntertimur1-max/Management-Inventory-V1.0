@@ -49,7 +49,7 @@ const OperationalOutstandingPanel = () => {
     ['Opname Pending', data.opnamesPending, ClipboardCheck, '#a78bfa', '/opname-gudang'],
     ['Susunan Perlu Update', data.arrangementPending, Layers3, '#f59e0b', '/tumpukan'],
     ['Post-commit Open', data.postCommitOpen, AlertTriangle, '#ef4444', '/kontrol-integritas'],
-  ];
+  ].filter(([, value]) => value !== null && value !== undefined);
 
   return <section className="space-y-3">
     <div className="flex flex-wrap items-center justify-between gap-3">
