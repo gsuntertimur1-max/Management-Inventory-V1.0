@@ -336,6 +336,10 @@ def suppliers_from_products(products: List[dict]) -> List[dict]:
 
 
 async def seed_master(force: bool = False):
+    text = (ROOT_DIR / 'seed_data.csv').read_text(encoding='utf-8')
+    rows = parse_seed_rows(text)
+    if force and not rows:
+        raise RuntimeError("Reset dibatalkan: seed_data.csv tidak memiliki master produk. Gunakan import XLSX untuk go-live, jangan reset produksi.")
     if force:
         # Reset penuh: semua master dan dokumen operasional dikosongkan agar SKU baru tidak bercampur.
         for collection in (
@@ -348,15 +352,17 @@ async def seed_master(force: bool = False):
             db.consignment_damaged_balances, db.consignment_damaged_movements,
             db.bazar_trips, db.ecom_orders,
             db.bazar_package_templates, db.bazar_package_batches, db.bazar_package_loads,
-            db.bazar_external_nd,
+            db.bazar_external_nd, db.bazar_external_nd_lots,
+            db.outbound_documents,
+            db.consignment_damaged_opnames,
             db.stock_opnames, db.stack_lots, db.stack_lot_movements,
             db.operation_requests, db.operation_locks, db.unloading_sessions,
             db.marketplace_sync_logs, db.marketplace_auth_sessions, db.marketplace_webhook_events,
+            db.marketplace_sku_mappings,
+            db.operational_postcommit_issues,
             db.counters,
         ):
             await collection.delete_many({})
-    text = (ROOT_DIR / 'seed_data.csv').read_text(encoding='utf-8')
-    rows = parse_seed_rows(text)
     if await db.products.count_documents({}) == 0:
         for r in rows:
             r['id'] = new_id()
@@ -1440,9 +1446,17 @@ async def import_csv(file: UploadFile = File(...), user: dict = Depends(require_
 
 
 @api_router.post("/admin/reset-data")
-async def reset_data(admin: dict = Depends(require_admin)):
-    await seed_master(force=True)
-    return {"ok": True, "message": "Data operasional direset. Master produk dan supplier dimuat dari CSV seed bila tersedia."}
+async def reset_data(request: Request, admin: dict = Depends(require_admin)):
+    settings = await db.settings.find_one({"_id": "app"}, {"_id": 0, "maintenanceMode": 1}) or {}
+    if not settings.get("maintenanceMode"):
+        raise HTTPException(status_code=409, detail="Reset produksi dikunci. Aktifkan Maintenance Mode terlebih dahulu.")
+    if request.headers.get("X-PEPEG-RESET-CONFIRM", "") != "RESET_PEPEG_TOTAL":
+        raise HTTPException(status_code=409, detail="Reset total membutuhkan konfirmasi khusus dan tidak tersedia dari tombol Pengaturan biasa.")
+    try:
+        await seed_master(force=True)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"ok": True, "message": "Reset total selesai dan master dimuat ulang dari seed tervalidasi."}
 
 
 @api_router.get("/")
