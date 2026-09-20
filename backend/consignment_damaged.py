@@ -101,6 +101,119 @@ async def ensure_consignment_damaged_indexes() -> None:
     )
 
 
+async def reconcile_legacy_consignment_damaged() -> dict:
+    """Backfill damaged subledger for completed legacy operations.
+
+    Good-stock movements were already applied historically. This reconciliation
+    ONLY creates the missing damaged-area balance/movement and is idempotent by
+    the same eventKey used by current operational flows.
+    """
+    repaired = {"bazar": 0, "package": 0, "ecom": 0}
+
+    async def identity_for(product_id: str, source: dict) -> dict:
+        product = await db.products.find_one({"id": product_id}, {"_id": 0}) or {}
+        return {
+            "productId": product_id,
+            "sku": source.get("sku") or product.get("sku", ""),
+            "name": source.get("name") or product.get("name", ""),
+            "unit": source.get("unit") or product.get("unit", ""),
+            "channel": normalize_channel(source.get("channel"), normalize_channel(product.get("channel"), "KOM")),
+            "weight": _n(source.get("weight", product.get("weight", 0))),
+            "measureUnit": source.get("measureUnit") or product.get("measureUnit", "kg") or "kg",
+        }
+
+    trips = await db.bazar_trips.find(
+        {"status": "SELESAI"},
+        {"_id": 0, "id": 1, "tripNo": 1, "resultItems": 1},
+    ).to_list(10000)
+    for trip in trips:
+        trip_id = str(trip.get("id") or "")
+        for item in trip.get("resultItems") or []:
+            qty = _n(item.get("returnedDamagedQty"))
+            product_id = str(item.get("productId") or "")
+            if qty <= EPS or not trip_id or not product_id:
+                continue
+            stack_code = str(item.get("stackCode") or "").strip().upper()
+            event_key = f"bazar-damaged-return:{trip_id}:{product_id}:{stack_code}"
+            if await db.consignment_damaged_movements.find_one({"eventKey": event_key}, {"_id": 1}):
+                continue
+            identity = await identity_for(product_id, item)
+            await credit_consignment_damaged(
+                BAZAR,
+                identity,
+                qty,
+                event_key,
+                "BAZAR_RETUR_RUSAK",
+                trip_id,
+                str(trip.get("tripNo") or ""),
+                "Sistem (rekonsiliasi legacy)",
+                "Backfill retur rusak Bazar historis; stok baik sudah dikurangi pada transaksi asal.",
+            )
+            repaired["bazar"] += 1
+
+    package_loads = await db.bazar_package_loads.find(
+        {"status": "SELESAI"},
+        {"_id": 0, "id": 1, "loadNo": 1, "resultItems": 1},
+    ).to_list(10000)
+    for load in package_loads:
+        load_id = str(load.get("id") or "")
+        for loaded in load.get("resultItems") or []:
+            damaged_packages = _n(loaded.get("returnedDamagedQty"))
+            template_id = str(loaded.get("templateId") or "")
+            if damaged_packages <= EPS or not load_id or not template_id:
+                continue
+            for component in loaded.get("components") or []:
+                product_id = str(component.get("productId") or "")
+                qty = damaged_packages * _n(component.get("qty"))
+                if qty <= EPS or not product_id:
+                    continue
+                event_key = f"package-damaged-return:{load_id}:{template_id}:{product_id}"
+                if await db.consignment_damaged_movements.find_one({"eventKey": event_key}, {"_id": 1}):
+                    continue
+                identity = await identity_for(product_id, component)
+                await credit_consignment_damaged(
+                    BAZAR,
+                    identity,
+                    qty,
+                    event_key,
+                    "PAKET_RETUR_RUSAK",
+                    load_id,
+                    str(load.get("loadNo") or ""),
+                    "Sistem (rekonsiliasi legacy)",
+                    "Backfill retur rusak Paket historis; stok baik sudah dikurangi pada transaksi asal.",
+                )
+                repaired["package"] += 1
+
+    ecom_returns = await db.consignment_movements.find(
+        {"destination": ECOM, "movementType": "ECOM_RETUR", "damagedQty": {"$gt": EPS}},
+        {"_id": 0},
+    ).to_list(20000)
+    for movement in ecom_returns:
+        return_id = str(movement.get("returnId") or "")
+        product_id = str(movement.get("productId") or "")
+        qty = _n(movement.get("damagedQty"))
+        if not return_id or not product_id or qty <= EPS:
+            continue
+        event_key = f"ecom-damaged-return:{return_id}:{product_id}"
+        if await db.consignment_damaged_movements.find_one({"eventKey": event_key}, {"_id": 1}):
+            continue
+        identity = await identity_for(product_id, movement)
+        await credit_consignment_damaged(
+            ECOM,
+            identity,
+            qty,
+            event_key,
+            "ECOM_RETUR_RUSAK",
+            str(movement.get("referenceId") or ""),
+            str(movement.get("referenceNo") or ""),
+            "Sistem (rekonsiliasi legacy)",
+            "Backfill retur rusak E-commerce historis.",
+        )
+        repaired["ecom"] += 1
+
+    return repaired
+
+
 async def damaged_stock_rows(destination: str = "") -> list[dict]:
     query = {}
     if destination:
