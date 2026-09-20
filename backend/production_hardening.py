@@ -252,6 +252,14 @@ async def restore_backup(
         logger.exception("Restore backup gagal dan transaksi dibatalkan")
         raise HTTPException(status_code=500, detail="Restore gagal; perubahan database dibatalkan") from exc
 
+    # Semua sesi lama dicabut setelah restore agar token dari keadaan sebelum
+    # pemulihan tidak dapat menulis ke database yang baru dipulihkan.
+    await db.users.update_many({}, {"$inc": {"auth_version": 1}})
+    await db.user_sessions.delete_many({})
+    await db.login_attempts.delete_many({})
+    await db.operation_requests.delete_many({})
+    await db.operation_locks.delete_many({})
+
     # Maintenance selalu tetap aktif setelah restore agar operator tidak langsung menulis
     # sebelum Superadmin memeriksa integritas hasil pemulihan.
     await db.settings.update_one(
