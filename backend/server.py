@@ -68,8 +68,15 @@ def verify_password(plain: str, hashed: str) -> bool:
         return False
 
 
-def create_access_token(user_id: str) -> str:
-    payload = {"sub": user_id, "type": "access", "exp": datetime.now(timezone.utc) + timedelta(days=7)}
+def create_access_token(user_id: str, auth_version: int = 0) -> str:
+    payload = {
+        "sub": user_id,
+        "type": "access",
+        "ver": int(auth_version or 0),
+        "jti": new_id(),
+        "iat": datetime.now(timezone.utc),
+        "exp": datetime.now(timezone.utc) + timedelta(days=7),
+    }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
 
 
@@ -130,9 +137,18 @@ async def get_current_user(request: Request) -> dict:
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
         if payload.get("type") == "access":
+            jti = str(payload.get("jti") or "")
+            if jti and await db.revoked_access_tokens.find_one({"_id": jti}, {"_id": 1}):
+                raise HTTPException(status_code=401, detail="Sesi telah dicabut")
             user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
             if user:
+                if not user.get("active", True):
+                    raise HTTPException(status_code=401, detail="Akun sudah dinonaktifkan")
+                if int(payload.get("ver", 0) or 0) != int(user.get("auth_version", 0) or 0):
+                    raise HTTPException(status_code=401, detail="Sesi sudah tidak berlaku. Silakan masuk kembali.")
                 return user
+    except HTTPException:
+        raise
     except jwt.InvalidTokenError:
         pass
     # fallback: google session token
@@ -145,7 +161,7 @@ async def get_current_user(request: Request) -> dict:
             expires_at = expires_at.replace(tzinfo=timezone.utc)
         if expires_at >= datetime.now(timezone.utc):
             user = await db.users.find_one({"id": sess["user_id"]}, {"_id": 0, "password_hash": 0})
-            if user:
+            if user and user.get("active", True):
                 return user
     raise HTTPException(status_code=401, detail="Sesi tidak valid atau kedaluwarsa")
 
@@ -377,7 +393,10 @@ async def create_unique_index_safely(collection, keys, **kwargs):
 
 async def initialize_app():
     await db.users.create_index("username", unique=True)
-    await db.user_sessions.create_index("session_token")
+    await db.user_sessions.create_index("session_token", unique=True)
+    await db.user_sessions.create_index("expires_at", expireAfterSeconds=0, name="user_session_ttl")
+    await db.revoked_access_tokens.create_index("expiresAt", expireAfterSeconds=0, name="revoked_access_token_ttl")
+    await db.login_attempts.create_index("expiresAt", expireAfterSeconds=0, name="login_attempt_ttl")
     await db.products.create_index("sku")
     await db.stack_allocations.create_index([("productId", 1), ("stackCode", 1)], unique=True)
     # Layout Bazar/E-commerce mendukung satu produk di beberapa tumpukan independen.
@@ -747,17 +766,21 @@ async def login(body: LoginBody, request: Request, response: Response):
         await db.login_attempts.delete_one({"identifier": identifier})
     user = await db.users.find_one({"username": username})
     if not user or not user.get("password_hash") or not verify_password(body.password, user["password_hash"]):
+        failed_at = datetime.now(timezone.utc)
         await db.login_attempts.update_one(
             {"identifier": identifier},
-            {"$inc": {"count": 1}, "$set": {"last_attempt": now_iso()}},
+            {"$inc": {"count": 1}, "$set": {
+                "last_attempt": failed_at.isoformat(),
+                "expiresAt": failed_at + timedelta(minutes=LOCKOUT_MINUTES),
+            }},
             upsert=True,
         )
         raise HTTPException(status_code=401, detail="Username atau password salah")
     if not user.get("active", True):
         raise HTTPException(status_code=403, detail="Akun dinonaktifkan. Hubungi administrator.")
     await db.login_attempts.delete_one({"identifier": identifier})
-    token = create_access_token(user["id"])
-    response.set_cookie("access_token", token, httponly=True, secure=True, samesite="none", max_age=604800, path="/")
+    token = create_access_token(user["id"], int(user.get("auth_version", 0) or 0))
+    response.set_cookie("access_token", token, httponly=True, secure=True, samesite="lax", max_age=604800, path="/")
     return {"user": public_user(user), "token": token}
 
 
@@ -793,10 +816,10 @@ async def google_session(body: SessionBody, response: Response):
     session_token = data["session_token"]
     await db.user_sessions.insert_one({
         "user_id": user["id"], "session_token": session_token,
-        "expires_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
+        "expires_at": datetime.now(timezone.utc) + timedelta(days=7),
         "created_at": now_iso(),
     })
-    response.set_cookie("session_token", session_token, httponly=True, secure=True, samesite="none", max_age=604800, path="/")
+    response.set_cookie("session_token", session_token, httponly=True, secure=True, samesite="lax", max_age=604800, path="/")
     return {"user": public_user(user), "session_token": session_token}
 
 
