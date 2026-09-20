@@ -1,13 +1,14 @@
 import re
 from typing import Literal, List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from pymongo import ReturnDocument
 
-from backend.server import build_xlsx, db, get_current_user, new_id, now_iso, operational_now, normalize_channel
-from backend.role_four_config import has_role_permission, role_destination
+from backend.server import build_xlsx, db, get_current_user, new_id, next_sequence, now_iso, operational_now, normalize_channel
+from backend.role_four_config import has_role_permission, role_destination, require_operational_approval
+from backend.operational_guards import idempotent_operation, lock_keys
 
 router = APIRouter(prefix="/api")
 
@@ -317,6 +318,7 @@ class ConsignmentLayoutInput(BaseModel):
 
 class OpnameItemInput(BaseModel):
     productId: str
+    channel: Literal["PSO", "KOM"] = "KOM"
     actualQty: float = Field(ge=0)
     note: str = ""
 
@@ -324,6 +326,15 @@ class OpnameItemInput(BaseModel):
 class ConsignmentOpnameInput(BaseModel):
     destination: Literal["Gudang Bazar", "Gudang E-commerce"]
     items: List[OpnameItemInput] = Field(min_length=1)
+    note: str = ""
+
+
+class ConsignmentOpnameUpdateInput(BaseModel):
+    items: List[OpnameItemInput] = Field(min_length=1)
+    note: str = ""
+
+
+class ConsignmentOpnameDecisionInput(BaseModel):
     note: str = ""
 
 
@@ -528,7 +539,449 @@ async def list_consignment_layout_history(destination: str = "", user: dict = De
 async def list_consignment_opnames(destination: str = "", user: dict = Depends(get_current_user)):
     resolved = _resolved_destination(user, destination)
     query = {"destination": resolved} if resolved else {}
-    return await db.consignment_opnames.find(query, {"_id": 0}).sort("time", -1).to_list(5000)
+    return await db.consignment_opnames.find(query, {"_id": 0}).sort("createdAt", -1).to_list(5000)
+
+
+async def _consignment_opname_snapshot(destination: str) -> list[dict]:
+    rows = await consignment_stock(destination)
+    grouped: dict[tuple[str, str], dict] = {}
+    for row in rows:
+        product_id = str(row.get("productId") or "")
+        if not product_id:
+            continue
+        channel = normalize_channel(row.get("channel"), "KOM")
+        key = (product_id, channel)
+        if key not in grouped:
+            grouped[key] = {
+                "productId": product_id,
+                "channel": channel,
+                "sku": row.get("sku", ""),
+                "name": row.get("name", ""),
+                "unit": row.get("unit", ""),
+                "systemQty": 0.0,
+                "actualQty": 0.0,
+                "difference": 0.0,
+                "note": "",
+            }
+        grouped[key]["systemQty"] += float(row.get("qty", 0) or 0)
+    result = []
+    for row in grouped.values():
+        row["actualQty"] = row["systemQty"]
+        result.append(row)
+    return sorted(result, key=lambda row: (str(row.get("name") or "").lower(), row.get("channel", ""), row.get("sku", "")))
+
+
+async def _consignment_reserved_qty(destination: str, product_id: str, channel: str) -> float:
+    reserved = 0.0
+    channel = normalize_channel(channel, "KOM")
+    if destination == "Gudang Bazar":
+        trips = await db.bazar_trips.find({"status": "BERJALAN"}, {"_id": 0, "items": 1}).to_list(5000)
+        for trip in trips:
+            for item in trip.get("items", []):
+                if item.get("productId") == product_id and normalize_channel(item.get("channel"), "KOM") == channel:
+                    reserved += float(item.get("loadedQty", 0) or 0)
+
+        batches = await db.bazar_package_batches.find(
+            {"remainingQty": {"$gt": 1e-9}},
+            {"_id": 0, "templateId": 1, "remainingQty": 1},
+        ).to_list(10000)
+        template_ids = list({str(row.get("templateId") or "") for row in batches if row.get("templateId")})
+        templates = await db.bazar_package_templates.find(
+            {"id": {"$in": template_ids}},
+            {"_id": 0, "id": 1, "components": 1},
+        ).to_list(10000) if template_ids else []
+        by_template = {str(row.get("id") or ""): row for row in templates}
+        for batch in batches:
+            template = by_template.get(str(batch.get("templateId") or ""), {})
+            component = next(
+                (
+                    row for row in template.get("components", [])
+                    if row.get("productId") == product_id
+                    and normalize_channel(row.get("channel"), "KOM") == channel
+                ),
+                None,
+            )
+            if component:
+                reserved += float(batch.get("remainingQty", 0) or 0) * float(component.get("qty", 0) or 0)
+    else:
+        orders = await db.ecom_orders.find(
+            {"status": {"$in": ["RESERVED", "PACKING"]}},
+            {"_id": 0, "items": 1},
+        ).to_list(10000)
+        for order in orders:
+            for item in order.get("items", []):
+                if item.get("productId") == product_id and normalize_channel(item.get("channel"), "KOM") == channel:
+                    reserved += float(item.get("qty", 0) or 0)
+    return reserved
+
+
+async def _opname_current_qty(destination: str) -> dict[tuple[str, str], float]:
+    rows = await _consignment_opname_snapshot(destination)
+    return {
+        (str(row.get("productId") or ""), normalize_channel(row.get("channel"), "KOM")): float(row.get("systemQty", 0) or 0)
+        for row in rows
+    }
+
+
+@router.post("/consignment-opnames")
+async def create_consignment_opname(
+    body: ConsignmentOpnameInput,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    _ensure_destination_access(user, body.destination, write=True)
+
+    async def action():
+        existing = await db.consignment_opnames.find_one(
+            {"destination": body.destination, "status": {"$in": ["DRAFT", "SUBMITTED"]}},
+            {"_id": 0, "no": 1},
+        )
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Masih ada stock opname aktif untuk {body.destination}: {existing.get('no', '')}",
+            )
+
+        snapshot = await _consignment_opname_snapshot(body.destination)
+        if not snapshot:
+            raise HTTPException(status_code=400, detail="Tidak ada saldo Bazar/E-commerce yang dapat diopname")
+
+        submitted = {
+            (item.productId, normalize_channel(item.channel, "KOM")): item
+            for item in body.items
+        }
+        valid_keys = {(row["productId"], row["channel"]) for row in snapshot}
+        if any(key not in valid_keys for key in submitted):
+            raise HTTPException(status_code=400, detail="Ada komoditi opname yang tidak terdapat pada snapshot saldo")
+
+        lines = []
+        for row in snapshot:
+            patch = submitted.get((row["productId"], row["channel"]))
+            actual = float(patch.actualQty) if patch else float(row["systemQty"])
+            lines.append({
+                **row,
+                "actualQty": actual,
+                "difference": actual - float(row["systemQty"]),
+                "note": patch.note.strip() if patch else "",
+            })
+
+        op_now = operational_now()
+        date_text = op_now.strftime("%Y%m%d")
+        sequence = await next_sequence(f"consignment-opname:{date_text}", 0)
+        now = now_iso()
+        doc = {
+            "id": new_id(),
+            "no": f"OPK-{date_text}-{sequence:03d}",
+            "time": now,
+            "destination": body.destination,
+            "status": "DRAFT",
+            "items": lines,
+            "note": body.note.strip(),
+            "operator": user.get("name", ""),
+            "createdAt": now,
+            "createdBy": user.get("name", ""),
+            "updatedAt": now,
+            "updatedBy": user.get("name", ""),
+            "submittedAt": "",
+            "submittedBy": "",
+            "approvedAt": "",
+            "approvedBy": "",
+            "approvalNote": "",
+            "rejectedAt": "",
+            "rejectedBy": "",
+            "rejectionNote": "",
+        }
+        await db.consignment_opnames.insert_one(dict(doc))
+        return doc
+
+    return await idempotent_operation(
+        request,
+        user,
+        f"consignment-opname-create:{body.destination}",
+        [f"consignment-opname-active:{body.destination}"],
+        action,
+    )
+
+
+@router.put("/consignment-opnames/{opname_id}")
+async def update_consignment_opname(
+    opname_id: str,
+    body: ConsignmentOpnameUpdateInput,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    opname = await db.consignment_opnames.find_one({"id": opname_id}, {"_id": 0})
+    if not opname:
+        raise HTTPException(status_code=404, detail="Stock opname Bazar/E-commerce tidak ditemukan")
+    _ensure_destination_access(user, opname.get("destination", ""), write=True)
+
+    async def action():
+        current = await db.consignment_opnames.find_one({"id": opname_id}, {"_id": 0})
+        if not current or current.get("status") != "DRAFT":
+            raise HTTPException(status_code=409, detail="Hanya stock opname DRAFT yang dapat diubah")
+        submitted = {
+            (item.productId, normalize_channel(item.channel, "KOM")): item
+            for item in body.items
+        }
+        valid_keys = {
+            (str(row.get("productId") or ""), normalize_channel(row.get("channel"), "KOM"))
+            for row in current.get("items", [])
+        }
+        if any(key not in valid_keys for key in submitted):
+            raise HTTPException(status_code=400, detail="Ada komoditi yang tidak termasuk snapshot opname")
+
+        lines = []
+        for original in current.get("items", []):
+            revised = dict(original)
+            key = (str(original.get("productId") or ""), normalize_channel(original.get("channel"), "KOM"))
+            patch = submitted.get(key)
+            if patch:
+                revised["actualQty"] = float(patch.actualQty)
+                revised["note"] = patch.note.strip()
+            revised["difference"] = float(revised.get("actualQty", 0) or 0) - float(revised.get("systemQty", 0) or 0)
+            lines.append(revised)
+
+        now = now_iso()
+        await db.consignment_opnames.update_one(
+            {"id": opname_id, "status": "DRAFT"},
+            {"$set": {
+                "items": lines,
+                "note": body.note.strip(),
+                "updatedAt": now,
+                "updatedBy": user.get("name", ""),
+            }},
+        )
+        return await db.consignment_opnames.find_one({"id": opname_id}, {"_id": 0})
+
+    return await idempotent_operation(
+        request,
+        user,
+        f"consignment-opname-update:{opname_id}",
+        [f"consignment-opname:{opname_id}"],
+        action,
+    )
+
+
+@router.post("/consignment-opnames/{opname_id}/submit")
+async def submit_consignment_opname(
+    opname_id: str,
+    body: ConsignmentOpnameDecisionInput,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    opname = await db.consignment_opnames.find_one({"id": opname_id}, {"_id": 0})
+    if not opname:
+        raise HTTPException(status_code=404, detail="Stock opname Bazar/E-commerce tidak ditemukan")
+    _ensure_destination_access(user, opname.get("destination", ""), write=True)
+
+    async def action():
+        now = now_iso()
+        result = await db.consignment_opnames.update_one(
+            {"id": opname_id, "status": "DRAFT"},
+            {"$set": {
+                "status": "SUBMITTED",
+                "submittedAt": now,
+                "submittedBy": user.get("name", ""),
+                "submissionNote": body.note.strip(),
+                "updatedAt": now,
+                "updatedBy": user.get("name", ""),
+            }},
+        )
+        if result.matched_count == 0:
+            raise HTTPException(status_code=409, detail="Stock opname sudah berubah atau tidak lagi DRAFT")
+        return await db.consignment_opnames.find_one({"id": opname_id}, {"_id": 0})
+
+    return await idempotent_operation(
+        request,
+        user,
+        f"consignment-opname-submit:{opname_id}",
+        [f"consignment-opname:{opname_id}"],
+        action,
+    )
+
+
+@router.post("/consignment-opnames/{opname_id}/approve")
+async def approve_consignment_opname(
+    opname_id: str,
+    body: ConsignmentOpnameDecisionInput,
+    request: Request,
+    user: dict = Depends(require_operational_approval),
+):
+    initial = await db.consignment_opnames.find_one({"id": opname_id}, {"_id": 0})
+    if not initial:
+        raise HTTPException(status_code=404, detail="Stock opname Bazar/E-commerce tidak ditemukan")
+    destination = str(initial.get("destination") or "")
+    affected_products = sorted({
+        str(line.get("productId") or "")
+        for line in initial.get("items", [])
+        if abs(float(line.get("difference", 0) or 0)) > 1e-9
+    })
+
+    async def action():
+        opname = await db.consignment_opnames.find_one({"id": opname_id}, {"_id": 0})
+        if not opname or opname.get("status") != "SUBMITTED":
+            raise HTTPException(status_code=409, detail="Stock opname tidak lagi menunggu persetujuan")
+
+        current = await _opname_current_qty(destination)
+        for line in opname.get("items", []):
+            key = (str(line.get("productId") or ""), normalize_channel(line.get("channel"), "KOM"))
+            current_qty = float(current.get(key, 0.0))
+            snapshot_qty = float(line.get("systemQty", 0) or 0)
+            if abs(current_qty - snapshot_qty) > 1e-9:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Saldo {line.get('name', '')} berubah sejak snapshot ({snapshot_qty:g} → {current_qty:g}). Buat ulang stock opname.",
+                )
+            reserved = await _consignment_reserved_qty(destination, key[0], key[1])
+            actual = float(line.get("actualQty", 0) or 0)
+            if actual + 1e-9 < reserved:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Fisik {line.get('name', '')} {actual:g} lebih kecil dari stok yang masih terikat kegiatan aktif {reserved:g}. Selesaikan/batalkan kegiatan terlebih dahulu.",
+                )
+
+        operation_id = new_id()
+        approved_at = now_iso()
+        inserted_keys = []
+        synced_products = set()
+        history_saved = False
+        try:
+            for line in opname.get("items", []):
+                difference = float(line.get("actualQty", 0) or 0) - float(line.get("systemQty", 0) or 0)
+                if abs(difference) <= 1e-9:
+                    continue
+                product_id = str(line.get("productId") or "")
+                channel = normalize_channel(line.get("channel"), "KOM")
+                event_key = f"consignment-opname:{opname_id}:{product_id}:{channel}"
+                movement = {
+                    "id": new_id(),
+                    "eventKey": event_key,
+                    "operationId": operation_id,
+                    "time": approved_at,
+                    "destination": destination,
+                    "movementType": "OPNAME_ADJUSTMENT",
+                    "referenceId": opname_id,
+                    "referenceNo": opname.get("no", ""),
+                    "productId": product_id,
+                    "sku": line.get("sku", ""),
+                    "name": line.get("name", ""),
+                    "unit": line.get("unit", ""),
+                    "channel": channel,
+                    "delta": difference,
+                    "systemQty": float(line.get("systemQty", 0) or 0),
+                    "physicalQty": float(line.get("actualQty", 0) or 0),
+                    "operator": user.get("name", ""),
+                    "note": line.get("note", "") or body.note.strip(),
+                }
+                await db.consignment_movements.insert_one(dict(movement))
+                inserted_keys.append(event_key)
+                synced_products.add(product_id)
+
+            for product_id in sorted(synced_products):
+                await sync_consignment_layout_balance(
+                    destination,
+                    product_id,
+                    operator=user.get("name", ""),
+                    operation_key=f"consignment-opname:{opname_id}:{product_id}",
+                    note=f"Adjustment Stock Opname {opname.get('no', '')}",
+                )
+
+            history = {
+                "id": new_id(),
+                "operationId": operation_id,
+                "time": approved_at,
+                "destination": destination,
+                "eventType": "OPNAME_DISETUJUI",
+                "referenceId": opname_id,
+                "referenceNo": opname.get("no", ""),
+                "operator": user.get("name", ""),
+                "items": opname.get("items", []),
+                "note": body.note.strip(),
+            }
+            await db.consignment_operation_history.insert_one(history)
+            history_saved = True
+
+            result = await db.consignment_opnames.update_one(
+                {"id": opname_id, "status": "SUBMITTED"},
+                {"$set": {
+                    "status": "APPROVED",
+                    "approvedAt": approved_at,
+                    "approvedBy": user.get("name", ""),
+                    "approvalNote": body.note.strip(),
+                    "adjustmentOperationId": operation_id,
+                    "updatedAt": approved_at,
+                    "updatedBy": user.get("name", ""),
+                }},
+            )
+            if result.matched_count == 0:
+                raise HTTPException(status_code=409, detail="Status stock opname berubah saat approval")
+            return await db.consignment_opnames.find_one({"id": opname_id}, {"_id": 0})
+        except Exception:
+            if history_saved:
+                await db.consignment_operation_history.delete_many({"operationId": operation_id})
+            if inserted_keys:
+                await db.consignment_movements.delete_many({"eventKey": {"$in": inserted_keys}})
+            for product_id in sorted(synced_products):
+                try:
+                    await sync_consignment_layout_balance(
+                        destination,
+                        product_id,
+                        operator="Sistem (rollback opname)",
+                        operation_key=f"consignment-opname:{opname_id}:{product_id}:rollback",
+                        note="Rollback adjustment opname yang tidak selesai.",
+                    )
+                except Exception:
+                    pass
+            raise
+
+    keys = lock_keys(
+        [f"consignment-opname:{opname_id}", f"consignment-opname-active:{destination}"],
+        (f"consignment:{destination}:{product_id}" for product_id in affected_products),
+    )
+    return await idempotent_operation(
+        request,
+        user,
+        f"consignment-opname-approve:{opname_id}",
+        keys,
+        action,
+    )
+
+
+@router.post("/consignment-opnames/{opname_id}/reject")
+async def reject_consignment_opname(
+    opname_id: str,
+    body: ConsignmentOpnameDecisionInput,
+    request: Request,
+    user: dict = Depends(require_operational_approval),
+):
+    opname = await db.consignment_opnames.find_one({"id": opname_id}, {"_id": 0})
+    if not opname:
+        raise HTTPException(status_code=404, detail="Stock opname Bazar/E-commerce tidak ditemukan")
+
+    async def action():
+        now = now_iso()
+        result = await db.consignment_opnames.update_one(
+            {"id": opname_id, "status": "SUBMITTED"},
+            {"$set": {
+                "status": "REJECTED",
+                "rejectedAt": now,
+                "rejectedBy": user.get("name", ""),
+                "rejectionNote": body.note.strip(),
+                "updatedAt": now,
+                "updatedBy": user.get("name", ""),
+            }},
+        )
+        if result.matched_count == 0:
+            raise HTTPException(status_code=409, detail="Hanya opname SUBMITTED yang dapat ditolak")
+        return await db.consignment_opnames.find_one({"id": opname_id}, {"_id": 0})
+
+    return await idempotent_operation(
+        request,
+        user,
+        f"consignment-opname-reject:{opname_id}",
+        [f"consignment-opname:{opname_id}"],
+        action,
+    )
 
 
 @router.put("/consignment-layouts")
