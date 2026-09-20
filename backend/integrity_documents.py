@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import re
 
 from fastapi import APIRouter, Depends
 
@@ -21,6 +22,118 @@ def _n(value) -> float:
         return 0.0
 
 
+BON_PATTERN = re.compile(r"^BM-(\d{8})-(\d{3})$")
+SJ_PATTERN = re.compile(r"^SJ/09100-09200/(\d{6})/(\d{4})$")
+
+
+def _doc_set(values) -> set[str]:
+    return {str(value or "").strip().upper() for value in (values or []) if str(value or "").strip()}
+
+
+def _print_item_key(item: dict, fallback_document: str = "") -> tuple[str, str, str]:
+    document = str(item.get("documentNo") or fallback_document or "").strip().upper()
+    product = str(item.get("productId") or item.get("sku") or item.get("name") or "").strip().upper()
+    stack = str(item.get("stackCode") or item.get("location") or "").strip().upper()
+    return document, product, stack
+
+
+def _print_item_totals(items: list[dict], fallback_document: str = "") -> dict[tuple[str, str, str], dict]:
+    totals: dict[tuple[str, str, str], dict] = {}
+    for item in items or []:
+        key = _print_item_key(item, fallback_document)
+        row = totals.setdefault(key, {
+            "qty": 0.0,
+            "berat": 0.0,
+            "secondaryQty": _n(item.get("secondaryQty")),
+            "secondary": str(item.get("secondary") or ""),
+            "unit": str(item.get("unit") or ""),
+            "measureUnit": str(item.get("measureUnit") or "kg").lower(),
+        })
+        row["qty"] += _n(item.get("qty"))
+        row["berat"] += _n(item.get("berat"))
+    return totals
+
+
+def analyze_stack_card_integrity(allocations: list[dict], settings: dict) -> list[dict]:
+    issues: list[dict] = []
+    if not str(settings.get("warehouseHead") or "").strip():
+        issues.append({
+            "severity": "ERROR",
+            "code": "STACK_CARD_WAREHOUSE_HEAD_MISSING",
+            "issue": "Master Kepala Gudang belum diisi sehingga tanda tangan Kartu Tumpukan tidak memiliki nama pejabat yang sah.",
+        })
+
+    for item in allocations:
+        stack_code = str(item.get("stackCode") or "").strip().upper()
+        primary = _n(item.get("primaryQty"))
+        if primary <= EPS:
+            continue
+        if not str(item.get("sku") or "").strip() or not str(item.get("productName") or "").strip():
+            issues.append({
+                "severity": "ERROR",
+                "code": "STACK_CARD_PRODUCT_IDENTITY_MISSING",
+                "stackCode": stack_code,
+                "productId": item.get("productId", ""),
+                "issue": "Kartu Tumpukan memiliki saldo tetapi SKU/nama produk tidak lengkap.",
+            })
+        measure = str(item.get("measureUnit") or "kg").strip().lower()
+        if measure not in {"kg", "liter", "pcs"}:
+            issues.append({
+                "severity": "WARNING",
+                "code": "STACK_CARD_MEASURE_UNIT_INVALID",
+                "stackCode": stack_code,
+                "sku": item.get("sku", ""),
+                "measureUnit": measure,
+                "issue": "Satuan kuantum Kartu Tumpukan bukan kg/liter/pcs.",
+            })
+        if _n(item.get("weight")) <= EPS:
+            issues.append({
+                "severity": "WARNING",
+                "code": "STACK_CARD_UNIT_QUANTUM_MISSING",
+                "stackCode": stack_code,
+                "sku": item.get("sku", ""),
+                "issue": "Kuantum per unit belum diisi; kuantum fisik pada Kartu Tumpukan tidak dapat dihitung dengan benar.",
+            })
+
+        if item.get("arrangementAdjusted"):
+            issues.append({
+                "severity": "WARNING",
+                "code": "STACK_CARD_ARRANGEMENT_PENDING",
+                "stackCode": stack_code,
+                "sku": item.get("sku", ""),
+                "name": item.get("productName", ""),
+                "primaryQty": primary,
+                "issue": "Susunan fisik berubah setelah pengeluaran. PDF akan menandai perkalian perlu dihitung ulang.",
+            })
+            continue
+
+        secondary_qty = _n(item.get("secondaryQty"))
+        if secondary_qty <= EPS:
+            continue
+        blocks = item.get("arrangements") or [{
+            "hamparan": item.get("length", 0),
+            "kaki": item.get("width", 0),
+            "height": item.get("height", 0),
+        }]
+        secondary_count = sum(
+            _n(block.get("hamparan")) * _n(block.get("kaki")) * _n(block.get("height"))
+            for block in blocks
+        ) + _n(item.get("extraSecondary"))
+        calculated = secondary_count * secondary_qty + _n(item.get("extraPrimary"))
+        if abs(calculated - primary) > EPS:
+            issues.append({
+                "severity": "ERROR",
+                "code": "STACK_CARD_ARRANGEMENT_QTY_MISMATCH",
+                "stackCode": stack_code,
+                "sku": item.get("sku", ""),
+                "primaryQty": primary,
+                "calculatedQty": calculated,
+                "difference": calculated - primary,
+                "issue": "Perkalian Kartu Tumpukan tidak sama dengan saldo primer tumpukan.",
+            })
+    return issues
+
+
 def analyze_outbound_document_integrity(loads: list[dict], surat_jalan: list[dict], transactions: list[dict]) -> list[dict]:
     issues: list[dict] = []
     loads_by_id = {str(row.get("id") or ""): row for row in loads if row.get("id")}
@@ -34,6 +147,26 @@ def analyze_outbound_document_integrity(loads: list[dict], surat_jalan: list[dic
         bon_no = str(load.get("bon_no") or "").strip()
         if load_id and bon_no and str(load.get("status") or "") != "Dibatalkan":
             bon_owners[bon_no].add(load_id)
+            match = BON_PATTERN.match(bon_no)
+            if not match:
+                issues.append({
+                    "severity": "ERROR",
+                    "code": "BON_MUAT_NUMBER_FORMAT",
+                    "loadId": load_id,
+                    "bonNo": bon_no,
+                    "issue": "Nomor Bon Muat tidak mengikuti format BM-YYYYMMDD-nnn.",
+                })
+            else:
+                operational_date = str(load.get("operational_date") or "").replace("-", "")
+                if operational_date and match.group(1) != operational_date:
+                    issues.append({
+                        "severity": "ERROR",
+                        "code": "BON_MUAT_DATE_MISMATCH",
+                        "loadId": load_id,
+                        "bonNo": bon_no,
+                        "operationalDate": load.get("operational_date", ""),
+                        "issue": "Tanggal pada nomor Bon Muat berbeda dari tanggal operasional pemuatan.",
+                    })
 
     for sj in surat_jalan:
         load_id = str(sj.get("load_id") or "")
@@ -61,7 +194,46 @@ def analyze_outbound_document_integrity(loads: list[dict], surat_jalan: list[dic
         load_id = str(sj.get("load_id") or "")
         load = loads_by_id.get(load_id)
         if not load:
+            issues.append({
+                "severity": "ERROR",
+                "code": "SURAT_JALAN_ORPHAN",
+                "suratJalanId": sj.get("id", ""),
+                "suratJalanNo": sj.get("no", ""),
+                "loadId": load_id,
+                "issue": "Surat Jalan tidak memiliki pemuatan induk yang valid.",
+            })
             continue
+
+        sj_no = str(sj.get("no") or "").strip()
+        if sj_no.startswith("SJ/"):
+            match = SJ_PATTERN.match(sj_no)
+            if not match:
+                issues.append({
+                    "severity": "ERROR",
+                    "code": "SURAT_JALAN_NUMBER_FORMAT",
+                    "loadId": load_id,
+                    "suratJalanNo": sj_no,
+                    "issue": "Nomor Surat Jalan baru tidak mengikuti format SJ/09100-09200/YYYYMM/nnnn.",
+                })
+            else:
+                op_month = str(sj.get("operational_date") or load.get("operational_date") or "").replace("-", "")[:6]
+                if op_month and match.group(1) != op_month:
+                    issues.append({
+                        "severity": "ERROR",
+                        "code": "SURAT_JALAN_MONTH_MISMATCH",
+                        "loadId": load_id,
+                        "suratJalanNo": sj_no,
+                        "operationalDate": sj.get("operational_date") or load.get("operational_date", ""),
+                        "issue": "Bulan pada nomor Surat Jalan berbeda dari bulan operasional.",
+                    })
+        elif sj_no and not sj_no.startswith("SJ-"):
+            issues.append({
+                "severity": "WARNING",
+                "code": "SURAT_JALAN_LEGACY_NUMBER_UNKNOWN",
+                "loadId": load_id,
+                "suratJalanNo": sj_no,
+                "issue": "Nomor Surat Jalan tidak dikenali sebagai format baru maupun arsip legacy SJ-YYYYMM-nnn.",
+            })
         if str(load.get("status") or "") != "Selesai":
             issues.append({
                 "severity": "ERROR",
@@ -99,6 +271,56 @@ def analyze_outbound_document_integrity(loads: list[dict], surat_jalan: list[dic
                 "issue": "Nomor antrean pada pemuatan dan Surat Jalan tidak sama.",
             })
 
+        load_docs = _doc_set(load.get("documents") or [load.get("ref", "")])
+        sj_docs = _doc_set(sj.get("documents") or [sj.get("ref", "")])
+        if load_docs != sj_docs:
+            issues.append({
+                "severity": "ERROR",
+                "code": "SURAT_JALAN_SOURCE_DOCUMENT_MISMATCH",
+                "loadId": load_id,
+                "suratJalanNo": sj.get("no", ""),
+                "loadDocuments": sorted(load_docs),
+                "suratJalanDocuments": sorted(sj_docs),
+                "issue": "Daftar dokumen sumber pada Surat Jalan berbeda dari pemuatan.",
+            })
+
+        load_items = _print_item_totals(load.get("items") or [], load.get("ref", ""))
+        sj_items = _print_item_totals(sj.get("items") or [], sj.get("ref", ""))
+        for key in set(load_items) | set(sj_items):
+            expected_row = load_items.get(key, {})
+            printed_row = sj_items.get(key, {})
+            if abs(_n(expected_row.get("qty")) - _n(printed_row.get("qty"))) > EPS or abs(_n(expected_row.get("berat")) - _n(printed_row.get("berat"))) > EPS:
+                issues.append({
+                    "severity": "ERROR",
+                    "code": "SURAT_JALAN_ITEM_SNAPSHOT_MISMATCH",
+                    "loadId": load_id,
+                    "suratJalanNo": sj.get("no", ""),
+                    "documentNo": key[0],
+                    "productKey": key[1],
+                    "stackCode": key[2],
+                    "loadQty": _n(expected_row.get("qty")),
+                    "suratJalanQty": _n(printed_row.get("qty")),
+                    "loadQuantum": _n(expected_row.get("berat")),
+                    "suratJalanQuantum": _n(printed_row.get("berat")),
+                    "issue": "Kuantitas/kuantum snapshot Surat Jalan berbeda dari data pemuatan.",
+                })
+                continue
+            if expected_row and printed_row:
+                for field in ("secondaryQty", "secondary", "unit", "measureUnit"):
+                    if str(expected_row.get(field, "")) != str(printed_row.get(field, "")):
+                        issues.append({
+                            "severity": "WARNING",
+                            "code": "SURAT_JALAN_PACKAGING_METADATA_MISMATCH",
+                            "loadId": load_id,
+                            "suratJalanNo": sj.get("no", ""),
+                            "documentNo": key[0],
+                            "productKey": key[1],
+                            "field": field,
+                            "loadValue": expected_row.get(field, ""),
+                            "suratJalanValue": printed_row.get(field, ""),
+                            "issue": "Metadata kemasan/satuan Surat Jalan berbeda dari snapshot pemuatan.",
+                        })
+
     for load in loads:
         load_id = str(load.get("id") or "")
         if not load_id:
@@ -118,6 +340,29 @@ def analyze_outbound_document_integrity(loads: list[dict], surat_jalan: list[dic
 
         if str(load.get("status") or "") != "Selesai":
             continue
+
+        linked_sj_rows = sj_by_load.get(load_id, [])
+        if not linked_sj_rows:
+            issues.append({
+                "severity": "ERROR",
+                "code": "COMPLETED_OUTBOUND_MISSING_SURAT_JALAN",
+                "loadId": load_id,
+                "bonNo": load.get("bon_no", ""),
+                "issue": "Pemuatan Selesai tidak memiliki Surat Jalan.",
+            })
+        elif len(linked_sj_rows) == 1:
+            actual_sj = linked_sj_rows[0]
+            if str(load.get("surat_jalan_id") or "") != str(actual_sj.get("id") or "") or str(load.get("surat_jalan_no") or "") != str(actual_sj.get("no") or ""):
+                issues.append({
+                    "severity": "ERROR",
+                    "code": "SURAT_JALAN_LOAD_LINK_METADATA_MISMATCH",
+                    "loadId": load_id,
+                    "loadSuratJalanId": load.get("surat_jalan_id", ""),
+                    "loadSuratJalanNo": load.get("surat_jalan_no", ""),
+                    "actualSuratJalanId": actual_sj.get("id", ""),
+                    "actualSuratJalanNo": actual_sj.get("no", ""),
+                    "issue": "Metadata Surat Jalan pada pemuatan tidak sama dengan record Surat Jalan sebenarnya.",
+                })
 
         tx_rows = tx_by_load.get(load_id, [])
         if not tx_rows:
@@ -192,22 +437,27 @@ async def integrity_control(user: dict = Depends(require_master_write)):
     data = await base_integrity_control(user)
     loads = await db.outbound_loads.find(
         {},
-        {"_id": 0, "id": 1, "status": 1, "bon_no": 1, "antrian": 1, "surat_jalan_id": 1, "surat_jalan_no": 1, "items": 1},
+        {"_id": 0, "id": 1, "status": 1, "bon_no": 1, "bon_format_version": 1, "antrian": 1, "operational_date": 1, "ref": 1, "documents": 1, "document_type": 1, "surat_jalan_id": 1, "surat_jalan_no": 1, "items": 1},
     ).to_list(30000)
     surat_jalan = await db.surat_jalan.find(
         {},
-        {"_id": 0, "id": 1, "load_id": 1, "no": 1, "bon_no": 1, "antrian": 1},
+        {"_id": 0, "id": 1, "load_id": 1, "no": 1, "format_version": 1, "bon_no": 1, "antrian": 1, "operational_date": 1, "time": 1, "ref": 1, "documents": 1, "items": 1},
     ).to_list(30000)
     transactions = await db.transactions.find(
         {"type": "KELUAR"},
         {"_id": 0, "id": 1, "load_id": 1, "product_id": 1, "stackCode": 1, "change": 1, "bon_no": 1, "antrian": 1},
     ).to_list(100000)
+    stack_allocations = await db.stack_allocations.find({}, {"_id": 0}).to_list(50000)
+    settings = await db.settings.find_one({"_id": "app"}, {"_id": 0}) or {}
 
     document_issues = analyze_outbound_document_integrity(loads, surat_jalan, transactions)
+    stack_card_issues = analyze_stack_card_integrity(stack_allocations, settings)
     so_monitoring = await build_so_monitoring()
     so_issues = fulfillment_integrity_issues(so_monitoring)
     errors = sum(1 for row in document_issues if row.get("severity") == "ERROR")
     warnings = sum(1 for row in document_issues if row.get("severity") == "WARNING")
+    stack_card_errors = sum(1 for row in stack_card_issues if row.get("severity") == "ERROR")
+    stack_card_warnings = sum(1 for row in stack_card_issues if row.get("severity") == "WARNING")
     so_errors = sum(1 for row in so_issues if row.get("severity") == "ERROR")
     so_warnings = sum(1 for row in so_issues if row.get("severity") == "WARNING")
 
@@ -223,6 +473,18 @@ async def integrity_control(user: dict = Depends(require_master_write)):
             "severity": "WARNING",
             "code": "OUTBOUND_DOCUMENT_INTEGRITY_WARNING",
             "message": f"Ada {warnings} peringatan relasi dokumen/antrian pengeluaran.",
+        })
+    if stack_card_errors:
+        system_issues.append({
+            "severity": "ERROR",
+            "code": "STACK_CARD_PRINT_INTEGRITY",
+            "message": f"Ada {stack_card_errors} masalah data cetak Kartu Tumpukan.",
+        })
+    if stack_card_warnings:
+        system_issues.append({
+            "severity": "WARNING",
+            "code": "STACK_CARD_PRINT_WARNING",
+            "message": f"Ada {stack_card_warnings} Kartu Tumpukan yang membutuhkan pembaruan susunan/metadata.",
         })
     if so_errors:
         system_issues.append({
@@ -274,6 +536,7 @@ async def integrity_control(user: dict = Depends(require_master_write)):
 
     data["systemIssues"] = system_issues
     data["outboundDocumentIntegrityIssues"] = document_issues[:1000]
+    data["stackCardIntegrityIssues"] = stack_card_issues[:1000]
     data["soFulfillmentIntegrityIssues"] = so_issues[:1000]
     data["handlingCostIntegrityIssues"] = handling_cost.get("handlingCostIntegrityIssues", [])[:1000]
     for key in (
@@ -293,6 +556,11 @@ async def integrity_control(user: dict = Depends(require_master_write)):
     summary["outboundDocumentIntegrityIssues"] = len(document_issues)
     summary["outboundDocumentIntegrityErrors"] = errors
     summary["outboundDocumentIntegrityWarnings"] = warnings
+    summary["stackCardIntegrityIssues"] = len(stack_card_issues)
+    summary["stackCardIntegrityErrors"] = stack_card_errors
+    summary["stackCardIntegrityWarnings"] = stack_card_warnings
+    summary["suratJalanLegacyCount"] = sum(1 for row in surat_jalan if str(row.get("no") or "").startswith("SJ-"))
+    summary["suratJalanCurrentCount"] = sum(1 for row in surat_jalan if SJ_PATTERN.match(str(row.get("no") or "")))
     summary["soMonitoringTotal"] = int((so_monitoring.get("summary") or {}).get("total", 0) or 0)
     summary["soMonitoringOutstanding"] = int((so_monitoring.get("summary") or {}).get("outstanding", 0) or 0)
     summary["soMonitoringLegacy"] = int((so_monitoring.get("summary") or {}).get("legacy", 0) or 0)
