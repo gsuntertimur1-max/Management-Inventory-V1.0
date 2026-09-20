@@ -57,7 +57,7 @@ export const DataProvider = ({ children }) => {
       const scopedDestination = roleDestination(user?.role);
       if (scopedDestination) {
         const [p, consignmentStockRes, consignmentLayoutsRes, consignmentHistoryRes, consignmentOpnamesRes, monitoringStockRes, settingsRes] = await Promise.all([
-          api.get('/products'),
+          api.get('/product-catalog'),
           api.get('/consignment-stock'),
           api.get('/consignment-layouts'),
           api.get('/consignment-layout-history'),
@@ -385,7 +385,7 @@ export const DataProvider = ({ children }) => {
   const importCsv = async (file) => {
     const fd = new FormData();
     fd.append('file', file);
-    const { data } = await api.post('/import/master-csv', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+    const { data } = await api.post('/import/master-xlsx', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
     await fetchAll();
     return data;
   };
