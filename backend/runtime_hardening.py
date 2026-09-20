@@ -49,14 +49,8 @@ def measure_unit(value: str | None) -> str:
 
 
 async def ensure_performance_indexes() -> None:
-    # Dokumen cetak operasional harus 1:1: satu Bon per load dan satu SJ per load.
-    # Nomor SJ sendiri sudah unik dari initialize_app; indeks berikut menutup relasi load.
-    await create_unique_index_safely(
-        db.outbound_loads,
-        "bon_no",
-        sparse=True,
-        name="outbound_bon_no_unique",
-    )
+    # Bon Muat sudah unik melalui ensure_operational_guard_indexes().
+    # Nomor SJ sendiri unik dari initialize_app; indeks ini menutup relasi 1 load = 1 SJ.
     await create_unique_index_safely(
         db.surat_jalan,
         "load_id",
