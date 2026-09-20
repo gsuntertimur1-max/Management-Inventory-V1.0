@@ -311,3 +311,48 @@ html[data-theme='light'] .bg-\[\#102044\] .text-slate-300 { color: #172033 !impo
 html[data-theme='light'] select,
 html[data-theme='light'] input,
 html[data-theme='light'] textarea { color-scheme: light; }
+
+
+/* Tahap 20 — final interaction parity */
+button, a, input, select, textarea {
+    -webkit-tap-highlight-color: transparent;
+}
+button:disabled, [aria-disabled='true'] {
+    cursor: not-allowed !important;
+    opacity: .58;
+}
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+    outline: 2px solid #3b82f6;
+    outline-offset: 2px;
+}
+input, select, textarea {
+    min-height: 2.5rem;
+}
+html[data-theme='light'] header {
+    background-color: rgba(248,250,252,.92) !important;
+    border-color: #cbd5e1 !important;
+}
+html[data-theme='light'] [role='menu'],
+html[data-theme='light'] [data-radix-menu-content],
+html[data-theme='light'] [data-radix-popper-content-wrapper] > div {
+    color: #172033;
+}
+html[data-theme='light'] input::placeholder,
+html[data-theme='light'] textarea::placeholder {
+    color: #94a3b8;
+}
+html[data-theme='light'] input:disabled,
+html[data-theme='light'] select:disabled,
+html[data-theme='light'] textarea:disabled {
+    background-color: #eef2f7 !important;
+    color: #64748b !important;
+}
+html[data-theme='light'] .bg-black\/75 {
+    background-color: rgba(15,23,42,.55) !important;
+}
+@media (max-width: 639px) {
+    .app-main { padding-top: 1rem; padding-bottom: max(1.25rem, env(safe-area-inset-bottom)); }
+    .app-main button { min-height: 2.5rem; }
+    .app-main input, .app-main select, .app-main textarea { font-size: 16px; }
+    .app-main .grid-cols-2 > .card-surface { min-width: 0; }
+}
