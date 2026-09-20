@@ -102,7 +102,40 @@ async def _allocation_snapshot(warehouse: str) -> list[dict]:
 
 @router.get("/stock-opnames")
 async def list_stock_opnames(user: dict = Depends(get_current_user)):
-    return await db.stock_opnames.find({}, {"_id": 0}).sort("createdAt", -1).to_list(1000)
+    rows = await db.stock_opnames.find({}, {"_id": 0}).sort("createdAt", -1).to_list(1000)
+    for row in rows:
+        row["snapshotStale"] = False
+        row["staleLines"] = []
+        if row.get("status") not in {"DRAFT", "SUBMITTED"}:
+            continue
+        allocation_ids = [str(line.get("allocationId") or "") for line in row.get("lines", []) if line.get("allocationId")]
+        current_rows = await db.stack_allocations.find(
+            {"id": {"$in": allocation_ids}},
+            {"_id": 0, "id": 1, "primaryQty": 1},
+        ).to_list(10000) if allocation_ids else []
+        current_by_id = {str(item.get("id") or ""): _n(item.get("primaryQty")) for item in current_rows}
+        stale_lines = []
+        for line in row.get("lines", []):
+            allocation_id = str(line.get("allocationId") or "")
+            if allocation_id not in current_by_id:
+                stale_lines.append({
+                    "allocationId": allocation_id,
+                    "stackCode": line.get("stackCode", ""),
+                    "snapshotQty": _n(line.get("systemQty")),
+                    "currentQty": None,
+                })
+                continue
+            current_qty = current_by_id[allocation_id]
+            if abs(current_qty - _n(line.get("systemQty"))) > EPS:
+                stale_lines.append({
+                    "allocationId": allocation_id,
+                    "stackCode": line.get("stackCode", ""),
+                    "snapshotQty": _n(line.get("systemQty")),
+                    "currentQty": current_qty,
+                })
+        row["snapshotStale"] = bool(stale_lines)
+        row["staleLines"] = stale_lines
+    return rows
 
 
 @router.post("/stock-opnames")
@@ -173,6 +206,30 @@ async def update_stock_opname(opname_id: str, body: OpnameUpdateInput, user: dic
             "updatedBy": user.get("name", ""),
         }},
     )
+    return await db.stock_opnames.find_one({"id": opname_id}, {"_id": 0})
+
+
+@router.post("/stock-opnames/{opname_id}/cancel")
+async def cancel_stock_opname(opname_id: str, body: OpnameDecisionInput, user: dict = Depends(require_write)):
+    opname = await db.stock_opnames.find_one({"id": opname_id}, {"_id": 0})
+    if not opname:
+        raise HTTPException(status_code=404, detail="Stock opname tidak ditemukan")
+    if opname.get("status") != "DRAFT":
+        raise HTTPException(status_code=409, detail="Hanya stock opname DRAFT yang dapat dibatalkan langsung")
+    now = now_iso()
+    result = await db.stock_opnames.update_one(
+        {"id": opname_id, "status": "DRAFT"},
+        {"$set": {
+            "status": "CANCELLED",
+            "cancelledAt": now,
+            "cancelledBy": user.get("name", ""),
+            "cancellationNote": body.note.strip(),
+            "updatedAt": now,
+            "updatedBy": user.get("name", ""),
+        }},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=409, detail="Status stock opname berubah. Muat ulang halaman.")
     return await db.stock_opnames.find_one({"id": opname_id}, {"_id": 0})
 
 
