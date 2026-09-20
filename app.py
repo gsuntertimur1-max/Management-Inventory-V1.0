@@ -39,6 +39,7 @@ from backend.integrity_lots import router as integrity_lots_router
 from backend.integrity_postcommit import router as integrity_postcommit_router
 from backend.integrity_documents import router as integrity_documents_router
 from backend.final_hardening import router as final_hardening_router
+from backend.production_hardening import router as production_hardening_router
 from backend.stock_opname import router as stock_opname_router
 from backend.opname_lots import router as opname_lots_router
 from backend.opname_lots_conservative import router as opname_lots_conservative_router
@@ -118,6 +119,7 @@ app.include_router(queue_flow_router)
 # Authoritative outbound reservation view is available to authenticated operators.
 app.include_router(outbound_reservation_view_router)
 app.include_router(final_hardening_router)
+app.include_router(production_hardening_router)
 # Satu SO dapat mempunyai beberapa pemuatan; monitor induk mengelompokkan seluruh Bon Muat/SJ per SO.
 app.include_router(so_monitoring_router)
 # Outbound document wrapper is the authoritative /integrity-control route: it layers
