@@ -22,7 +22,7 @@ from backend.consignment_operations import router as consignment_operations_rout
 from backend.bazar_packages import router as bazar_packages_router, ensure_bazar_package_indexes
 from backend.bazar_external_nd import router as bazar_external_nd_router, ensure_bazar_external_nd_indexes
 from backend.consignment_hardening import router as consignment_hardening_router
-from backend.consignment_damaged import router as consignment_damaged_router, ensure_consignment_damaged_indexes
+from backend.consignment_damaged import router as consignment_damaged_router, ensure_consignment_damaged_indexes, reconcile_legacy_consignment_damaged
 from backend.marketplace_integration import router as marketplace_integration_router, ensure_marketplace_indexes
 from backend.marketplace_oauth import router as marketplace_oauth_router, ensure_marketplace_oauth_indexes
 from backend.stack_allocations import router as stack_allocations_router
@@ -144,6 +144,7 @@ async def hardened_lifespan(application):
         await ensure_stack_lot_indexes()
         await ensure_consignment_operation_indexes()
         await ensure_consignment_damaged_indexes()
+        await reconcile_legacy_consignment_damaged()
         await ensure_bazar_package_indexes()
         await ensure_bazar_external_nd_indexes()
         await ensure_marketplace_indexes()
