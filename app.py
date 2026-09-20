@@ -49,6 +49,7 @@ from backend.lot_corrections import router as lot_corrections_router
 from backend.damaged_stock_area import router as damaged_stock_area_router
 from backend.damaged_outbound import router as damaged_outbound_router
 from backend.cost_payments import router as cost_payments_router, ensure_cost_payment_indexes
+from backend.cost_payment_hardening import router as cost_payment_hardening_router
 from backend.consignment_documents import router as consignment_documents_router, ensure_consignment_document_indexes
 import backend.opname_lot_atomic  # noqa: F401 - installs compensated lot reducer for opname engines
 
@@ -86,6 +87,8 @@ app.include_router(supplier_lifecycle_guards_router)
 app.include_router(document_settlement_guards_router)
 # Return stock with later-verified batch/expiry can be reconciled into FEFO lots without touching physical stock.
 app.include_router(return_lot_reconciliation_router)
+# Payment/settlement routes must be serialized before raw cost endpoints.
+app.include_router(cost_payment_hardening_router)
 # Guard routes must be registered before the original operational routers so
 # the same public paths are serialized across Railway workers. The core outbound flow
 # performs the per-stack reservation check while these guards serialize product writes.
