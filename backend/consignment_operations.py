@@ -211,104 +211,151 @@ async def bazar_availability(user: dict = Depends(get_current_user)):
 
 
 @router.post("/bazar/trips")
-async def create_bazar_trip(body: BazarTripCreate, user: dict = Depends(get_current_user)):
+async def create_bazar_trip(
+    body: BazarTripCreate,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
     _ensure_access(user, BAZAR, write=True)
-    grouped = defaultdict(float)
-    requested_stacks = {}
-    for item in body.items:
-        stack_code = str(item.stackCode or "").strip().upper()
-        key = (item.productId, stack_code)
-        grouped[key] += float(item.qty)
-        requested_stacks[key] = stack_code
+    product_ids = sorted({
+        str(item.productId or "")
+        for item in body.items
+        if str(item.productId or "")
+    })
 
-    items = []
-    for (product_id, requested_stack), qty in grouped.items():
-        identity = await _identity(BAZAR, product_id)
-        _, _, available = await _available(BAZAR, product_id)
-        total_requested = sum(amount for (pid, _), amount in grouped.items() if pid == product_id)
-        if total_requested > available + EPS:
-            raise HTTPException(status_code=409, detail=f"Stok tersedia {identity.get('name', '')} hanya {available:g} {identity.get('unit', '')}")
+    async def action():
+        grouped = defaultdict(float)
+        for item in body.items:
+            stack_code = str(item.stackCode or "").strip().upper()
+            grouped[(item.productId, stack_code)] += float(item.qty)
 
-        stack_code = ""
-        if requested_stack:
-            stack_code = consignment_module.normalize_consignment_stack_code(BAZAR, requested_stack)
-        else:
-            layout = await db.consignment_layouts.find_one(
-                {"destination": BAZAR, "productId": product_id},
-                {"_id": 0, "stackCode": 1},
-                sort=[("stackCode", 1)],
-            )
-            stack_code = str((layout or {}).get("stackCode") or "18/A01-BAZAR")
+        items = []
+        requested_by_product = defaultdict(float)
+        for (product_id, _), qty in grouped.items():
+            requested_by_product[product_id] += qty
 
-        product_layout_count = await db.consignment_layouts.count_documents({"destination": BAZAR, "productId": product_id})
-        selected_layout = await db.consignment_layouts.find_one(
-            {"destination": BAZAR, "productId": product_id, "stackCode": stack_code},
-            {"_id": 0},
-        )
-        if product_layout_count and not selected_layout:
-            raise HTTPException(status_code=400, detail=f"Tumpukan {stack_code} tidak memiliki perkalian aktif untuk {identity.get('name', '')}")
-        if selected_layout:
-            reserved_on_stack = await _bazar_stack_reserved(product_id, stack_code)
-            stack_available = max(consignment_module._layout_primary_qty(selected_layout) - reserved_on_stack, 0.0)
-            if qty > stack_available + EPS:
+        for (product_id, requested_stack), qty in grouped.items():
+            identity = await _identity(BAZAR, product_id)
+            _, _, available = await _available(BAZAR, product_id)
+            total_requested = requested_by_product[product_id]
+            if total_requested > available + EPS:
                 raise HTTPException(
                     status_code=409,
-                    detail=f"Stok tersedia {identity.get('name', '')} pada {stack_code} hanya {stack_available:g} {identity.get('unit', '')} setelah reservasi perjalanan aktif",
+                    detail=f"Stok tersedia {identity.get('name', '')} hanya {available:g} {identity.get('unit', '')}",
                 )
 
-        items.append({
-            "productId": product_id,
-            "sku": identity.get("sku", ""),
-            "name": identity.get("name", ""),
-            "unit": identity.get("unit", ""),
-            "channel": normalize_channel(identity.get("channel"), "KOM"),
-            "weight": _n(identity.get("weight")),
-            "measureUnit": identity.get("measureUnit", "kg") or "kg",
-            "secondary": identity.get("secondary", ""),
-            "secondaryQty": _n(identity.get("secondaryQty")),
-            "stackCode": stack_code,
-            "loadedQty": qty,
-        })
+            if requested_stack:
+                stack_code = consignment_module.normalize_consignment_stack_code(BAZAR, requested_stack)
+            else:
+                layout = await db.consignment_layouts.find_one(
+                    {"destination": BAZAR, "productId": product_id},
+                    {"_id": 0, "stackCode": 1},
+                    sort=[("stackCode", 1)],
+                )
+                stack_code = str((layout or {}).get("stackCode") or "18/A01-BAZAR")
 
-    event_date = body.eventDate or operational_now().strftime("%Y-%m-%d")
-    today = operational_now().strftime("%Y%m%d")
-    seq = await next_sequence(f"bazar-trip:{today}")
-    trip_no = f"BZ-{today}-{seq:03d}"
-    document_numbers = await next_bazar_document_numbers("BAZAR", event_date)
-    now = now_iso()
-    doc = {
-        "id": new_id(),
-        "tripNo": trip_no,
-        "eventDate": event_date,
-        "location": body.location.strip(),
-        "vehicleNo": body.vehicleNo.strip().upper(),
-        "driver": body.driver.strip(),
-        "items": items,
-        "status": "BERJALAN",
-        "bonNo": document_numbers["bonNo"],
-        "suratJalanNo": document_numbers["suratJalanNo"],
-        "note": body.note.strip(),
-        "createdAt": now,
-        "createdBy": user.get("name", ""),
-    }
-    await db.bazar_trips.insert_one(dict(doc))
-    await _history(
-        BAZAR,
-        "BAZAR_MUAT",
-        doc["id"],
-        trip_no,
-        user.get("name", ""),
-        items,
-        body.note,
-        {
-            "location": doc["location"],
-            "vehicleNo": doc["vehicleNo"],
-            "bonNo": doc["bonNo"],
-            "suratJalanNo": doc["suratJalanNo"],
-        },
+            product_layout_count = await db.consignment_layouts.count_documents(
+                {"destination": BAZAR, "productId": product_id}
+            )
+            selected_layout = await db.consignment_layouts.find_one(
+                {"destination": BAZAR, "productId": product_id, "stackCode": stack_code},
+                {"_id": 0},
+            )
+            if product_layout_count and not selected_layout:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Tumpukan {stack_code} tidak memiliki perkalian aktif untuk {identity.get('name', '')}",
+                )
+            if selected_layout:
+                reserved_on_stack = await _bazar_stack_reserved(product_id, stack_code)
+                stack_available = max(
+                    consignment_module._layout_primary_qty(selected_layout) - reserved_on_stack,
+                    0.0,
+                )
+                if qty > stack_available + EPS:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Stok tersedia {identity.get('name', '')} pada {stack_code} hanya {stack_available:g} {identity.get('unit', '')} setelah reservasi perjalanan aktif",
+                    )
+
+            items.append({
+                "productId": product_id,
+                "sku": identity.get("sku", ""),
+                "name": identity.get("name", ""),
+                "unit": identity.get("unit", ""),
+                "channel": normalize_channel(identity.get("channel"), "KOM"),
+                "weight": _n(identity.get("weight")),
+                "measureUnit": identity.get("measureUnit", "kg") or "kg",
+                "secondary": identity.get("secondary", ""),
+                "secondaryQty": _n(identity.get("secondaryQty")),
+                "stackCode": stack_code,
+                "loadedQty": qty,
+            })
+
+        event_date = body.eventDate or operational_now().strftime("%Y-%m-%d")
+        today = operational_now().strftime("%Y%m%d")
+        seq = await next_sequence(f"bazar-trip:{today}")
+        trip_no = f"BZ-{today}-{seq:03d}"
+        document_numbers = await next_bazar_document_numbers("BAZAR", event_date)
+        now = now_iso()
+        operation_id = f"bazar-trip-create:{new_id()}"
+        doc = {
+            "id": new_id(),
+            "tripNo": trip_no,
+            "eventDate": event_date,
+            "location": body.location.strip(),
+            "vehicleNo": body.vehicleNo.strip().upper(),
+            "driver": body.driver.strip(),
+            "items": items,
+            "status": "BERJALAN",
+            "bonNo": document_numbers["bonNo"],
+            "suratJalanNo": document_numbers["suratJalanNo"],
+            "note": body.note.strip(),
+            "operationId": operation_id,
+            "createdAt": now,
+            "createdBy": user.get("name", ""),
+        }
+
+        trip_saved = False
+        history_saved = False
+        try:
+            await db.bazar_trips.insert_one(dict(doc))
+            trip_saved = True
+            await _history(
+                BAZAR,
+                "BAZAR_MUAT",
+                doc["id"],
+                trip_no,
+                user.get("name", ""),
+                items,
+                body.note,
+                {
+                    "location": doc["location"],
+                    "vehicleNo": doc["vehicleNo"],
+                    "bonNo": doc["bonNo"],
+                    "suratJalanNo": doc["suratJalanNo"],
+                    "operationId": operation_id,
+                },
+            )
+            history_saved = True
+            return doc
+        except Exception:
+            if history_saved:
+                await db.consignment_operation_history.delete_many({"operationId": operation_id})
+            if trip_saved:
+                await db.bazar_trips.delete_one({"id": doc["id"], "operationId": operation_id})
+            raise
+
+    keys = lock_keys(
+        (f"consignment:{BAZAR}:{product_id}" for product_id in product_ids),
     )
-    return doc
-
+    return await idempotent_operation(
+        request,
+        user,
+        "bazar-trip-create",
+        keys,
+        action,
+    )
 
 @router.post("/bazar/trips/{trip_id}/close")
 async def close_bazar_trip(trip_id: str, body: BazarTripClose, user: dict = Depends(get_current_user)):
