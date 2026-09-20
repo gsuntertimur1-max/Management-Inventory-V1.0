@@ -110,6 +110,14 @@ const KontrolIntegritas = () => {
 
       <IssuePanel category="Kontrol Dokumen SO" title="Integritas SO Bertahap" subtitle="Memeriksa kuantum induk, realisasi selesai, reservasi antrean, konsistensi penerima, dan Surat Jalan per pemuatan." rows={data?.soFulfillmentIntegrityIssues || []} />
 
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className={`card-surface p-4 border ${Number(summary.handlingCostIntegrityErrors || 0) > 0 ? 'border-[#7f1d1d]' : 'border-[#14532d]'}`}><div className="label-mono text-[9px]">Integritas Biaya</div><div className="font-mono text-2xl font-bold mt-1">{summary.handlingCostIntegrityIssues ?? '—'}</div><div className="text-[10px] text-[#8b93a1] mt-1">{summary.handlingCostIntegrityErrors || 0} error · {summary.handlingCostIntegrityWarnings || 0} warning</div></div>
+        <div className="card-surface p-4"><div className="label-mono text-[9px]">Pemuatan Berbiaya</div><div className="font-mono text-2xl font-bold mt-1">{summary.loadingCostRecords ?? '—'}</div></div>
+        <div className="card-surface p-4"><div className="label-mono text-[9px]">Penerimaan Berbiaya</div><div className="font-mono text-2xl font-bold mt-1">{summary.unloadingCostRecords ?? '—'}</div></div>
+      </div>
+
+      <IssuePanel category="Kontrol Biaya Operasional" title="Integritas Biaya Muat & Bongkar" subtitle="Memeriksa komponen Buruh/Harian/Gudang, split normal-lembur, waktu kerja aktual, grup mandor, settlement, dan pembayaran pengambil." rows={data?.handlingCostIntegrityIssues || []} />
+
       <div className="grid grid-cols-2 lg:grid-cols-7 gap-3">
         <div className={`card-surface p-4 border ${Number(summary.consignmentLayoutMismatches || 0) > 0 ? 'border-[#7f1d1d]' : 'border-[#14532d]'}`}><div className="label-mono text-[9px]">Lokasi Konsinyasi</div><div className="font-mono text-2xl font-bold mt-1">{summary.consignmentLayoutMismatches ?? '—'}</div><div className="text-[10px] text-[#8b93a1] mt-1">mismatch ledger/lokasi</div></div>
         <div className={`card-surface p-4 border ${Number(summary.consignmentReservationIssues || 0) > 0 ? 'border-[#7f1d1d]' : 'border-[#14532d]'}`}><div className="label-mono text-[9px]">Reservasi Bazar/Ecom</div><div className="font-mono text-2xl font-bold mt-1">{summary.consignmentReservationIssues ?? '—'}</div></div>
