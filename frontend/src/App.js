@@ -13,6 +13,7 @@ import CatatStok from './pages/CatatStok';
 import Riwayat from './pages/Riwayat';
 import RiwayatConsignment from './pages/RiwayatConsignment';
 import Pengeluaran from './pages/Pengeluaran';
+import MonitorSO from './pages/MonitorSO';
 import PurchaseOrder from './pages/PurchaseOrder';
 import Supplier from './pages/Supplier';
 import LayarAntrianEnhanced from './pages/LayarAntrianEnhanced';
@@ -81,6 +82,7 @@ function AppRoutes() {
       <Route path="/temuan-kerusakan" element={<Protected permission="operations"><CatatStok panel="damage" /></Protected>} />
       <Route path="/retur-pemasok" element={<Protected permission="operations"><CatatStok panel="supplier-return" /></Protected>} />
       <Route path="/pengeluaran" element={<Protected permission="outboundPage"><><PengeluaranReservationPanel /><Pengeluaran /></></Protected>} />
+      <Route path="/monitoring-so" element={<Protected permission="outboundPage"><MonitorSO /></Protected>} />
       <Route path="/koreksi-operasional" element={<Protected permission="corrections"><KoreksiOperasional /></Protected>} />
       <Route path="/kontrol-integritas" element={<Protected permission="masterWrite"><><OutboundDocumentIntegrityPanel /><KontrolIntegritas /></></Protected>} />
       <Route path="/riwayat" element={<Protected permission="mainInventory"><Riwayat /></Protected>} />
