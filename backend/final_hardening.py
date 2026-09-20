@@ -7,6 +7,12 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook, load_workbook
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.units import mm
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
 from openpyxl.styles import Alignment, Font, PatternFill
 
 from backend.server import (
@@ -186,6 +192,14 @@ async def operational_report(
         {"time": date_query},
         {"_id": 0},
     ).sort("time", 1).to_list(100000)
+    stack_history = await db.stack_history.find(
+        {"time": date_query},
+        {"_id": 0},
+    ).sort("time", 1).to_list(100000)
+    stack_snapshot = await db.stack_allocations.find(
+        {},
+        {"_id": 0},
+    ).sort([("stackCode", 1), ("productName", 1)]).to_list(50000)
 
     wb = Workbook()
     wb.remove(wb.active)
@@ -221,6 +235,27 @@ async def operational_report(
         row.get("createdAt", ""), row.get("no", ""), row.get("warehouse", ""),
         row.get("status", ""), row.get("operator", ""), row.get("approvedBy", ""),
     ] for row in opnames])
+
+    _append_sheet(wb, "Mutasi Tumpukan", [
+        "Waktu", "Aksi", "Tumpukan", "SKU", "Produk", "Saldo Setelah", "Satuan", "Petugas",
+    ], [[
+        row.get("time", ""), row.get("action", ""), row.get("stackCode", ""),
+        (row.get("allocation") or row.get("after") or {}).get("sku", ""),
+        (row.get("allocation") or row.get("after") or {}).get("productName", ""),
+        (row.get("allocation") or row.get("after") or {}).get("primaryQty", 0),
+        (row.get("allocation") or row.get("after") or {}).get("unit", ""),
+        row.get("operator", ""),
+    ] for row in stack_history])
+
+    _append_sheet(wb, "Snapshot Tumpukan", [
+        "Tumpukan", "Gudang", "Zona", "SKU", "Produk", "Saldo Primer", "Satuan",
+        "Kuantum/Unit", "Satuan Kuantum", "Kemasan Sekunder", "Isi Sekunder", "Susunan Perlu Update",
+    ], [[
+        row.get("stackCode", ""), row.get("warehouse", ""), row.get("zone", ""), row.get("sku", ""),
+        row.get("productName", ""), row.get("primaryQty", 0), row.get("unit", ""), row.get("weight", 0),
+        row.get("measureUnit", ""), row.get("secondary", ""), row.get("secondaryQty", 0),
+        "YA" if row.get("arrangementAdjusted") else "TIDAK",
+    ] for row in stack_snapshot])
 
     _append_sheet(wb, "Bazar-Ecom", [
         "Waktu", "Lokasi", "Tipe", "Referensi", "SKU", "Produk", "Delta", "Satuan", "Petugas",
@@ -279,6 +314,78 @@ async def operational_report(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/reports/operational.pdf")
+async def operational_report_pdf(
+    start: str = Query(default=""),
+    end: str = Query(default=""),
+    user: dict = Depends(get_current_user),
+):
+    if role_destination(user.get("role")):
+        raise HTTPException(status_code=403, detail="Laporan Gudang Utama tidak tersedia untuk role Bazar/E-commerce")
+    start_label, end_label, start_utc, end_utc = _date_range(start, end)
+    date_query = {"$gte": start_utc, "$lt": end_utc}
+
+    tx_count = await db.transactions.count_documents({"time": date_query})
+    inbound_count = await db.transactions.count_documents({"time": date_query, "type": "MASUK"})
+    outbound_count = await db.transactions.count_documents({"time": date_query, "type": "KELUAR"})
+    loads = await db.outbound_loads.find(
+        {"created_at": date_query},
+        {"_id": 0, "status": 1, "bon_no": 1, "ref": 1, "operational_date": 1, "surat_jalan_no": 1, "items": 1, "loading_cost": 1},
+    ).sort("created_at", 1).to_list(30000)
+    opnames_pending = await db.stock_opnames.count_documents({"status": {"$in": ["DRAFT", "SUBMITTED"]}})
+    arrangement_pending = await db.stack_allocations.count_documents({"primaryQty": {"$gt": 0}, "arrangementAdjusted": True})
+    so = await build_so_monitoring()
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4), leftMargin=12*mm, rightMargin=12*mm, topMargin=12*mm, bottomMargin=12*mm)
+    styles = getSampleStyleSheet()
+    title = ParagraphStyle("title", parent=styles["Title"], fontName="Helvetica-Bold", fontSize=16, leading=20, alignment=TA_CENTER)
+    small = ParagraphStyle("small", parent=styles["BodyText"], fontSize=7.5, leading=10)
+    story = [
+        Paragraph("LAPORAN OPERASIONAL PEPEG", title),
+        Paragraph(f"Periode {start_label} s.d. {end_label}", ParagraphStyle("sub", parent=small, alignment=TA_CENTER, fontSize=9, leading=12)),
+        Spacer(1, 6*mm),
+    ]
+    summary_data = [
+        ["Transaksi", tx_count, "Penerimaan", inbound_count, "Pengeluaran", outbound_count],
+        ["SO Outstanding", int((so.get("summary") or {}).get("outstanding", 0) or 0), "Opname Pending", opnames_pending, "Susunan Perlu Update", arrangement_pending],
+    ]
+    summary_table = Table(summary_data, colWidths=[35*mm, 22*mm, 35*mm, 22*mm, 40*mm, 22*mm])
+    summary_table.setStyle(TableStyle([
+        ("GRID",(0,0),(-1,-1),.4,colors.HexColor("#94a3b8")),
+        ("BACKGROUND",(0,0),(-1,-1),colors.HexColor("#f8fafc")),
+        ("FONTNAME",(0,0),(-1,-1),"Helvetica-Bold"),
+        ("ALIGN",(1,0),(1,-1),"RIGHT"),("ALIGN",(3,0),(3,-1),"RIGHT"),("ALIGN",(5,0),(5,-1),"RIGHT"),
+        ("FONTSIZE",(0,0),(-1,-1),8),("TOPPADDING",(0,0),(-1,-1),5),("BOTTOMPADDING",(0,0),(-1,-1),5),
+    ]))
+    story += [summary_table, Spacer(1, 6*mm), Paragraph("RINGKASAN PEMUATAN", ParagraphStyle("h2", parent=title, fontSize=11, leading=14, alignment=0))]
+    data = [["Tanggal","Bon Muat","Referensi","Status","Produk / Qty","Surat Jalan"]]
+    for load in loads[:200]:
+        item_text = "; ".join(f"{item.get('name','')}: {_n(item.get('qty')):g} {item.get('unit','')}" for item in load.get("items") or [])
+        data.append([
+            load.get("operational_date",""), load.get("bon_no",""), load.get("ref",""), load.get("status",""),
+            item_text[:160], load.get("surat_jalan_no",""),
+        ])
+    table = Table(data, colWidths=[25*mm,35*mm,42*mm,25*mm,105*mm,45*mm], repeatRows=1)
+    table.setStyle(TableStyle([
+        ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#1f4e78")),("TEXTCOLOR",(0,0),(-1,0),colors.white),
+        ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),6.5),
+        ("GRID",(0,0),(-1,-1),.3,colors.HexColor("#94a3b8")),("VALIGN",(0,0),(-1,-1),"TOP"),
+        ("TOPPADDING",(0,0),(-1,-1),3),("BOTTOMPADDING",(0,0),(-1,-1),3),
+    ]))
+    story.append(table)
+    if len(loads) > 200:
+        story += [Spacer(1, 3*mm), Paragraph(f"Catatan: PDF menampilkan 200 pemuatan pertama dari {len(loads)}. Gunakan XLSX untuk detail lengkap.", small)]
+    if has_role_permission(user.get("role"), "costView"):
+        total_cost = sum(_n((load.get("loading_cost") or {}).get("total")) for load in loads)
+        story += [Spacer(1, 5*mm), Paragraph(f"Total biaya muat pada periode: Rp {total_cost:,.0f}".replace(",", "."), small)]
+    story += [Spacer(1, 5*mm), Paragraph(f"Dicetak: {operational_now().strftime('%d-%m-%Y %H:%M WIB')}", small)]
+    doc.build(story)
+    buffer.seek(0)
+    filename = f"laporan_operasional_{start_label}_{end_label}.pdf"
+    return StreamingResponse(buffer, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 def _master_template() -> io.BytesIO:
