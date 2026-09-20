@@ -189,6 +189,163 @@ def _nd_locks(nd_id: str, product_ids: list[str], extra: list[str] | None = None
     )
 
 
+async def _source_lots(nd_id: str, product_id: str = "") -> list[dict]:
+    query = {"ndId": nd_id}
+    if product_id:
+        query["productId"] = product_id
+    return await db.bazar_external_nd_lots.find(
+        query,
+        {"_id": 0},
+    ).sort([("receiptDate", 1), ("createdAt", 1), ("lotNo", 1)]).to_list(20000)
+
+
+async def _attach_source_lots(document: dict) -> dict:
+    doc = summarize_external_nd(document)
+    lots = await _source_lots(str(doc.get("id") or ""))
+    doc["sourceLots"] = lots
+    lot_by_product: dict[str, list[dict]] = defaultdict(list)
+    for lot in lots:
+        lot_by_product[str(lot.get("productId") or "")].append(lot)
+    for row in doc.get("summaryItems", []):
+        product_lots = lot_by_product.get(str(row.get("productId") or ""), [])
+        row["sourceLotCount"] = len(product_lots)
+        row["sourceLotRemaining"] = sum(_n(lot.get("remainingQty")) for lot in product_lots)
+    return doc
+
+
+async def _summarized_document(nd_id: str) -> dict:
+    return await _attach_source_lots(await _document(nd_id))
+
+
+async def _plan_source_lot_allocations(nd_id: str, product_id: str, qty: float) -> list[dict]:
+    needed = float(qty or 0)
+    if needed <= EPS:
+        return []
+    lots = await db.bazar_external_nd_lots.find(
+        {"ndId": nd_id, "productId": product_id, "remainingQty": {"$gt": EPS}},
+        {"_id": 0},
+    ).sort([("receiptDate", 1), ("createdAt", 1), ("lotNo", 1)]).to_list(20000)
+    allocations: list[dict] = []
+    remaining = needed
+    for lot in lots:
+        if remaining <= EPS:
+            break
+        available = _n(lot.get("remainingQty"))
+        if available <= EPS:
+            continue
+        take = min(available, remaining)
+        allocations.append({
+            "lotId": lot.get("id", ""),
+            "lotNo": lot.get("lotNo", ""),
+            "receiptId": lot.get("receiptId", ""),
+            "receiptDate": lot.get("receiptDate", ""),
+            "stackCode": lot.get("stackCode", ""),
+            "qty": take,
+        })
+        remaining -= take
+    if remaining > EPS:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Trace sumber ND tidak cukup untuk produk ini. Saldo lot kurang {remaining:g}. Periksa Kontrol Integritas.",
+        )
+    return allocations
+
+
+async def _apply_source_allocations(allocations: list[dict], counter_field: str) -> list[dict]:
+    applied: list[dict] = []
+    for allocation in allocations:
+        qty = _n(allocation.get("qty"))
+        result = await db.bazar_external_nd_lots.update_one(
+            {"id": allocation.get("lotId"), "remainingQty": {"$gte": qty}},
+            {
+                "$inc": {"remainingQty": -qty, counter_field: qty},
+                "$set": {"updatedAt": now_iso()},
+            },
+        )
+        if result.matched_count == 0:
+            for done in reversed(applied):
+                rollback_qty = _n(done.get("qty"))
+                await db.bazar_external_nd_lots.update_one(
+                    {"id": done.get("lotId")},
+                    {"$inc": {"remainingQty": rollback_qty, counter_field: -rollback_qty}, "$set": {"updatedAt": now_iso()}},
+                )
+            raise HTTPException(status_code=409, detail="Saldo lot sumber ND berubah. Muat ulang lalu coba kembali.")
+        applied.append(allocation)
+    return applied
+
+
+async def _rollback_source_allocations(allocations: list[dict], counter_field: str) -> None:
+    for allocation in reversed(allocations):
+        qty = _n(allocation.get("qty"))
+        await db.bazar_external_nd_lots.update_one(
+            {"id": allocation.get("lotId")},
+            {"$inc": {"remainingQty": qty, counter_field: -qty}, "$set": {"updatedAt": now_iso()}},
+        )
+
+
+def _source_slice(source_allocations: list[dict], skip_qty: float, take_qty: float) -> list[dict]:
+    skip = float(skip_qty or 0)
+    remaining = float(take_qty or 0)
+    result: list[dict] = []
+    for source in source_allocations or []:
+        qty = _n(source.get("qty"))
+        if skip >= qty - EPS:
+            skip -= qty
+            continue
+        usable = qty - skip
+        skip = 0.0
+        take = min(usable, remaining)
+        if take > EPS:
+            result.append({**source, "qty": take})
+            remaining -= take
+        if remaining <= EPS:
+            break
+    return result
+
+
+def _plan_realization_allocations(document: dict, product_id: str, qty: float) -> list[dict]:
+    needed = float(qty or 0)
+    settled_by_realization: dict[str, float] = defaultdict(float)
+    for so in document.get("soDocuments", []):
+        for item in so.get("items", []):
+            if item.get("productId") != product_id:
+                continue
+            for allocation in item.get("realizationAllocations", []):
+                settled_by_realization[str(allocation.get("realizationId") or "")] += _n(allocation.get("qty"))
+
+    result: list[dict] = []
+    remaining = needed
+    for realization in document.get("realizations", []):
+        if remaining <= EPS:
+            break
+        realization_id = str(realization.get("id") or "")
+        item = next((row for row in realization.get("items", []) if row.get("productId") == product_id), None)
+        if not item:
+            continue
+        realized_qty = _n(item.get("qty"))
+        already_settled = _n(settled_by_realization.get(realization_id))
+        available = max(realized_qty - already_settled, 0.0)
+        if available <= EPS:
+            continue
+        take = min(available, remaining)
+        result.append({
+            "realizationId": realization_id,
+            "realizationDate": realization.get("realizationDate", ""),
+            "activityType": realization.get("activityType", ""),
+            "referenceId": realization.get("referenceId", ""),
+            "referenceNo": realization.get("referenceNo", ""),
+            "qty": take,
+            "sourceAllocations": _source_slice(item.get("sourceAllocations", []), already_settled, take),
+        })
+        remaining -= take
+    if remaining > EPS:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Trace realisasi untuk SO tidak cukup {remaining:g}. Periksa histori ND sebelum menerbitkan SO.",
+        )
+    return result
+
+
 async def _record_history(
     event_type: str,
     document: dict,
@@ -296,7 +453,7 @@ async def _rollback_damaged_credit(event_key: str, item: dict, qty: float) -> No
 async def list_external_nds(user: dict = Depends(get_current_user)):
     _ensure_access(user, write=False)
     rows = await db.bazar_external_nd.find({}, {"_id": 0}).sort("createdAt", -1).to_list(5000)
-    return [summarize_external_nd(row) for row in rows]
+    return [await _attach_source_lots(row) for row in rows]
 
 
 @router.post("")
@@ -397,6 +554,11 @@ async def receive_external_nd(
                 )
 
         receipt_id, now = new_id(), now_iso()
+        for index, item in enumerate(receipt_items):
+            if _n(item.get("goodQty")) > EPS:
+                lot_id = new_id()
+                item["sourceLotId"] = lot_id
+                item["sourceLotNo"] = f"NDL-{body.receiptDate.replace('-', '')}-{receipt_id[:6].upper()}-{index + 1:02d}"
         receipt = {
             "id": receipt_id,
             "receiptDate": body.receiptDate,
@@ -408,6 +570,7 @@ async def receive_external_nd(
         }
         good_events: list[tuple[str, dict]] = []
         damaged_events: list[tuple[str, dict, float]] = []
+        inserted_lot_ids: list[str] = []
         receipt_saved = False
         try:
             for index, item in enumerate(receipt_items):
@@ -415,6 +578,30 @@ async def receive_external_nd(
                 damaged_qty = _n(item.get("damagedQty"))
                 if good_qty > EPS:
                     event_key = f"bazar-external-nd-receipt:{receipt_id}:{index}:{item['productId']}"
+                    lot_doc = {
+                        "id": item.get("sourceLotId", ""),
+                        "lotNo": item.get("sourceLotNo", ""),
+                        "ndId": nd_id,
+                        "ndNo": document.get("ndNo", ""),
+                        "originWarehouse": document.get("originWarehouse", ""),
+                        "receiptId": receipt_id,
+                        "receiptDate": body.receiptDate,
+                        "productId": item["productId"],
+                        "sku": item.get("sku", ""),
+                        "name": item.get("name", ""),
+                        "unit": item.get("unit", ""),
+                        "channel": item.get("channel", "KOM"),
+                        "stackCode": item.get("stackCode", ""),
+                        "receivedQty": good_qty,
+                        "remainingQty": good_qty,
+                        "returnedQty": 0.0,
+                        "realizedQty": 0.0,
+                        "createdAt": now,
+                        "createdBy": user.get("name", ""),
+                        "updatedAt": now,
+                    }
+                    await db.bazar_external_nd_lots.insert_one(dict(lot_doc))
+                    inserted_lot_ids.append(lot_doc["id"])
                     movement = {
                         "id": new_id(),
                         "eventKey": event_key,
@@ -432,6 +619,8 @@ async def receive_external_nd(
                         "channel": item.get("channel", "KOM"),
                         "delta": good_qty,
                         "stackCode": item.get("stackCode", ""),
+                        "sourceLotId": item.get("sourceLotId", ""),
+                        "sourceLotNo": item.get("sourceLotNo", ""),
                         "operator": user.get("name", ""),
                     }
                     await db.consignment_movements.insert_one(dict(movement))
@@ -474,11 +663,13 @@ async def receive_external_nd(
                 body.note,
                 {"vehicleNo": receipt["vehicleNo"], "operationId": receipt_id},
             )
-            return summarize_external_nd(await _document(nd_id))
+            return await _summarized_document(nd_id)
         except Exception:
             if receipt_saved:
                 await db.bazar_external_nd.update_one({"id": nd_id}, {"$pull": {"receipts": {"id": receipt_id}}})
             await db.consignment_operation_history.delete_many({"operationId": receipt_id})
+            if inserted_lot_ids:
+                await db.bazar_external_nd_lots.delete_many({"id": {"$in": inserted_lot_ids}})
             for damaged_key, item, qty in reversed(damaged_events):
                 await _rollback_damaged_credit(damaged_key, item, qty)
             for event_key, item in reversed(good_events):
@@ -537,6 +728,19 @@ async def return_external_nd(
                 source = next(row for row in document.get("items", []) if row.get("productId") == product_id)
                 raise HTTPException(status_code=409, detail=f"Saldo belum SO {source.get('name', '')} hanya {returnable:g}")
 
+        allocations_by_product = {
+            product_id: await _plan_source_lot_allocations(nd_id, product_id, qty)
+            for product_id, qty in grouped.items()
+        }
+        allocation_offsets: dict[str, int] = defaultdict(int)
+        for item in prepared:
+            product_id = str(item.get("productId") or "")
+            needed = _n(item.get("qty"))
+            source_allocations = allocations_by_product.get(product_id, [])
+            offset = allocation_offsets[product_id]
+            item["sourceAllocations"] = _source_slice(source_allocations, offset, needed)
+            allocation_offsets[product_id] += needed
+
         return_id, now = new_id(), now_iso()
         entry = {
             "id": return_id,
@@ -547,8 +751,11 @@ async def return_external_nd(
             "createdBy": user.get("name", ""),
         }
         events: list[tuple[str, dict]] = []
+        applied_source_allocations: list[dict] = []
         saved = False
         try:
+            for product_id, allocations in allocations_by_product.items():
+                applied_source_allocations.extend(await _apply_source_allocations(allocations, "returnedQty"))
             for index, item in enumerate(prepared):
                 event_key = f"bazar-external-nd-return:{return_id}:{index}:{item['productId']}"
                 movement = {
@@ -601,11 +808,13 @@ async def return_external_nd(
                 body.note,
                 {"returnDate": body.returnDate, "operationId": return_id},
             )
-            return summarize_external_nd(await _document(nd_id))
+            return await _summarized_document(nd_id)
         except Exception:
             if saved:
                 await db.bazar_external_nd.update_one({"id": nd_id}, {"$pull": {"returns": {"id": return_id}}})
             await db.consignment_operation_history.delete_many({"operationId": return_id})
+            if applied_source_allocations:
+                await _rollback_source_allocations(applied_source_allocations, "returnedQty")
             for event_key, item in reversed(events):
                 await db.consignment_movements.delete_one({"eventKey": event_key})
                 try:
@@ -675,7 +884,11 @@ async def realize_external_nd(
                     status_code=409,
                     detail=f"Realisasi {source.get('name', '')} pada {reference_no} tersedia hanya {available_reference:g}",
                 )
-            items.append({**source, "qty": qty})
+            items.append({
+                **source,
+                "qty": qty,
+                "sourceAllocations": await _plan_source_lot_allocations(nd_id, product_id, qty),
+            })
 
         realization_id, now = new_id(), now_iso()
         entry = {
@@ -689,26 +902,41 @@ async def realize_external_nd(
             "createdAt": now,
             "createdBy": user.get("name", ""),
         }
-        result = await db.bazar_external_nd.update_one(
-            {"id": nd_id, "cancelledAt": {"$exists": False}, "realizations.id": {"$ne": realization_id}},
-            {"$push": {"realizations": entry}, "$set": {"updatedAt": now, "updatedBy": user.get("name", "")}},
-        )
-        if result.matched_count == 0:
-            raise HTTPException(status_code=409, detail="ND berubah saat realisasi. Muat ulang lalu coba kembali.")
-        await _record_history(
-            "BAZAR_ND_DIREALISASIKAN",
-            document,
-            user,
-            items,
-            body.note,
-            {
-                "activityType": current_activity,
-                "activityReferenceId": source_operation.get("id", ""),
-                "activityReferenceNo": reference_no,
-                "operationId": realization_id,
-            },
-        )
-        return summarize_external_nd(await _document(nd_id))
+        applied_source_allocations: list[dict] = []
+        saved = False
+        try:
+            for item in items:
+                applied_source_allocations.extend(
+                    await _apply_source_allocations(item.get("sourceAllocations", []), "realizedQty")
+                )
+            result = await db.bazar_external_nd.update_one(
+                {"id": nd_id, "cancelledAt": {"$exists": False}, "realizations.id": {"$ne": realization_id}},
+                {"$push": {"realizations": entry}, "$set": {"updatedAt": now, "updatedBy": user.get("name", "")}},
+            )
+            if result.matched_count == 0:
+                raise HTTPException(status_code=409, detail="ND berubah saat realisasi. Muat ulang lalu coba kembali.")
+            saved = True
+            await _record_history(
+                "BAZAR_ND_DIREALISASIKAN",
+                document,
+                user,
+                items,
+                body.note,
+                {
+                    "activityType": current_activity,
+                    "activityReferenceId": source_operation.get("id", ""),
+                    "activityReferenceNo": reference_no,
+                    "operationId": realization_id,
+                },
+            )
+            return await _summarized_document(nd_id)
+        except Exception:
+            if saved:
+                await db.bazar_external_nd.update_one({"id": nd_id}, {"$pull": {"realizations": {"id": realization_id}}})
+            await db.consignment_operation_history.delete_many({"operationId": realization_id})
+            if applied_source_allocations:
+                await _rollback_source_allocations(applied_source_allocations, "realizedQty")
+            raise
 
     return await idempotent_operation(
         request,
@@ -769,7 +997,11 @@ async def settle_external_nd_with_so(
                     status_code=409,
                     detail=f"Realisasi yang belum memiliki SO untuk {source.get('name', '')} hanya {eligible:g}",
                 )
-            items.append({**source, "qty": qty})
+            items.append({
+                **source,
+                "qty": qty,
+                "realizationAllocations": _plan_realization_allocations(document, product_id, qty),
+            })
 
         so_id, now = new_id(), now_iso()
         entry = {
@@ -795,7 +1027,7 @@ async def settle_external_nd_with_so(
             body.note,
             {"soNo": so_no, "soDate": body.soDate, "operationId": so_id},
         )
-        return summarize_external_nd(await _document(nd_id))
+        return await _summarized_document(nd_id)
 
     return await idempotent_operation(
         request,
@@ -819,7 +1051,7 @@ async def cancel_external_nd(
     async def action():
         document = await _document(nd_id)
         if document.get("cancelledAt"):
-            return summarize_external_nd(document)
+            return await _attach_source_lots(document)
         if document.get("receipts") or document.get("returns") or document.get("realizations") or document.get("soDocuments"):
             raise HTTPException(
                 status_code=409,
@@ -844,7 +1076,7 @@ async def cancel_external_nd(
             body.note,
             {"operationId": f"cancel:{nd_id}"},
         )
-        return summarize_external_nd(await _document(nd_id))
+        return await _summarized_document(nd_id)
 
     return await idempotent_operation(
         request,
@@ -860,3 +1092,8 @@ async def ensure_bazar_external_nd_indexes() -> None:
     await db.bazar_external_nd.create_index([("status", 1), ("createdAt", -1)], name="bazar_external_nd_status")
     await db.bazar_external_nd.create_index("realizations.referenceNo", name="bazar_external_nd_realization_reference")
     await db.bazar_external_nd.create_index("soDocuments.soNo", name="bazar_external_nd_so_reference")
+    await db.bazar_external_nd_lots.create_index("lotNo", unique=True, name="bazar_external_nd_lot_no_unique")
+    await db.bazar_external_nd_lots.create_index(
+        [("ndId", 1), ("productId", 1), ("receiptDate", 1), ("createdAt", 1)],
+        name="bazar_external_nd_lot_fifo",
+    )
