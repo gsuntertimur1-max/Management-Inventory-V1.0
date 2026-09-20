@@ -6,14 +6,14 @@ import io
 import json
 import logging
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from bson import json_util
 from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from backend.server import JWT_SECRET, client, db, get_current_user, operational_now, require_admin
+from backend.server import JWT_SECRET, ROLE_SUPERADMIN, canonical_role, client, db, get_current_user, operational_now
 from backend.role_four_config import has_role_permission
 
 router = APIRouter(prefix="/api")
@@ -69,6 +69,12 @@ BACKUP_COLLECTIONS = [
 class MaintenanceBody(BaseModel):
     enabled: bool
     note: str = ""
+
+
+async def require_superadmin(user: dict = Depends(get_current_user)) -> dict:
+    if canonical_role(user.get("role")) != ROLE_SUPERADMIN:
+        raise HTTPException(status_code=403, detail="Hanya Superadmin yang dapat mengelola backup/recovery")
+    return user
 
 
 def _manifest_payload(manifest: dict) -> bytes:
@@ -163,7 +169,7 @@ def _parse_backup(content: bytes) -> tuple[dict, dict[str, list[dict]]]:
 
 
 @router.get("/admin/maintenance")
-async def maintenance_status(user: dict = Depends(require_admin)):
+async def maintenance_status(user: dict = Depends(require_superadmin)):
     doc = await db.settings.find_one({"_id": "app"}, {"_id": 0, "maintenanceMode": 1, "maintenanceNote": 1, "maintenanceUpdatedAt": 1, "maintenanceUpdatedBy": 1}) or {}
     return {
         "enabled": bool(doc.get("maintenanceMode", False)),
@@ -174,7 +180,7 @@ async def maintenance_status(user: dict = Depends(require_admin)):
 
 
 @router.post("/admin/maintenance")
-async def set_maintenance(body: MaintenanceBody, user: dict = Depends(require_admin)):
+async def set_maintenance(body: MaintenanceBody, user: dict = Depends(require_superadmin)):
     await db.settings.update_one(
         {"_id": "app"},
         {"$set": {
@@ -189,7 +195,7 @@ async def set_maintenance(body: MaintenanceBody, user: dict = Depends(require_ad
 
 
 @router.get("/admin/backups/export")
-async def export_backup(user: dict = Depends(require_admin)):
+async def export_backup(user: dict = Depends(require_superadmin)):
     output, manifest = await _build_backup_zip()
     stamp = operational_now().strftime("%Y%m%d_%H%M%S")
     filename = f"pepeg_backup_{stamp}.zip"
@@ -202,7 +208,7 @@ async def export_backup(user: dict = Depends(require_admin)):
 
 
 @router.post("/admin/backups/validate")
-async def validate_backup(file: UploadFile = File(...), user: dict = Depends(require_admin)):
+async def validate_backup(file: UploadFile = File(...), user: dict = Depends(require_superadmin)):
     content = await file.read(MAX_BACKUP_BYTES + 1)
     manifest, collections = _parse_backup(content)
     return {
@@ -220,7 +226,7 @@ async def validate_backup(file: UploadFile = File(...), user: dict = Depends(req
 async def restore_backup(
     file: UploadFile = File(...),
     confirmation: str = Header(default="", alias="X-PEPEG-RESTORE-CONFIRM"),
-    user: dict = Depends(require_admin),
+    user: dict = Depends(require_superadmin),
 ):
     if confirmation != "RESTORE_PEPEG":
         raise HTTPException(status_code=400, detail="Header konfirmasi restore tidak valid")
@@ -267,11 +273,11 @@ async def restore_backup(
 
 
 @router.get("/admin/recovery-status")
-async def recovery_status(user: dict = Depends(require_admin)):
+async def recovery_status(user: dict = Depends(require_superadmin)):
     now = datetime.now(timezone.utc)
     stale_processing = await db.operation_requests.count_documents({
         "status": "PROCESSING",
-        "createdAt": {"$lt": now.replace(microsecond=0) - __import__("datetime").timedelta(minutes=10)},
+        "createdAt": {"$lt": now.replace(microsecond=0) - timedelta(minutes=10)},
     })
     open_postcommit = await db.operational_postcommit_issues.count_documents({"status": "OPEN"})
     active_locks = await db.operation_locks.count_documents({"expiresAt": {"$gt": now}})
