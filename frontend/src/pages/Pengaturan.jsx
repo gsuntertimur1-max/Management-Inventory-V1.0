@@ -3,10 +3,11 @@ import { Link } from 'react-router-dom';
 import { Save, Building2, Bell, Palette, Database, Plus, Trash2, Warehouse, Link2, MapPin, CalendarDays } from 'lucide-react';
 import { DEFAULT_CATEGORIES } from '../mock';
 import { useData } from '../context/DataContext';
-import { apiError } from '../lib/api';
+import api, { apiError } from '../lib/api';
 import { toast } from 'sonner';
 import { DEFAULT_WAREHOUSES, warehousesFromSettings } from '../lib/warehouses';
 import ProductionSafetyPanel from '../components/ProductionSafetyPanel';
+import { canonicalRole } from '../lib/permissions';
 
 const Toggle = ({ on, onClick, disabled = false }) => (
   <button
@@ -34,6 +35,7 @@ const DEFAULT_LOCATIONS = [
 const Pengaturan = () => {
   const { user, settings, updateSettings, canManageSettings, theme, setTheme } = useData();
   const isAdmin = canManageSettings;
+  const isSuperadmin = canonicalRole(user?.role) === 'Administrator';
   const [warehouse, setWarehouse] = useState(settings?.warehouse || 'Gudang Sunter Timur I & II');
   const [address, setAddress] = useState(settings?.address || 'Jl. Sunter Agung, Jakarta Utara');
   const [warehouseHead, setWarehouseHead] = useState(settings?.warehouseHead || 'Irsa Maulian Nugraha');
@@ -47,6 +49,7 @@ const Pengaturan = () => {
   const [savingWarehouses, setSavingWarehouses] = useState(false);
   const [savingLocations, setSavingLocations] = useState(false);
   const [savingHolidays, setSavingHolidays] = useState(false);
+  const [resettingOperational, setResettingOperational] = useState(false);
 
   useEffect(() => {
     setWarehouse(settings?.warehouse || 'Gudang Sunter Timur I & II');
@@ -85,6 +88,56 @@ const Pengaturan = () => {
       toast.error(apiError(e));
     } finally {
       setSavingProfile(false);
+    }
+  };
+
+  const resetOperationalData = async () => {
+    if (!isSuperadmin || resettingOperational) return;
+
+    if (!window.confirm('Reset Operasional akan menghapus seluruh stok, transaksi, dokumen, tumpukan, lot/FEFO, Bazar/Ecom, biaya, opname, dan nomor urut. Master SKU, supplier, user, gudang/lokasi, template Paket, serta konfigurasi marketplace tetap dipertahankan. Pastikan Backup PEPEG sudah diunduh. Lanjutkan pemeriksaan?')) return;
+
+    setResettingOperational(true);
+    try {
+      const { data: preview } = await api.get('/admin/reset-operational/preview');
+      if (!preview?.maintenanceMode) {
+        toast.error('Aktifkan Maintenance Mode pada Production Safety & Recovery terlebih dahulu.');
+        return;
+      }
+      if (Number(preview?.activeLoads || 0) > 0 || Number(preview?.processingRequests || 0) > 0 || Number(preview?.activeLocks || 0) > 0) {
+        toast.error(`Reset belum aman: ${preview?.activeLoads || 0} pemuatan aktif, ${preview?.processingRequests || 0} request diproses, ${preview?.activeLocks || 0} lock aktif.`);
+        return;
+      }
+
+      const keyCounts = preview?.keyCounts || {};
+      const confirmation = window.prompt(
+        'PEMERIKSAAN RESET OPERASIONAL\n\n' +
+        `Master SKU dipertahankan: ${preview?.productsPreserved ?? 0}\n` +
+        `Supplier dipertahankan: ${preview?.suppliersPreserved ?? 0}\n` +
+        `Transaksi akan dihapus: ${keyCounts.transactions ?? 0}\n` +
+        `Pemuatan akan dihapus: ${keyCounts.outbound_loads ?? 0}\n` +
+        `Surat Jalan akan dihapus: ${keyCounts.surat_jalan ?? 0}\n` +
+        `Tumpukan aktif akan dikosongkan: ${keyCounts.stack_allocations ?? 0}\n\n` +
+        'Ketik RESET OPERASIONAL untuk melanjutkan.'
+      );
+      if (confirmation !== 'RESET OPERASIONAL') {
+        toast.info('Reset Operasional dibatalkan.');
+        return;
+      }
+
+      if (!window.confirm('KONFIRMASI TERAKHIR: seluruh saldo stok akan menjadi 0 dan data operasional tidak dapat dikembalikan kecuali dari backup. Lanjutkan?')) return;
+
+      const { data } = await api.post('/admin/reset-operational', {}, {
+        headers: {
+          'X-PEPEG-RESET-CONFIRM': 'RESET_OPERASIONAL_PEPEG',
+          'X-PEPEG-BACKUP-CONFIRM': 'BACKUP_TERSIMPAN',
+        },
+      });
+      toast.success(`Reset Operasional selesai. ${data?.productsPreserved ?? 0} master SKU tetap dipertahankan. Maintenance Mode tetap aktif.`);
+      window.setTimeout(() => window.location.reload(), 900);
+    } catch (e) {
+      toast.error(apiError(e));
+    } finally {
+      setResettingOperational(false);
     }
   };
 
@@ -393,11 +446,26 @@ const Pengaturan = () => {
             <h2 className="font-display text-lg font-bold">Data</h2>
           </div>
           <div className="space-y-3">
-            {isAdmin ? (
-              <div data-testid="reset-data-locked" className="w-full p-3 rounded-lg bg-[#0b0f17] border border-[#243044] text-sm">
-                <div className="font-semibold text-[#fbbf24]">Reset total dikunci untuk produksi</div>
-                <p className="text-xs text-[#8b93a1] mt-1">Reset tidak dapat dijalankan dari tombol biasa. Untuk go-live/reset total gunakan Maintenance Mode, backup terlebih dahulu, lalu prosedur reset khusus Superadmin.</p>
-              </div>
+            {isSuperadmin ? (
+              <>
+                <button
+                  type="button"
+                  data-testid="reset-operational-btn"
+                  onClick={resetOperationalData}
+                  disabled={resettingOperational}
+                  className="w-full text-left p-3 rounded-lg bg-[#2a1408]/30 border border-[#92400e] hover:border-[#f59e0b] transition-colors text-sm disabled:opacity-50"
+                >
+                  <div className="font-semibold text-[#fbbf24]">{resettingOperational ? 'Memproses Reset Operasional…' : 'Reset Data Operasional — Pertahankan Master SKU'}</div>
+                  <p className="text-xs text-[#d6b873] mt-1">Mengosongkan seluruh saldo stok dan data transaksi. Master SKU/produk, supplier, user, gudang/lokasi, template Paket, dan konfigurasi marketplace tetap ada.</p>
+                  <p className="text-[10px] text-[#8b93a1] mt-2">Wajib: unduh Backup PEPEG dan aktifkan Maintenance Mode terlebih dahulu.</p>
+                </button>
+                <div data-testid="reset-data-locked" className="w-full p-3 rounded-lg bg-[#0b0f17] border border-[#243044] text-sm">
+                  <div className="font-semibold text-[#f87171]">Reset Total termasuk Master SKU tetap dikunci</div>
+                  <p className="text-xs text-[#8b93a1] mt-1">Fitur di atas hanya Reset Operasional. SKU dan master tidak ikut dihapus.</p>
+                </div>
+              </>
+            ) : isAdmin ? (
+              <div className="w-full p-3 rounded-lg bg-[#0b0f17] border border-[#243044] text-sm text-[#8b93a1]">Reset Operasional hanya dapat dilakukan oleh Superadmin.</div>
             ) : (
               <p className="text-sm text-[#6b7688] p-3">Reset produksi dikunci.</p>
             )}
