@@ -33,6 +33,7 @@ const NAV_GROUPS = [
       { to: '/temuan-kerusakan', label: 'Temuan Kerusakan', icon: TriangleAlert, permission: 'operations' },
       { to: '/retur-pemasok', label: 'Retur / Ganti Pemasok', icon: RefreshCcw, permission: 'operations' },
       { to: '/pengeluaran', label: 'Pengeluaran', icon: Send, permission: 'outboundPage' },
+      { to: '/monitoring-so', label: 'Monitoring SO', icon: ClipboardList, permission: 'outboundPage' },
       { to: '/koreksi-operasional', label: 'Koreksi Operasional', icon: ShieldCheck, permission: 'corrections' },
       { to: '/antrian', label: 'Layar Antrian', icon: MonitorSmartphone, permission: 'mainInventory' },
     ],
