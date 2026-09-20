@@ -1189,13 +1189,15 @@ async def complete_outbound_load(load_id: str, body: LoadingCompletionInput | No
             "documents": load.get("documents", [load.get("ref", "")]),
             "items": [
                 {
+                    "productId": item.get("productId", ""),
                     "name": item.get("name", ""),
                     "sku": item.get("sku", ""),
                     "channel": item.get("channel", ""),
                     "qty": float(item.get("qty", 0) or 0),
                     "unit": item.get("unit", ""),
                     "berat": float(item.get("berat", 0) or 0),
-                    "location": item.get("location", ""),
+                    "stackCode": item.get("stackCode", ""),
+                    "location": item.get("stackCode") or item.get("location", ""),
                     "documentNo": item.get("documentNo", load.get("ref", "")),
                     "secondary": item.get("secondary", ""),
                     "secondaryQty": float(item.get("secondaryQty", 0) or 0),
