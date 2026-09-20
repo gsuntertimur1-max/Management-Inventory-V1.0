@@ -237,7 +237,10 @@ export const DataProvider = ({ children }) => {
     // Auth utama memakai cookie HttpOnly. Bearer lama tetap dibaca interceptor
     // selama masa transisi, tetapi tidak lagi menjadi syarat untuk memulihkan sesi.
     api.get('/auth/me')
-      .then((r) => setUser(r.data))
+      .then((r) => {
+        setUser(r.data);
+        setToken(null);
+      })
       .catch(() => setToken(null))
       .finally(() => setChecking(false));
   }, []);
