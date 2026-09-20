@@ -32,7 +32,7 @@ const DEFAULT_LOCATIONS = [
 ];
 
 const Pengaturan = () => {
-  const { user, settings, updateSettings, resetData, canManageSettings, theme, setTheme } = useData();
+  const { user, settings, updateSettings, canManageSettings, theme, setTheme } = useData();
   const isAdmin = canManageSettings;
   const [warehouse, setWarehouse] = useState(settings?.warehouse || 'Gudang Sunter Timur I & II');
   const [address, setAddress] = useState(settings?.address || 'Jl. Sunter Agung, Jakarta Utara');
@@ -394,23 +394,12 @@ const Pengaturan = () => {
           </div>
           <div className="space-y-3">
             {isAdmin ? (
-              <button
-                data-testid="reset-data-btn"
-                onClick={async () => {
-                  if (!window.confirm('Reset seluruh data operasional? Semua produk, supplier, transaksi, pengeluaran, surat jalan, tumpukan, riwayat perawatan, dan nomor urut akan dihapus. Master hanya dimuat dari CSV seed bila tersedia.')) return;
-                  try {
-                    await resetData();
-                    toast.success('Data operasional direset. Import master CSV baru bila daftar SKU belum tersedia.');
-                  } catch (e) {
-                    toast.error(apiError(e));
-                  }
-                }}
-                className="w-full text-left p-3 rounded-lg bg-[#0b0f17] border border-[#151d28] hover:border-[#ef4444] transition-colors text-sm text-[#f87171]"
-              >
-                Reset seluruh data operasional & muat ulang master dari CSV seed
-              </button>
+              <div data-testid="reset-data-locked" className="w-full p-3 rounded-lg bg-[#0b0f17] border border-[#243044] text-sm">
+                <div className="font-semibold text-[#fbbf24]">Reset total dikunci untuk produksi</div>
+                <p className="text-xs text-[#8b93a1] mt-1">Reset tidak dapat dijalankan dari tombol biasa. Untuk go-live/reset total gunakan Maintenance Mode, backup terlebih dahulu, lalu prosedur reset khusus Superadmin.</p>
+              </div>
             ) : (
-              <p className="text-sm text-[#6b7688] p-3">Hanya Administrator yang dapat mereset data.</p>
+              <p className="text-sm text-[#6b7688] p-3">Reset produksi dikunci.</p>
             )}
           </div>
         </div>
