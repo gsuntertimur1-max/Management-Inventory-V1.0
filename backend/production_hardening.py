@@ -59,6 +59,7 @@ BACKUP_COLLECTIONS = [
     "bazar_external_nd_lots",
     "ecom_orders",
     "marketplace_accounts",
+    "marketplace_tokens",
     "marketplace_sku_mappings",
     "marketplace_sync_logs",
     "marketplace_webhook_events",
