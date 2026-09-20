@@ -151,7 +151,7 @@ const BazarNDExternal = () => {
 
   return <div className="space-y-6">
     <div><div className="label-mono mb-2">Operasional Bazar · Gudang Lain</div><h1 className="font-display text-3xl sm:text-4xl font-bold">Register ND & Rekonsiliasi SO</h1></div>
-    <div className="rounded-xl border border-[#2563eb]/30 bg-[#0d1726] px-4 py-3 text-sm text-[#bfdbfe]">Khusus barang dari gudang di luar GST I & II. Stok bertambah saat fisik diterima; SO dicatat setelah penjualan/retur dan tidak mengurangi stok untuk kedua kali.</div>
+    <div className="rounded-xl border border-[#2563eb]/30 bg-[#0d1726] px-4 py-3 text-sm text-[#bfdbfe]">Khusus barang dari gudang di luar GST I & II. Setiap penerimaan Baik membentuk lot sumber ND; retur, realisasi, dan SO dapat ditelusuri kembali ke lot tersebut. SO tetap administratif dan tidak mengurangi stok untuk kedua kali.</div>
 
     <section className="card-surface p-5 space-y-3">
       <div className="font-semibold flex items-center gap-2"><FilePlus2 size={17}/> Register ND dari Gudang Lain</div>
@@ -183,7 +183,25 @@ const BazarNDExternal = () => {
         {!documents.length && <div className="text-sm text-[#8b93a1]">Belum ada ND dari gudang lain.</div>}
         {documents.map((doc) => <div key={doc.id} className="border border-[#243044] rounded-xl p-4">
           <div className="flex flex-wrap justify-between gap-2"><div><b>{doc.ndNo}</b> · {doc.originWarehouse}<div className="text-xs text-[#8b93a1] mt-1">{doc.ndDate} · Tujuan {doc.activityType.replaceAll('_', ' ')}</div></div><span className="text-xs px-2.5 py-1 rounded-full bg-[#2563eb]/15 text-[#93c5fd]">{statusLabel(doc.status)}</span></div>
-          <div className="mt-3 overflow-x-auto"><table className="w-full text-xs"><thead className="text-[#8b93a1]"><tr><th className="text-left py-1">Komoditi</th><th>ND</th><th>Diterima Baik</th><th>Rusak</th><th>Retur Asal</th><th>Realisasi</th><th>SO</th><th>Saldo Fisik</th><th>Siap SO</th></tr></thead><tbody>{(doc.summaryItems || []).map((row) => <tr key={row.productId} className="border-t border-[#1f2937]"><td className="py-2">{row.name}</td><td className="text-center">{row.ordered}</td><td className="text-center">{row.good}</td><td className="text-center">{row.damaged}</td><td className="text-center">{row.returned}</td><td className="text-center">{row.realized}</td><td className="text-center">{row.settled}</td><td className="text-center font-bold text-[#fbbf24]">{row.physicalBalance}</td><td className="text-center font-bold text-[#86efac]">{row.eligibleSoQty}</td></tr>)}</tbody></table></div>
+          <div className="mt-3 overflow-x-auto"><table className="w-full text-xs"><thead className="text-[#8b93a1]"><tr><th className="text-left py-1">Komoditi</th><th>ND</th><th>Diterima Baik</th><th>Rusak</th><th>Retur Asal</th><th>Realisasi</th><th>SO</th><th>Saldo Fisik</th><th>Siap SO</th><th>Lot Aktif</th></tr></thead><tbody>{(doc.summaryItems || []).map((row) => <tr key={row.productId} className="border-t border-[#1f2937]"><td className="py-2">{row.name}</td><td className="text-center">{row.ordered}</td><td className="text-center">{row.good}</td><td className="text-center">{row.damaged}</td><td className="text-center">{row.returned}</td><td className="text-center">{row.realized}</td><td className="text-center">{row.settled}</td><td className="text-center font-bold text-[#fbbf24]">{row.physicalBalance}</td><td className="text-center font-bold text-[#86efac]">{row.eligibleSoQty}</td><td className="text-center text-[#93c5fd]">{row.sourceLotCount || 0} · sisa {row.sourceLotRemaining || 0}</td></tr>)}</tbody></table></div>
+          {(doc.sourceLots || []).length > 0 && <details className="mt-3 rounded-lg border border-[#243044] bg-[#0b0f17]">
+            <summary className="cursor-pointer px-3 py-2 text-xs font-semibold text-[#93c5fd]">Trace Lot Sumber ND ({doc.sourceLots.length})</summary>
+            <div className="overflow-x-auto px-3 pb-3">
+              <table className="w-full text-[11px]">
+                <thead className="text-[#8b93a1]"><tr><th className="text-left py-2">Lot</th><th className="text-left">Komoditi</th><th>Tgl Terima</th><th>Lokasi Awal</th><th>Diterima</th><th>Retur</th><th>Realisasi</th><th>Sisa</th></tr></thead>
+                <tbody>{doc.sourceLots.map((lot) => <tr key={lot.id} className="border-t border-[#1f2937]">
+                  <td className="py-2 font-mono text-[#93c5fd] whitespace-nowrap">{lot.lotNo}</td>
+                  <td className="pr-3 min-w-[220px]">{lot.name}</td>
+                  <td className="text-center whitespace-nowrap">{lot.receiptDate}</td>
+                  <td className="text-center font-mono whitespace-nowrap">{lot.stackCode || '—'}</td>
+                  <td className="text-center">{lot.receivedQty}</td>
+                  <td className="text-center">{lot.returnedQty}</td>
+                  <td className="text-center">{lot.realizedQty}</td>
+                  <td className="text-center font-bold text-[#fbbf24]">{lot.remainingQty}</td>
+                </tr>)}</tbody>
+              </table>
+            </div>
+          </details>}
           <div className="flex flex-wrap gap-2 mt-3">
             {!['SELESAI','DIBATALKAN'].includes(doc.status) && (doc.summaryItems || []).some((row) => row.remainingToReceive > 0) && <button onClick={() => openAction('receive', doc)} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#2563eb]/50 text-[#93c5fd] text-xs"><ArrowDownToLine size={13}/> Terima Fisik</button>}
             {!['SELESAI','DIBATALKAN'].includes(doc.status) && (doc.summaryItems || []).some((row) => row.physicalBalance > 0) && <button onClick={() => openAction('return', doc)} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#f59e0b]/50 text-[#fbbf24] text-xs"><RotateCcw size={13}/> Retur ke Gudang Asal</button>}
@@ -197,7 +215,9 @@ const BazarNDExternal = () => {
 
     {action && <div className="fixed inset-0 z-[90] bg-black/75 flex items-center justify-center p-4"><div className="card-surface w-full max-w-3xl p-6 max-h-[90vh] overflow-y-auto">
       <h2 className="font-display text-xl font-bold">{action.type === 'receive' ? 'Penerimaan Fisik' : action.type === 'return' ? 'Retur ke Gudang Asal' : action.type === 'realize' ? 'Rekonsiliasi Realisasi' : 'Pencatatan SO Akhir'} · {action.document.ndNo}</h2>
-      <p className="text-xs text-[#8b93a1] mt-1 mb-4">Asal {action.document.originWarehouse}. {action.type === 'so' ? 'SO hanya menyelesaikan saldo administrasi; stok tidak dikurangi lagi.' : ''}</p>
+      <p className="text-xs text-[#8b93a1] mt-1 mb-2">Asal {action.document.originWarehouse}. {action.type === 'so' ? 'SO hanya menyelesaikan saldo administrasi; stok tidak dikurangi lagi.' : ''}</p>
+      {['return', 'realize'].includes(action.type) && <div className="mb-4 rounded-lg border border-[#2563eb]/30 bg-[#0d1726] px-3 py-2 text-xs text-[#bfdbfe]">Trace sumber dialokasikan otomatis FIFO dari lot penerimaan ND ini. Sistem tidak dapat mengambil saldo dari ND lain.</div>}
+      {action.type === 'so' && <div className="mb-4 rounded-lg border border-[#22c55e]/30 bg-[#052e16]/20 px-3 py-2 text-xs text-[#bbf7d0]">SO akan ditautkan ke realisasi Bazar/Paket yang belum terselesaikan, termasuk lot sumber asalnya.</div>}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
         <input type="date" className={inputCls} value={actionMeta.date} onChange={(e) => setActionMeta({ ...actionMeta, date: e.target.value })}/>
         {action.type === 'receive' && <input className={inputCls} placeholder="No. kendaraan" value={actionMeta.vehicleNo} onChange={(e) => setActionMeta({ ...actionMeta, vehicleNo: e.target.value })}/>}
