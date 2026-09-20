@@ -11,6 +11,7 @@ const statusClass = (status) => ({
   SUBMITTED: 'bg-[#78350f]/30 text-[#fcd34d] border-[#78350f]',
   APPROVED: 'bg-[#14532d]/25 text-[#86efac] border-[#14532d]',
   REJECTED: 'bg-[#7f1d1d]/30 text-[#fca5a5] border-[#7f1d1d]',
+  CANCELLED: 'bg-[#374151]/30 text-[#cbd5e1] border-[#4b5563]',
 }[status] || 'bg-[#1a222e] text-[#aab4c4] border-[#242f3d]');
 
 const lotStatusClass = (status) => ({
@@ -134,6 +135,20 @@ const OpnameGudang = () => {
     } catch (e) { toast.error(apiError(e)); } finally { setSaving(false); }
   };
 
+  const cancelDraft = async () => {
+    if (!selected || selected.status !== 'DRAFT' || saving) return;
+    const defaultNote = selected.snapshotStale ? 'Snapshot kedaluwarsa karena stok berubah setelah opname dibuat' : 'Draft dibatalkan';
+    const note = window.prompt('Alasan pembatalan draft opname:', defaultNote);
+    if (!note?.trim()) return;
+    if (!window.confirm(`Batalkan ${selected.no}? Tidak ada stok yang akan berubah.`)) return;
+    setSaving(true);
+    try {
+      const response = await api.post(`/stock-opnames/${selected.id}/cancel`, { note: note.trim() });
+      replaceOpname(response.data);
+      toast.success('Draft stock opname dibatalkan tanpa mengubah stok.');
+    } catch (e) { toast.error(apiError(e)); } finally { setSaving(false); }
+  };
+
   const reject = async () => {
     if (!selected || selected.status !== 'SUBMITTED' || saving) return;
     const note = window.prompt('Alasan penolakan stock opname:');
@@ -211,12 +226,14 @@ const OpnameGudang = () => {
 
       <div className="grid grid-cols-1 xl:grid-cols-[310px_1fr] gap-5">
         <div className="card-surface p-3 max-h-[720px] overflow-y-auto">
-          {loading ? <div className="p-6 text-center text-[#8b93a1]">Memuat...</div> : opnames.length === 0 ? <div className="p-6 text-center text-[#8b93a1]">Belum ada stock opname.</div> : <div className="space-y-2">{opnames.map((item) => <button key={item.id} onClick={() => setSelectedId(item.id)} className={`w-full text-left rounded-xl border p-3 ${selectedId === item.id ? 'border-[#2563eb] bg-[#2563eb]/10' : 'border-[#1a222e] bg-[#0b0f17]'}`}><div className="flex justify-between gap-2"><span className="font-mono text-xs font-semibold">{item.no}</span><span className={`text-[9px] border rounded-full px-2 py-0.5 ${statusClass(item.status)}`}>{item.status}</span></div><div className="text-sm font-semibold mt-2">GBB {item.warehouse}</div><div className="text-[10px] text-[#6b7688] mt-1">{(item.lines || []).length} tumpukan/produk · {item.createdBy}</div>{item.lotSyncStatus === 'RECONCILIATION_REQUIRED' && <div className="mt-2 text-[9px] text-[#fbbf24]">Lot perlu rekonsiliasi</div>}</button>)}</div>}
+          {loading ? <div className="p-6 text-center text-[#8b93a1]">Memuat...</div> : opnames.length === 0 ? <div className="p-6 text-center text-[#8b93a1]">Belum ada stock opname.</div> : <div className="space-y-2">{opnames.map((item) => <button key={item.id} onClick={() => setSelectedId(item.id)} className={`w-full text-left rounded-xl border p-3 ${selectedId === item.id ? 'border-[#2563eb] bg-[#2563eb]/10' : 'border-[#1a222e] bg-[#0b0f17]'}`}><div className="flex justify-between gap-2"><span className="font-mono text-xs font-semibold">{item.no}</span><span className={`text-[9px] border rounded-full px-2 py-0.5 ${statusClass(item.status)}`}>{item.status}</span></div><div className="text-sm font-semibold mt-2">GBB {item.warehouse}</div><div className="text-[10px] text-[#6b7688] mt-1">{(item.lines || []).length} tumpukan/produk · {item.createdBy}</div>{item.snapshotStale && <div className="mt-2 text-[9px] text-[#f87171]">Snapshot kedaluwarsa · batalkan & buat ulang</div>}{item.lotSyncStatus === 'RECONCILIATION_REQUIRED' && <div className="mt-2 text-[9px] text-[#fbbf24]">Lot perlu rekonsiliasi</div>}</button>)}</div>}
         </div>
 
         <div className="card-surface p-5 min-w-0">
           {!selected ? <div className="py-16 text-center text-[#8b93a1]">Pilih stock opname di sebelah kiri.</div> : <>
             <div className="flex flex-wrap items-start justify-between gap-3 mb-4"><div><div className="flex flex-wrap items-center gap-2"><h2 className="font-display text-xl font-bold">{selected.no}</h2><span className={`text-[10px] border rounded-full px-2 py-1 ${statusClass(selected.status)}`}>{selected.status}</span>{selected.status === 'APPROVED' && selected.lotSyncStatus && <span className={`text-[10px] border rounded-full px-2 py-1 ${lotStatusClass(selected.lotSyncStatus)}`}>LOT: {selected.lotSyncStatus}</span>}</div><p className="text-xs text-[#8b93a1] mt-1">GBB {selected.warehouse} · dibuat {selected.createdBy}</p></div><div className="flex gap-2"><div className="rounded-lg bg-[#0b0f17] px-3 py-2 text-xs"><span className="text-[#8b93a1]">Baris diperiksa</span><div className="font-mono text-lg font-bold">{(selected.lines || []).length}</div></div><div className="rounded-lg bg-[#0b0f17] px-3 py-2 text-xs"><span className="text-[#8b93a1]">Baris selisih</span><div className={`font-mono text-lg font-bold ${differenceCount ? 'text-[#fbbf24]' : 'text-[#4ade80]'}`}>{differenceCount}</div></div></div></div>
+
+            {selected.snapshotStale && <div className="mb-4 rounded-xl border border-[#7f1d1d] bg-[#2a0f14] p-4 flex items-start gap-3"><AlertTriangle size={18} className="text-[#f87171] shrink-0 mt-0.5" /><div><div className="font-semibold text-[#fecaca]">Snapshot opname sudah kedaluwarsa</div><p className="text-xs text-[#fca5a5] mt-1">Saldo sistem berubah setelah snapshot dibuat. Jangan ajukan opname ini. Batalkan draft lalu buat snapshot baru agar transaksi terbaru tidak tertimpa.</p></div></div>}
 
             <div className="overflow-x-auto max-h-[560px]">
               <table className="w-full text-sm tbl"><thead className="sticky top-0 bg-[#0d121b]"><tr className="text-left border-b border-[#1a222e]">{['Tumpukan', 'Produk', 'Sistem', 'Fisik', 'Selisih', 'Saluran', 'Catatan'].map((h) => <th key={h} className="py-2.5 pr-3 whitespace-nowrap">{h}</th>)}</tr></thead><tbody>{(selected.lines || []).map((line) => {
@@ -235,10 +252,11 @@ const OpnameGudang = () => {
             {lotReconcile && <div className="mt-5 rounded-xl border border-[#2563eb] bg-[#0d1728] p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="label-mono text-[9px]">Manual Lot Reconciliation</div><h3 className="font-display text-lg font-bold mt-1">{lotReconcile.row.product} · {lotReconcile.row.stackCode}</h3><p className="text-xs text-[#8fb8ef] mt-1">Selisih yang perlu dialokasikan: <b>{formatNum(lotReconcile.row.qty)} {lotReconcile.row.unit}</b>. Isi hanya lot yang secara fisik terbukti berkurang.</p></div><button type="button" onClick={() => setLotReconcile(null)} className="text-[#93c5fd]">×</button></div><div className="overflow-x-auto mt-4"><table className="w-full text-sm tbl"><thead><tr className="text-left border-b border-[#1f3657]">{['Lot', 'Expired', 'Sisa lot', 'Kurangi karena opname'].map((h) => <th key={h} className="py-2 pr-3 whitespace-nowrap">{h}</th>)}</tr></thead><tbody>{(lotReconcile.lots || []).map((lot) => <tr key={lot.id} className="border-b border-[#15243a]"><td className="py-2.5 pr-3"><div className="font-mono text-xs">{lot.lotCode}</div><div className="text-[9px] text-[#6b7688]">{lot.sourceRef || '—'}</div></td><td className="py-2.5 pr-3 font-mono text-xs">{lot.exp || 'Tanpa expired'}</td><td className="py-2.5 pr-3 font-mono">{formatNum(lot.remainingQty)} {lot.unit}</td><td className="py-2.5 pr-3"><input type="number" min="0" max={Number(lot.remainingQty || 0)} step="any" value={lotReconcile.quantities?.[lot.id] ?? ''} onChange={(e) => patchLotQty(lot.id, e.target.value)} className="w-36 bg-[#0b0f17] border border-[#2b3b52] rounded px-2 py-1.5 font-mono" /></td></tr>)}</tbody></table></div><div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 items-end mt-4"><div><label className="text-xs text-[#8fb8ef] block mb-1">Catatan / dasar pemeriksaan batch</label><input value={lotReconcile.note || ''} onChange={(e) => setLotReconcile((prev) => ({ ...prev, note: e.target.value }))} placeholder="Contoh: hasil hitung batch fisik / kartu tumpukan" className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2 text-sm" /></div><div className="text-right"><div className={`font-mono text-sm ${reconcileTotal > Number(lotReconcile.row.qty || 0) ? 'text-[#ef4444]' : 'text-[#60a5fa]'}`}>{formatNum(reconcileTotal)} / {formatNum(lotReconcile.row.qty)} {lotReconcile.row.unit}</div><button disabled={saving || reconcileTotal <= 0 || reconcileTotal > Number(lotReconcile.row.qty || 0) + 0.000001} onClick={submitLotReconcile} className="mt-2 px-4 py-2.5 rounded-lg bg-[#2563eb] text-white text-sm font-semibold disabled:opacity-50">Simpan Rekonsiliasi Lot</button></div></div></div>}
 
             <div className="flex flex-wrap justify-end gap-2 pt-4 border-t border-[#1a222e] mt-4">
-              {selected.status === 'DRAFT' && canEdit && <><button disabled={saving} onClick={saveDraft} className="px-4 py-2 rounded-lg border border-[#2a3443] text-sm inline-flex items-center gap-2"><Save size={15} /> Simpan Draft</button><button disabled={saving} onClick={submitOpname} className="px-4 py-2 rounded-lg bg-[#2563eb] text-white text-sm font-semibold inline-flex items-center gap-2"><Send size={15} /> Ajukan</button></>}
+              {selected.status === 'DRAFT' && canEdit && <><button disabled={saving} onClick={cancelDraft} className="px-4 py-2 rounded-lg border border-[#7f1d1d] text-[#fca5a5] text-sm inline-flex items-center gap-2"><XCircle size={15} /> Batalkan Draft</button><button disabled={saving || selected.snapshotStale} onClick={saveDraft} className="px-4 py-2 rounded-lg border border-[#2a3443] text-sm inline-flex items-center gap-2 disabled:opacity-50"><Save size={15} /> Simpan Draft</button><button disabled={saving || selected.snapshotStale} onClick={submitOpname} className="px-4 py-2 rounded-lg bg-[#2563eb] text-white text-sm font-semibold inline-flex items-center gap-2 disabled:opacity-50"><Send size={15} /> Ajukan</button></>}
               {selected.status === 'SUBMITTED' && canApprove && <><button disabled={saving} onClick={reject} className="px-4 py-2 rounded-lg border border-[#7f1d1d] text-[#fca5a5] text-sm inline-flex items-center gap-2"><XCircle size={15} /> Tolak</button><button disabled={saving} onClick={approve} className="px-4 py-2 rounded-lg bg-[#15803d] text-white text-sm font-semibold inline-flex items-center gap-2"><CheckCircle2 size={15} /> Setujui & Adjustment</button></>}
               {selected.status === 'APPROVED' && <div className="text-xs text-[#86efac]">Disetujui oleh {selected.approvedBy} · adjustment operation {selected.adjustmentOperationId || '—'}</div>}
               {selected.status === 'REJECTED' && <div className="text-xs text-[#fca5a5]">Ditolak oleh {selected.rejectedBy}: {selected.rejectionNote || '—'}</div>}
+              {selected.status === 'CANCELLED' && <div className="text-xs text-[#cbd5e1]">Dibatalkan oleh {selected.cancelledBy}: {selected.cancellationNote || '—'}</div>}
             </div>
           </>}
         </div>
