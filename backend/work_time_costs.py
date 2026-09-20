@@ -75,6 +75,7 @@ def handling_fee(
     holiday = bool(holiday_override) if holiday_override is not None else when.weekday() >= 5
 
     components = {"labor": 0.0, "daily": 0.0, "warehouse": 0.0}
+    breakdown = {}
     keys = {"labor": "Labor", "daily": "Daily", "warehouse": "Warehouse"}
     for target, suffix in keys.items():
         base = float(product.get(f"{prefix}Fee{suffix}", 0) or 0) * qty
@@ -85,16 +86,33 @@ def handling_fee(
             if holiday and overtime_qty > 0
             else 0.0
         )
-        components[target] = base + overtime + holiday_fee + holiday_overtime
+        component_total = base + overtime + holiday_fee + holiday_overtime
+        components[target] = component_total
+        breakdown[target] = {
+            "base": base,
+            "overtime": overtime,
+            "holiday": holiday_fee,
+            "holidayOvertime": holiday_overtime,
+            "total": component_total,
+        }
 
     mode = str(charge_mode_override or product.get(f"{prefix}FeeChargeMode") or "TIDAK_ADA").strip().upper()
     total = sum(components.values())
+    base_total = sum(row["base"] for row in breakdown.values())
+    overtime_total = sum(row["overtime"] for row in breakdown.values())
+    holiday_total = sum(row["holiday"] for row in breakdown.values())
+    holiday_overtime_total = sum(row["holidayOvertime"] for row in breakdown.values())
     work_status = "NORMAL" if overtime_qty <= 1e-9 else "LEMBUR_PENUH" if regular_qty <= 1e-9 else "LEMBUR_PARSIAL"
     return {
         "mode": mode,
         **components,
         "total": total,
         "chargeable": total if mode == payer_mode else 0.0,
+        "breakdown": breakdown,
+        "baseTotal": base_total,
+        "overtimeTotal": overtime_total,
+        "holidayTotal": holiday_total,
+        "holidayOvertimeTotal": holiday_overtime_total,
         "overtime": overtime_qty > 1e-9,
         "holiday": holiday,
         "regularQty": regular_qty,
