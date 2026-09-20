@@ -11,6 +11,8 @@ from pydantic import BaseModel, Field
 from backend.server import db, get_current_user, new_id, normalize_channel, now_iso
 from backend.role_four_config import has_role_permission, role_destination
 import backend.consignment_operations as operations
+import backend.consignment as consignment_module
+from backend.operational_guards import operation_guard, lock_keys
 
 router = APIRouter(prefix="/api")
 ECOM = operations.ECOM
@@ -479,7 +481,7 @@ async def _normalized_items(account_id: str, items: list[NormalizedMarketplaceIt
     return result
 
 
-async def _apply_order_created(account: dict, body: NormalizedMarketplaceEvent) -> dict:
+async def _apply_order_created(account: dict, body: NormalizedMarketplaceEvent, normalized_items: list[dict] | None = None) -> dict:
     existing = await db.ecom_orders.find_one(
         {"marketplaceAccountId": body.accountId, "orderNo": body.orderNo},
         {"_id": 0},
@@ -487,7 +489,7 @@ async def _apply_order_created(account: dict, body: NormalizedMarketplaceEvent) 
     if existing:
         return existing
 
-    items = await _normalized_items(body.accountId, body.items)
+    items = normalized_items if normalized_items is not None else await _normalized_items(body.accountId, body.items)
     if not items:
         raise HTTPException(status_code=400, detail="Order tidak memiliki item")
 
@@ -551,51 +553,130 @@ async def _apply_status_event(account: dict, body: NormalizedMarketplaceEvent) -
         raise HTTPException(status_code=409, detail=f"Status order {current} tidak dapat diubah menjadi {target}")
 
     now = now_iso()
-    if target == "SHIPPED":
-        for item in order.get("items", []):
-            event_key = f"marketplace-ship:{order['id']}:{item['productId']}"
-            movement = {
-                "id": new_id(),
-                "eventKey": event_key,
-                "time": now,
-                "destination": ECOM,
-                "movementType": "ECOM_DIKIRIM",
-                "referenceId": order["id"],
-                "referenceNo": order.get("orderNo", ""),
-                "productId": item["productId"],
-                "sku": item.get("sku", ""),
-                "name": item.get("name", ""),
-                "unit": item.get("unit", ""),
-                "channel": item.get("channel", "KOM"),
-                "delta": -_n(item.get("qty")),
-                "operator": "Marketplace Gateway",
-            }
-            await db.consignment_movements.update_one({"eventKey": event_key}, {"$setOnInsert": movement}, upsert=True)
+    movement_keys: list[str] = []
+    synced_products: set[str] = set()
+    operation_id = f"marketplace-event:{body.accountId}:{body.eventId}"
+    order_updated = False
+    history_saved = False
 
-    patch = {
-        "status": target,
-        "updatedAt": now,
-        "updatedBy": "Marketplace Gateway",
-    }
-    if body.trackingNo.strip():
-        patch["trackingNo"] = body.trackingNo.strip()
-    if target == "SHIPPED":
-        patch["shippedAt"] = now
-    if target == "CANCELLED":
-        patch["cancelledAt"] = now
-    await db.ecom_orders.update_one({"id": order["id"]}, {"$set": patch})
-    updated = await db.ecom_orders.find_one({"id": order["id"]}, {"_id": 0})
-    await operations._history(
-        ECOM,
-        f"ECOM_{target}",
-        order["id"],
-        f"{account.get('provider', '')}/{body.orderNo}",
-        "Marketplace Gateway",
-        order.get("items", []),
-        "Status otomatis dari marketplace",
-        {"fromStatus": current, "toStatus": target, "accountId": body.accountId},
-    )
-    return updated
+    try:
+        if target == "SHIPPED":
+            # Marketplace shipment must mutate the same physical E-commerce
+            # subledger used by manual orders. First repair any legacy location,
+            # then write the movement and reconcile the physical layouts to it.
+            for item in order.get("items", []):
+                product_id = str(item.get("productId") or "")
+                if not product_id:
+                    continue
+                await consignment_module.sync_consignment_layout_balance(
+                    ECOM,
+                    product_id,
+                    operator="Marketplace Gateway",
+                    operation_key=f"{operation_id}:pre:{product_id}",
+                    note="Validasi lokasi fisik sebelum order marketplace dikirim.",
+                )
+
+                event_key = f"marketplace-ship:{order['id']}:{product_id}"
+                movement = {
+                    "id": new_id(),
+                    "eventKey": event_key,
+                    "operationId": operation_id,
+                    "time": now,
+                    "destination": ECOM,
+                    "movementType": "ECOM_DIKIRIM",
+                    "referenceId": order["id"],
+                    "referenceNo": order.get("orderNo", ""),
+                    "productId": product_id,
+                    "sku": item.get("sku", ""),
+                    "name": item.get("name", ""),
+                    "unit": item.get("unit", ""),
+                    "channel": item.get("channel", "KOM"),
+                    "delta": -_n(item.get("qty")),
+                    "operator": "Marketplace Gateway",
+                    "source": "MARKETPLACE_GATEWAY",
+                    "marketplaceAccountId": body.accountId,
+                    "externalEventId": body.eventId,
+                }
+                existing_movement = await db.consignment_movements.find_one({"eventKey": event_key}, {"_id": 0})
+                if existing_movement:
+                    # A completed order would already have returned above. Finding
+                    # a movement here means an earlier attempt was interrupted.
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Pengiriman marketplace memiliki movement tertinggal. Jalankan Kontrol Integritas sebelum retry.",
+                    )
+                await db.consignment_movements.insert_one(dict(movement))
+                movement_keys.append(event_key)
+                synced_products.add(product_id)
+
+            for product_id in sorted(synced_products):
+                await consignment_module.sync_consignment_layout_balance(
+                    ECOM,
+                    product_id,
+                    operator="Marketplace Gateway",
+                    operation_key=f"{operation_id}:ship:{product_id}",
+                    note=f"Pengurangan lokasi fisik untuk order marketplace {order.get('orderNo', '')}.",
+                )
+
+        patch = {
+            "status": target,
+            "updatedAt": now,
+            "updatedBy": "Marketplace Gateway",
+            "lastMarketplaceEventId": body.eventId,
+        }
+        if body.trackingNo.strip():
+            patch["trackingNo"] = body.trackingNo.strip()
+        if target == "SHIPPED":
+            patch["shippedAt"] = now
+        if target == "CANCELLED":
+            patch["cancelledAt"] = now
+
+        result = await db.ecom_orders.update_one(
+            {"id": order["id"], "status": current},
+            {"$set": patch},
+        )
+        if result.matched_count == 0:
+            raise HTTPException(status_code=409, detail="Status order berubah saat event marketplace diproses")
+        order_updated = True
+
+        await operations._history(
+            ECOM,
+            f"ECOM_{target}",
+            order["id"],
+            f"{account.get('provider', '')}/{body.orderNo}",
+            "Marketplace Gateway",
+            order.get("items", []),
+            "Status otomatis dari marketplace",
+            {
+                "fromStatus": current,
+                "toStatus": target,
+                "accountId": body.accountId,
+                "externalEventId": body.eventId,
+                "operationId": operation_id,
+            },
+        )
+        history_saved = True
+        return await db.ecom_orders.find_one({"id": order["id"]}, {"_id": 0})
+
+    except Exception:
+        if history_saved:
+            await db.consignment_operation_history.delete_many({"operationId": operation_id})
+        if order_updated:
+            await db.ecom_orders.replace_one({"id": order["id"]}, dict(order), upsert=False)
+        if movement_keys:
+            await db.consignment_movements.delete_many({"eventKey": {"$in": movement_keys}})
+        for product_id in sorted(synced_products):
+            try:
+                await consignment_module.sync_consignment_layout_balance(
+                    ECOM,
+                    product_id,
+                    operator="Sistem (rollback marketplace)",
+                    operation_key=f"{operation_id}:rollback:{product_id}",
+                    note="Rollback event marketplace yang tidak selesai.",
+                )
+            except Exception:
+                pass
+        raise
 
 
 @router.post("/marketplace/gateway/{provider}/events")
@@ -619,59 +700,114 @@ async def marketplace_gateway_event(
         raise HTTPException(status_code=401, detail="Signature/key Marketplace Gateway tidak valid")
 
     event_key = f"{provider}:{body.accountId}:{body.eventId}"
-    existing = await db.marketplace_webhook_events.find_one({"eventKey": event_key}, {"_id": 0})
-    if existing and existing.get("status") == "PROCESSED":
-        return {"ok": True, "duplicate": True, "eventId": body.eventId}
+    order_lock = f"marketplace-order:{body.accountId}:{body.orderNo.strip().upper()}"
+    normalized_items = None
+    product_ids: list[str] = []
 
-    event_doc = {
-        "id": (existing or {}).get("id") or new_id(),
-        "eventKey": event_key,
-        "provider": provider,
-        "accountId": body.accountId,
-        "eventId": body.eventId,
-        "eventType": body.eventType,
-        "orderNo": body.orderNo,
-        "receivedAt": now_iso(),
-        "status": "RECEIVED",
-        "payload": body.model_dump(),
-    }
-    await db.marketplace_webhook_events.update_one({"eventKey": event_key}, {"$set": event_doc}, upsert=True)
+    if body.eventType == "ORDER_CREATED":
+        normalized_items = await _normalized_items(body.accountId, body.items)
+        product_ids = sorted({
+            str(item.get("productId") or "")
+            for item in normalized_items
+            if str(item.get("productId") or "")
+        })
+    else:
+        existing_order = await db.ecom_orders.find_one(
+            {"marketplaceAccountId": body.accountId, "orderNo": body.orderNo},
+            {"_id": 0, "items": 1},
+        )
+        if existing_order:
+            product_ids = sorted({
+                str(item.get("productId") or "")
+                for item in existing_order.get("items", [])
+                if str(item.get("productId") or "")
+            })
 
-    try:
-        if body.eventType == "ORDER_CREATED":
-            result = await _apply_order_created(account, body)
-        else:
-            result = await _apply_status_event(account, body)
+    keys = lock_keys(
+        [f"marketplace-event:{event_key}", order_lock],
+        (f"consignment:{ECOM}:{product_id}" for product_id in product_ids),
+    )
 
+    async with operation_guard(keys):
+        existing = await db.marketplace_webhook_events.find_one({"eventKey": event_key}, {"_id": 0})
+        if existing and existing.get("status") == "PROCESSED":
+            return {"ok": True, "duplicate": True, "eventId": body.eventId}
+
+        now = now_iso()
+        event_doc = {
+            "id": (existing or {}).get("id") or new_id(),
+            "eventKey": event_key,
+            "provider": provider,
+            "accountId": body.accountId,
+            "eventId": body.eventId,
+            "eventType": body.eventType,
+            "orderNo": body.orderNo,
+            "receivedAt": (existing or {}).get("receivedAt") or now,
+            "lastAttemptAt": now,
+            "attemptCount": int((existing or {}).get("attemptCount", 0) or 0) + 1,
+            "status": "RECEIVED",
+            "payload": body.model_dump(),
+        }
         await db.marketplace_webhook_events.update_one(
             {"eventKey": event_key},
-            {"$set": {"status": "PROCESSED", "processedAt": now_iso(), "resultId": result.get("id", "")}},
+            {"$set": event_doc, "$unset": {"failedAt": "", "error": ""}},
+            upsert=True,
         )
-        await _log(
-            level="INFO",
-            event_type=f"WEBHOOK_{body.eventType}",
-            provider=provider,
-            account_id=body.accountId,
-            reference=body.orderNo,
-            message="Event marketplace diproses oleh gateway.",
-            payload={"eventId": body.eventId, "orderId": result.get("id", "")},
-        )
-        return {"ok": True, "duplicate": False, "eventId": body.eventId, "order": result}
-    except HTTPException as exc:
-        await db.marketplace_webhook_events.update_one(
-            {"eventKey": event_key},
-            {"$set": {"status": "FAILED", "failedAt": now_iso(), "error": str(exc.detail)}},
-        )
-        await _log(
-            level="ERROR",
-            event_type=f"WEBHOOK_{body.eventType}_FAILED",
-            provider=provider,
-            account_id=body.accountId,
-            reference=body.orderNo,
-            message=str(exc.detail),
-            payload={"eventId": body.eventId},
-        )
-        raise
+
+        try:
+            if body.eventType == "ORDER_CREATED":
+                result = await _apply_order_created(account, body, normalized_items=normalized_items)
+            else:
+                result = await _apply_status_event(account, body)
+
+            await db.marketplace_webhook_events.update_one(
+                {"eventKey": event_key},
+                {"$set": {
+                    "status": "PROCESSED",
+                    "processedAt": now_iso(),
+                    "resultId": result.get("id", ""),
+                }},
+            )
+            await _log(
+                level="INFO",
+                event_type=f"WEBHOOK_{body.eventType}",
+                provider=provider,
+                account_id=body.accountId,
+                reference=body.orderNo,
+                message="Event marketplace diproses oleh gateway.",
+                payload={"eventId": body.eventId, "orderId": result.get("id", "")},
+            )
+            return {"ok": True, "duplicate": False, "eventId": body.eventId, "order": result}
+        except HTTPException as exc:
+            await db.marketplace_webhook_events.update_one(
+                {"eventKey": event_key},
+                {"$set": {"status": "FAILED", "failedAt": now_iso(), "error": str(exc.detail)}},
+            )
+            await _log(
+                level="ERROR",
+                event_type=f"WEBHOOK_{body.eventType}_FAILED",
+                provider=provider,
+                account_id=body.accountId,
+                reference=body.orderNo,
+                message=str(exc.detail),
+                payload={"eventId": body.eventId},
+            )
+            raise
+        except Exception as exc:
+            await db.marketplace_webhook_events.update_one(
+                {"eventKey": event_key},
+                {"$set": {"status": "FAILED", "failedAt": now_iso(), "error": str(exc)[:1000]}},
+            )
+            await _log(
+                level="ERROR",
+                event_type=f"WEBHOOK_{body.eventType}_FAILED",
+                provider=provider,
+                account_id=body.accountId,
+                reference=body.orderNo,
+                message="Event marketplace gagal diproses karena error internal.",
+                payload={"eventId": body.eventId, "error": str(exc)[:1000]},
+            )
+            raise
 
 
 @router.get("/marketplace/webhook-events")
@@ -692,3 +828,9 @@ async def ensure_marketplace_indexes() -> None:
     await db.marketplace_sync_logs.create_index([("accountId", 1), ("time", -1)], name="marketplace_sync_log")
     await db.marketplace_webhook_events.create_index("eventKey", unique=True, name="marketplace_webhook_event_unique")
     await db.marketplace_webhook_events.create_index([("accountId", 1), ("receivedAt", -1)], name="marketplace_webhook_account")
+    await db.ecom_orders.create_index(
+        [("marketplaceAccountId", 1), ("orderNo", 1)],
+        unique=True,
+        name="ecom_marketplace_order_unique",
+        partialFilterExpression={"marketplaceAccountId": {"$type": "string"}},
+    )
