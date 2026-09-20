@@ -116,7 +116,13 @@ const EcomOperasional = () => {
   };
 
   const openReturn = (order) => {
-    const rows = {}; (order.items || []).forEach((item) => { rows[item.productId] = { goodQty: '', damagedQty: '' }; });
+    const rows = {};
+    (order.items || []).forEach((item) => {
+      const first = (consignmentLayouts || []).find(
+        (row) => row.destination === 'Gudang E-commerce' && row.productId === item.productId && Number(row.primaryQty || 0) >= 0,
+      );
+      rows[item.productId] = { goodQty: '', damagedQty: '', stackCode: first?.stackCode || '' };
+    });
     setReturnRows(rows); setReturnOrder(order);
   };
 
@@ -143,7 +149,12 @@ const EcomOperasional = () => {
 
   const submitReturn = async () => {
     try {
-      const items = (returnOrder.items || []).map((item) => ({ productId: item.productId, goodQty: Number(returnRows[item.productId]?.goodQty || 0), damagedQty: Number(returnRows[item.productId]?.damagedQty || 0) }));
+      const items = (returnOrder.items || []).map((item) => ({
+        productId: item.productId,
+        goodQty: Number(returnRows[item.productId]?.goodQty || 0),
+        damagedQty: Number(returnRows[item.productId]?.damagedQty || 0),
+        stackCode: returnRows[item.productId]?.stackCode || '',
+      }));
       await api.post(`/ecom/orders/${returnOrder.id}/return`, { items, note: 'Retur E-commerce diterima' });
       toast.success('Retur E-commerce diterima · barang rusak masuk Area Barang Rusak E-commerce'); setReturnOrder(null); await Promise.all([load(), refreshConsignmentFlow()]);
     } catch (e) { toast.error(apiError(e)); }
@@ -247,7 +258,7 @@ const EcomOperasional = () => {
 
     <div className="card-surface p-5"><div className="font-semibold flex items-center gap-2 mb-4"><History size={17}/> History E-commerce</div><div className="space-y-2 max-h-[420px] overflow-auto">{history.map((row) => <div key={row.id} className="border-b border-[#1f2937] pb-2 text-xs"><div className="font-medium">{row.eventType} · {row.referenceNo}</div><div className="text-[#8b93a1]">{new Date(row.time).toLocaleString('id-ID')} · {row.operator}</div></div>)}</div></div>
 
-    {returnOrder && <div className="fixed inset-0 z-[90] bg-black/75 flex items-center justify-center p-4"><div className="card-surface w-full max-w-2xl p-6"><h2 className="font-display text-xl font-bold">Retur {returnOrder.orderNo}</h2><p className="text-xs text-[#8b93a1] mt-1 mb-4">Retur baik kembali ke stok jual E-commerce. Retur rusak otomatis masuk Area Barang Rusak E-commerce dan tidak menambah stok jual.</p>{(returnOrder.items || []).map((item) => <div key={item.productId} className="border border-[#243044] rounded-xl p-4 mb-3"><div className="font-semibold text-sm">{item.name} · Dikirim {item.qty} {item.unit}</div><div className="grid grid-cols-2 gap-2 mt-3"><input type="number" min="0" className={inputCls} placeholder="Retur baik" value={returnRows[item.productId]?.goodQty || ''} onChange={(e) => setReturnRows((p) => ({ ...p, [item.productId]: { ...p[item.productId], goodQty: e.target.value } }))}/><input type="number" min="0" className={inputCls} placeholder="Retur rusak" value={returnRows[item.productId]?.damagedQty || ''} onChange={(e) => setReturnRows((p) => ({ ...p, [item.productId]: { ...p[item.productId], damagedQty: e.target.value } }))}/></div></div>)}<div className="flex justify-end gap-2 mt-5"><button onClick={() => setReturnOrder(null)} className="px-4 py-2 rounded-lg border border-[#243044]">Batal</button><button onClick={submitReturn} className="btn-primary px-5 py-2 rounded-lg font-semibold">Simpan Retur</button></div></div></div>}
+    {returnOrder && <div className="fixed inset-0 z-[90] bg-black/75 flex items-center justify-center p-4"><div className="card-surface w-full max-w-2xl p-6"><h2 className="font-display text-xl font-bold">Retur {returnOrder.orderNo}</h2><p className="text-xs text-[#8b93a1] mt-1 mb-4">Retur baik kembali ke stok jual E-commerce. Retur rusak otomatis masuk Area Barang Rusak E-commerce dan tidak menambah stok jual.</p>{(returnOrder.items || []).map((item) => <div key={item.productId} className="border border-[#243044] rounded-xl p-4 mb-3"><div className="font-semibold text-sm">{item.name} · Dikirim {item.qty} {item.unit}</div><div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3"><input type="number" min="0" className={inputCls} placeholder="Retur baik" value={returnRows[item.productId]?.goodQty || ''} onChange={(e) => setReturnRows((p) => ({ ...p, [item.productId]: { ...p[item.productId], goodQty: e.target.value } }))}/><select className={inputCls} value={returnRows[item.productId]?.stackCode || ''} onChange={(e) => setReturnRows((p) => ({ ...p, [item.productId]: { ...p[item.productId], stackCode: e.target.value } }))}><option value="">Lokasi retur baik</option>{(consignmentLayouts || []).filter((row) => row.destination === 'Gudang E-commerce' && row.productId === item.productId).map((row) => <option key={row.id} value={row.stackCode}>{row.stackCode} · {row.primaryQty} {row.unit}</option>)}</select><input type="number" min="0" className={inputCls} placeholder="Retur rusak" value={returnRows[item.productId]?.damagedQty || ''} onChange={(e) => setReturnRows((p) => ({ ...p, [item.productId]: { ...p[item.productId], damagedQty: e.target.value } }))}/></div></div>)}<div className="flex justify-end gap-2 mt-5"><button onClick={() => setReturnOrder(null)} className="px-4 py-2 rounded-lg border border-[#243044]">Batal</button><button onClick={submitReturn} className="btn-primary px-5 py-2 rounded-lg font-semibold">Simpan Retur</button></div></div></div>}
   </div>;
 };
 
