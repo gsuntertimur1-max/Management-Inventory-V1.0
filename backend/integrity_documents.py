@@ -10,6 +10,7 @@ from backend.integrity_postcommit import integrity_control as base_integrity_con
 from backend.integrity_consignment import analyze_consignment_integrity
 from backend.so_monitoring import build_so_monitoring, fulfillment_integrity_issues
 from backend.cost_integrity import analyze_handling_cost_integrity
+from backend.integrity_e2e import analyze_main_warehouse_e2e
 
 router = APIRouter(prefix="/api")
 EPS = 1e-9
@@ -504,6 +505,8 @@ async def integrity_control(user: dict = Depends(require_master_write)):
 
     handling_cost = await analyze_handling_cost_integrity()
     handling_cost_summary = dict(handling_cost.get("summary") or {})
+    e2e = await analyze_main_warehouse_e2e(handling_cost.get("handlingCostIntegrityIssues", []))
+    e2e_summary = dict(e2e.get("summary") or {})
     cost_errors = int(handling_cost_summary.get("handlingCostIntegrityErrors", 0) or 0)
     cost_warnings = int(handling_cost_summary.get("handlingCostIntegrityWarnings", 0) or 0)
     if cost_errors:
@@ -517,6 +520,21 @@ async def integrity_control(user: dict = Depends(require_master_write)):
             "severity": "WARNING",
             "code": "HANDLING_COST_INTEGRITY_WARNING",
             "message": f"Ada {cost_warnings} peringatan pada biaya muat/bongkar.",
+        })
+
+    e2e_errors = int(e2e_summary.get("mainWarehouseE2EErrors", 0) or 0)
+    e2e_warnings = int(e2e_summary.get("mainWarehouseE2EWarnings", 0) or 0)
+    if e2e_errors:
+        system_issues.append({
+            "severity": "ERROR",
+            "code": "MAIN_WAREHOUSE_E2E_INTEGRITY",
+            "message": f"Ada {e2e_errors} pemuatan Gudang Utama yang rantai dokumen sampai post-commit-nya terputus.",
+        })
+    if e2e_warnings:
+        system_issues.append({
+            "severity": "WARNING",
+            "code": "MAIN_WAREHOUSE_E2E_WARNING",
+            "message": f"Ada {e2e_warnings} pemuatan Gudang Utama dengan peringatan rekonsiliasi end-to-end.",
         })
 
     consignment = await analyze_consignment_integrity()
@@ -542,6 +560,7 @@ async def integrity_control(user: dict = Depends(require_master_write)):
     data["stackCardIntegrityIssues"] = stack_card_issues[:1000]
     data["soFulfillmentIntegrityIssues"] = so_issues[:1000]
     data["handlingCostIntegrityIssues"] = handling_cost.get("handlingCostIntegrityIssues", [])[:1000]
+    data["mainWarehouseE2E"] = e2e.get("mainWarehouseE2E", [])[:30000]
     for key in (
         "consignmentStockIntegrity",
         "consignmentReservationIssues",
@@ -556,6 +575,7 @@ async def integrity_control(user: dict = Depends(require_master_write)):
     summary = dict(data.get("summary") or {})
     summary.update(consignment_summary)
     summary.update(handling_cost_summary)
+    summary.update(e2e_summary)
     summary["outboundDocumentIntegrityIssues"] = len(document_issues)
     summary["outboundDocumentIntegrityErrors"] = errors
     summary["outboundDocumentIntegrityWarnings"] = warnings
