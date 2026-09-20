@@ -576,7 +576,7 @@ async def _apply_status_event(account: dict, body: NormalizedMarketplaceEvent) -
                     note="Validasi lokasi fisik sebelum order marketplace dikirim.",
                 )
 
-                event_key = f"marketplace-ship:{order['id']}:{product_id}"
+                event_key = f"ecom-ship:{order['id']}:{product_id}"
                 movement = {
                     "id": new_id(),
                     "eventKey": event_key,
@@ -704,6 +704,7 @@ async def marketplace_gateway_event(
     normalized_items = None
     product_ids: list[str] = []
 
+    concrete_order_lock = ""
     if body.eventType == "ORDER_CREATED":
         normalized_items = await _normalized_items(body.accountId, body.items)
         product_ids = sorted({
@@ -714,9 +715,10 @@ async def marketplace_gateway_event(
     else:
         existing_order = await db.ecom_orders.find_one(
             {"marketplaceAccountId": body.accountId, "orderNo": body.orderNo},
-            {"_id": 0, "items": 1},
+            {"_id": 0, "id": 1, "items": 1},
         )
         if existing_order:
+            concrete_order_lock = f"ecom-order:{existing_order.get('id', '')}"
             product_ids = sorted({
                 str(item.get("productId") or "")
                 for item in existing_order.get("items", [])
@@ -724,7 +726,7 @@ async def marketplace_gateway_event(
             })
 
     keys = lock_keys(
-        [f"marketplace-event:{event_key}", order_lock],
+        [f"marketplace-event:{event_key}", order_lock, concrete_order_lock],
         (f"consignment:{ECOM}:{product_id}" for product_id in product_ids),
     )
 
