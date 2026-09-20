@@ -685,6 +685,7 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
     doc = {
         "id": new_id(),
         "bon_no": f"{bon_prefix}{bon_number:03d}",
+        "bon_format_version": "BON_72_V3",
         "antrian": f"{queue_prefix}-{queue_number:03d}",
         "operational_date": operational_date,
         "created_at": created_at,
@@ -1168,6 +1169,7 @@ async def complete_outbound_load(load_id: str, body: LoadingCompletionInput | No
             "operation_id": operation_id,
             "load_id": load["id"],
             "no": sj_no,
+            "format_version": "SJ_A4_HALF_V3",
             "bon_no": load.get("bon_no", ""),
             "antrian": load.get("antrian", ""),
             "operational_date": load.get("operational_date", op_now.strftime("%Y-%m-%d")),
