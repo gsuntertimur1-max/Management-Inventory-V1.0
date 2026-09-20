@@ -3,12 +3,14 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from backend.server import db, get_current_user, new_id, next_sequence, normalize_channel, now_iso, operational_now
 from backend.role_four_config import has_role_permission, role_destination
 from backend.consignment_documents import next_bazar_document_numbers
+from backend.consignment_damaged import credit_consignment_damaged
+from backend.operational_guards import idempotent_operation, lock_keys
 import backend.consignment as consignment_module
 import backend.consignment_operations as operations
 
@@ -146,6 +148,14 @@ async def _available_with_packages(destination: str, product_id: str, exclude_ki
 operations._available = _available_with_packages
 
 
+async def _restore_package_batches(consumed: list[dict], operator: str) -> None:
+    for row in reversed(consumed):
+        await db.bazar_package_batches.update_one(
+            {"id": row.get("batchId", "")},
+            {"$inc": {"remainingQty": _n(row.get("qty"))}, "$set": {"updatedAt": now_iso(), "updatedBy": operator}},
+        )
+
+
 async def _consume_package_batches(template_id: str, qty: float, reference_id: str, operator: str) -> list[dict]:
     remaining = float(qty)
     consumed = []
@@ -153,23 +163,39 @@ async def _consume_package_batches(template_id: str, qty: float, reference_id: s
         {"templateId": template_id, "remainingQty": {"$gt": EPS}},
         {"_id": 0},
     ).sort("createdAt", 1).to_list(10000)
-    for batch in batches:
-        if remaining <= EPS:
-            break
-        take = min(_n(batch.get("remainingQty")), remaining)
-        if take <= EPS:
-            continue
-        result = await db.bazar_package_batches.update_one(
-            {"id": batch["id"], "remainingQty": {"$gte": take}},
-            {"$inc": {"remainingQty": -take}, "$set": {"updatedAt": now_iso(), "updatedBy": operator}},
-        )
-        if result.matched_count == 0:
-            raise HTTPException(status_code=409, detail="Stok Paket Jadi berubah. Muat ulang lalu coba kembali.")
-        consumed.append({"batchId": batch["id"], "batchNo": batch.get("batchNo", ""), "qty": take})
-        remaining -= take
-    if remaining > EPS:
-        raise HTTPException(status_code=409, detail="Stok Paket Jadi tidak mencukupi")
-    return consumed
+    try:
+        for batch in batches:
+            if remaining <= EPS:
+                break
+            take = min(_n(batch.get("remainingQty")), remaining)
+            if take <= EPS:
+                continue
+            result = await db.bazar_package_batches.update_one(
+                {"id": batch["id"], "remainingQty": {"$gte": take}},
+                {"$inc": {"remainingQty": -take}, "$set": {"updatedAt": now_iso(), "updatedBy": operator}},
+            )
+            if result.matched_count == 0:
+                raise HTTPException(status_code=409, detail="Stok Paket Jadi berubah. Muat ulang lalu coba kembali.")
+            consumed.append({"batchId": batch["id"], "batchNo": batch.get("batchNo", ""), "qty": take})
+            remaining -= take
+        if remaining > EPS:
+            raise HTTPException(status_code=409, detail="Stok Paket Jadi tidak mencukupi")
+        return consumed
+    except Exception:
+        if consumed:
+            await _restore_package_batches(consumed, "Sistem (rollback Paket)")
+        raise
+
+
+async def _rollback_damaged_component(event_key: str, product_id: str, channel: str, qty: float) -> None:
+    movement = await db.consignment_damaged_movements.find_one({"eventKey": event_key}, {"_id": 0})
+    if not movement:
+        return
+    await db.consignment_damaged_movements.delete_one({"eventKey": event_key})
+    await db.consignment_damaged_balances.update_one(
+        {"destination": BAZAR, "productId": product_id, "channel": normalize_channel(channel, "KOM")},
+        {"$inc": {"qty": -float(qty)}, "$set": {"updatedAt": now_iso()}},
+    )
 
 
 @router.get("/bazar/package-templates")
@@ -374,71 +400,255 @@ async def create_package_load(body: PackageLoadCreate, user: dict = Depends(get_
 
 
 @router.post("/bazar/package-loads/{load_id}/close")
-async def close_package_load(load_id: str, body: PackageLoadClose, user: dict = Depends(get_current_user)):
+async def close_package_load(
+    load_id: str,
+    body: PackageLoadClose,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
     _ensure_bazar(user, write=True)
-    load = await db.bazar_package_loads.find_one({"id": load_id}, {"_id": 0})
-    if not load:
+    initial = await db.bazar_package_loads.find_one({"id": load_id}, {"_id": 0})
+    if not initial:
         raise HTTPException(status_code=404, detail="Pemuatan paket tidak ditemukan")
-    if load.get("status") == "SELESAI":
-        return load
-    if load.get("status") != "BERJALAN":
-        raise HTTPException(status_code=409, detail="Pemuatan paket tidak dapat diselesaikan dari status saat ini")
+    if initial.get("status") == "SELESAI":
+        return initial
 
-    result_map = {item.templateId: item for item in body.items}
-    expected = {item.get("templateId") for item in load.get("items", [])}
-    if set(result_map) != expected:
-        raise HTTPException(status_code=400, detail="Rekonsiliasi harus mencakup seluruh jenis paket yang dimuat")
+    product_ids = sorted({
+        str(component.get("productId") or "")
+        for loaded in initial.get("items", [])
+        for component in loaded.get("components", [])
+        if str(component.get("productId") or "")
+    })
+    template_ids = sorted({
+        str(item.get("templateId") or "")
+        for item in initial.get("items", [])
+        if str(item.get("templateId") or "")
+    })
 
-    now = now_iso()
-    final_items = []
-    for loaded in load.get("items", []):
-        result = result_map[loaded["templateId"]]
-        delivered = float(result.deliveredQty)
-        returned_good = float(result.returnedGoodQty)
-        returned_damaged = float(result.returnedDamagedQty)
-        loaded_qty = _n(loaded.get("loadedQty"))
-        if abs((delivered + returned_good + returned_damaged) - loaded_qty) > EPS:
-            raise HTTPException(
-                status_code=400,
-                detail=f"{loaded.get('packageName', '')}: Disalurkan + Retur Baik + Retur Rusak harus sama dengan jumlah muat {loaded_qty:g}",
-            )
-        consumed_packages = delivered + returned_damaged
-        consumed_batches = []
-        if consumed_packages > EPS:
-            consumed_batches = await _consume_package_batches(loaded["templateId"], consumed_packages, load_id, user.get("name", ""))
-            for component in loaded.get("components", []):
-                qty_component = consumed_packages * _n(component.get("qty"))
-                event_key = f"package-load-close:{load_id}:{loaded['templateId']}:{component['productId']}"
-                movement = {
-                    "id": new_id(), "eventKey": event_key, "time": now, "destination": BAZAR,
-                    "movementType": "PAKET_DISALURKAN", "referenceId": load_id, "referenceNo": load.get("loadNo", ""),
-                    "productId": component["productId"], "sku": component.get("sku", ""), "name": component.get("name", ""),
-                    "unit": component.get("unit", ""), "channel": component.get("channel", "KOM"), "delta": -qty_component,
-                    "packageTemplateId": loaded["templateId"], "packageQty": consumed_packages,
-                    "deliveredPackageQty": delivered, "damagedPackageQty": returned_damaged,
-                    "operator": user.get("name", ""),
-                }
-                await db.consignment_movements.update_one({"eventKey": event_key}, {"$setOnInsert": movement}, upsert=True)
-                await consignment_module.decrease_consignment_layouts(
-                    BAZAR,
-                    component["productId"],
-                    qty_component,
-                    user.get("name", ""),
-                    operation_key=event_key,
+    async def action():
+        load = await db.bazar_package_loads.find_one({"id": load_id}, {"_id": 0})
+        if not load:
+            raise HTTPException(status_code=404, detail="Pemuatan paket tidak ditemukan")
+        if load.get("status") == "SELESAI":
+            return load
+        if load.get("status") != "BERJALAN":
+            raise HTTPException(status_code=409, detail="Pemuatan paket tidak dapat diselesaikan dari status saat ini")
+
+        result_map = {item.templateId: item for item in body.items}
+        expected = {item.get("templateId") for item in load.get("items", [])}
+        if set(result_map) != expected:
+            raise HTTPException(status_code=400, detail="Rekonsiliasi harus mencakup seluruh jenis paket yang dimuat")
+
+        # Validate every row before mutating any balance.
+        prepared = []
+        for loaded in load.get("items", []):
+            result = result_map[loaded["templateId"]]
+            delivered = float(result.deliveredQty)
+            returned_good = float(result.returnedGoodQty)
+            returned_damaged = float(result.returnedDamagedQty)
+            loaded_qty = _n(loaded.get("loadedQty"))
+            if abs((delivered + returned_good + returned_damaged) - loaded_qty) > EPS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{loaded.get('packageName', '')}: Disalurkan + Retur Baik + Retur Rusak harus sama dengan jumlah muat {loaded_qty:g}",
                 )
-        final_items.append({
-            **loaded, "deliveredQty": delivered, "returnedGoodQty": returned_good,
-            "returnedDamagedQty": returned_damaged, "consumedBatches": consumed_batches,
-        })
+            consumed_packages = delivered + returned_damaged
+            physical = await _package_remaining(loaded["templateId"])
+            if consumed_packages > physical + EPS:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Stok Paket Jadi {loaded.get('packageName', '')} tinggal {physical:g}",
+                )
+            prepared.append((loaded, delivered, returned_good, returned_damaged, consumed_packages))
 
-    await db.bazar_package_loads.update_one({"id": load_id, "status": "BERJALAN"}, {"$set": {
-        "status": "SELESAI", "resultItems": final_items, "closedAt": now,
-        "closedBy": user.get("name", ""), "closeNote": body.note.strip(),
-    }})
-    await operations._history(BAZAR, "PAKET_SELESAI", load_id, load.get("loadNo", ""), user.get("name", ""), final_items, body.note,
-                              {"destinationName": load.get("destination", ""), "vehicleNo": load.get("vehicleNo", "")})
-    return await db.bazar_package_loads.find_one({"id": load_id}, {"_id": 0})
+        now = now_iso()
+        final_items = []
+        batch_rollbacks: list[dict] = []
+        movement_events: list[dict] = []
+        damaged_events: list[dict] = []
+        affected_products: dict[str, str] = {}
+        status_saved = False
+        history_saved = False
 
+        try:
+            for loaded, delivered, returned_good, returned_damaged, consumed_packages in prepared:
+                consumed_batches = []
+                if consumed_packages > EPS:
+                    consumed_batches = await _consume_package_batches(
+                        loaded["templateId"],
+                        consumed_packages,
+                        load_id,
+                        user.get("name", ""),
+                    )
+                    batch_rollbacks.extend(consumed_batches)
+
+                    for component in loaded.get("components", []):
+                        per_package = _n(component.get("qty"))
+                        qty_component = consumed_packages * per_package
+                        damaged_component_qty = returned_damaged * per_package
+                        if qty_component <= EPS:
+                            continue
+
+                        product_id = component["productId"]
+                        event_key = f"package-load-close:{load_id}:{loaded['templateId']}:{product_id}"
+                        movement = {
+                            "id": new_id(),
+                            "eventKey": event_key,
+                            "time": now,
+                            "destination": BAZAR,
+                            "movementType": "PAKET_KELUAR",
+                            "referenceId": load_id,
+                            "referenceNo": load.get("loadNo", ""),
+                            "productId": product_id,
+                            "sku": component.get("sku", ""),
+                            "name": component.get("name", ""),
+                            "unit": component.get("unit", ""),
+                            "channel": normalize_channel(component.get("channel"), "KOM"),
+                            "delta": -qty_component,
+                            "packageTemplateId": loaded["templateId"],
+                            "packageQty": consumed_packages,
+                            "deliveredPackageQty": delivered,
+                            "damagedPackageQty": returned_damaged,
+                            "deliveredComponentQty": delivered * per_package,
+                            "damagedComponentQty": damaged_component_qty,
+                            "operator": user.get("name", ""),
+                        }
+                        await db.consignment_movements.insert_one(dict(movement))
+                        movement_events.append(movement)
+                        affected_products[product_id] = component.get("channel", "KOM")
+
+                        await consignment_module.decrease_consignment_layouts(
+                            BAZAR,
+                            product_id,
+                            qty_component,
+                            user.get("name", ""),
+                            operation_key=event_key,
+                        )
+
+                        if damaged_component_qty > EPS:
+                            identity = await operations._identity(BAZAR, product_id)
+                            damaged_key = f"package-damaged-return:{load_id}:{loaded['templateId']}:{product_id}"
+                            await credit_consignment_damaged(
+                                BAZAR,
+                                {**identity, "productId": product_id, "channel": component.get("channel", "KOM")},
+                                damaged_component_qty,
+                                damaged_key,
+                                "PAKET_RETUR_RUSAK",
+                                load_id,
+                                load.get("loadNo", ""),
+                                user.get("name", ""),
+                                body.note,
+                            )
+                            damaged_events.append({
+                                "eventKey": damaged_key,
+                                "productId": product_id,
+                                "channel": component.get("channel", "KOM"),
+                                "qty": damaged_component_qty,
+                            })
+
+                final_items.append({
+                    **loaded,
+                    "deliveredQty": delivered,
+                    "returnedGoodQty": returned_good,
+                    "returnedDamagedQty": returned_damaged,
+                    "consumedBatches": consumed_batches,
+                    "damagedComponents": [
+                        {
+                            **component,
+                            "damagedQty": returned_damaged * _n(component.get("qty")),
+                        }
+                        for component in loaded.get("components", [])
+                        if returned_damaged * _n(component.get("qty")) > EPS
+                    ],
+                })
+
+            result = await db.bazar_package_loads.update_one(
+                {"id": load_id, "status": "BERJALAN"},
+                {"$set": {
+                    "status": "SELESAI",
+                    "resultItems": final_items,
+                    "closedAt": now,
+                    "closedBy": user.get("name", ""),
+                    "closeNote": body.note.strip(),
+                }},
+            )
+            if result.matched_count == 0:
+                raise HTTPException(status_code=409, detail="Pemuatan Paket berubah saat diselesaikan. Muat ulang lalu coba kembali.")
+            status_saved = True
+
+            await operations._history(
+                BAZAR,
+                "PAKET_SELESAI",
+                load_id,
+                load.get("loadNo", ""),
+                user.get("name", ""),
+                final_items,
+                body.note,
+                {
+                    "destinationName": load.get("destination", ""),
+                    "vehicleNo": load.get("vehicleNo", ""),
+                    "damagedArea": "Area Barang Rusak Bazar",
+                    "operationId": f"package-close:{load_id}",
+                },
+            )
+            history_saved = True
+            return await db.bazar_package_loads.find_one({"id": load_id}, {"_id": 0})
+
+        except Exception:
+            if history_saved:
+                await db.consignment_operation_history.delete_many({"operationId": f"package-close:{load_id}"})
+            if status_saved:
+                await db.bazar_package_loads.update_one(
+                    {"id": load_id, "status": "SELESAI"},
+                    {"$set": {"status": "BERJALAN"}, "$unset": {
+                        "resultItems": "",
+                        "closedAt": "",
+                        "closedBy": "",
+                        "closeNote": "",
+                    }},
+                )
+
+            for row in reversed(damaged_events):
+                await _rollback_damaged_component(
+                    row["eventKey"],
+                    row["productId"],
+                    row["channel"],
+                    row["qty"],
+                )
+
+            for movement in reversed(movement_events):
+                await db.consignment_movements.delete_one({"eventKey": movement["eventKey"]})
+
+            if batch_rollbacks:
+                await _restore_package_batches(batch_rollbacks, "Sistem (rollback Paket)")
+
+            # Recompute physical locations from the authoritative movement balance.
+            for product_id, channel in affected_products.items():
+                try:
+                    await consignment_module.sync_consignment_layout_balance(
+                        BAZAR,
+                        product_id,
+                        operator="Sistem (rollback Paket)",
+                        operation_key=f"package-close:{load_id}:{product_id}:rollback",
+                        note="Rollback penutupan Paket yang tidak selesai.",
+                    )
+                except Exception:
+                    pass
+            raise
+
+    keys = lock_keys(
+        [f"package-load:{load_id}"],
+        (f"package-template:{template_id}" for template_id in template_ids),
+        (f"consignment:{BAZAR}:{product_id}" for product_id in product_ids),
+        (f"consignment-damaged:{BAZAR}:{product_id}" for product_id in product_ids),
+    )
+    return await idempotent_operation(
+        request,
+        user,
+        f"package-load-close:{load_id}",
+        keys,
+        action,
+    )
 
 async def ensure_bazar_package_indexes() -> None:
     await db.bazar_package_templates.create_index("code", unique=True, sparse=True, name="bazar_package_code_unique")
