@@ -830,13 +830,29 @@ async def me(user: dict = Depends(get_current_user)):
 
 @api_router.post("/auth/logout")
 async def logout(request: Request, response: Response):
-    token = request.cookies.get("session_token")
-    if not token:
-        auth = request.headers.get("Authorization", "")
-        if auth.startswith("Bearer "):
-            token = auth[7:]
-    if token:
-        await db.user_sessions.delete_many({"session_token": token})
+    session_token = request.cookies.get("session_token")
+    access_token = request.cookies.get("access_token")
+    auth = request.headers.get("Authorization", "")
+    bearer = auth[7:] if auth.startswith("Bearer ") else ""
+    candidate = access_token or bearer
+
+    if session_token:
+        await db.user_sessions.delete_many({"session_token": session_token})
+
+    if candidate:
+        try:
+            payload = jwt.decode(candidate, JWT_SECRET, algorithms=[JWT_ALG])
+            if payload.get("type") == "access" and payload.get("jti"):
+                exp = datetime.fromtimestamp(float(payload.get("exp", 0)), tz=timezone.utc)
+                if exp > datetime.now(timezone.utc):
+                    await db.revoked_access_tokens.update_one(
+                        {"_id": str(payload["jti"])},
+                        {"$set": {"expiresAt": exp, "revokedAt": datetime.now(timezone.utc)}},
+                        upsert=True,
+                    )
+        except jwt.InvalidTokenError:
+            pass
+
     response.delete_cookie("access_token", path="/")
     response.delete_cookie("session_token", path="/")
     return {"ok": True}
@@ -983,8 +999,8 @@ async def create_user(body: UserCreate, admin: dict = Depends(require_admin)):
     username = body.username.strip().lower()
     if not username or not body.password:
         raise HTTPException(status_code=400, detail="Username & password wajib diisi")
-    if len(body.password) < 6:
-        raise HTTPException(status_code=400, detail="Password minimal 6 karakter")
+    if len(body.password) < 8:
+        raise HTTPException(status_code=400, detail="Password minimal 8 karakter")
     if await db.users.find_one({"username": username}):
         raise HTTPException(status_code=400, detail="Username sudah digunakan")
     doc = {
@@ -1005,10 +1021,18 @@ async def update_user(user_id: str, body: UserUpdate, admin: dict = Depends(requ
         raise HTTPException(status_code=404, detail="Pengguna tidak ditemukan")
     if "role" in patch:
         patch["role"] = canonical_role(patch["role"])
+    security_changed = (
+        ("role" in patch and patch.get("role") != canonical_role(target.get("role")))
+        or ("active" in patch and bool(patch.get("active")) != bool(target.get("active", True)))
+    )
+    if security_changed:
+        patch["auth_version"] = int(target.get("auth_version", 0) or 0) + 1
     if target["id"] == admin["id"] and (patch.get("role") not in (None, "Administrator") or patch.get("active") is False):
         raise HTTPException(status_code=400, detail="Tidak dapat menurunkan/menonaktifkan akun sendiri")
     if patch:
         await db.users.update_one({"id": user_id}, {"$set": patch})
+        if security_changed:
+            await db.user_sessions.delete_many({"user_id": user_id})
     updated = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
     return public_user(updated)
 
@@ -1017,12 +1041,16 @@ async def update_user(user_id: str, body: UserUpdate, admin: dict = Depends(requ
 async def change_password(user_id: str, body: PasswordBody, user: dict = Depends(get_current_user)):
     if not has_role_permission(user.get("role"), "users") and user["id"] != user_id:
         raise HTTPException(status_code=403, detail="Tidak diizinkan mengubah password pengguna lain")
-    if len(body.password) < 6:
-        raise HTTPException(status_code=400, detail="Password minimal 6 karakter")
+    if len(body.password) < 8:
+        raise HTTPException(status_code=400, detail="Password minimal 8 karakter")
     target = await db.users.find_one({"id": user_id})
     if not target:
         raise HTTPException(status_code=404, detail="Pengguna tidak ditemukan")
-    await db.users.update_one({"id": user_id}, {"$set": {"password_hash": hash_password(body.password)}})
+    await db.users.update_one(
+        {"id": user_id},
+        {"$set": {"password_hash": hash_password(body.password)}, "$inc": {"auth_version": 1}},
+    )
+    await db.user_sessions.delete_many({"user_id": user_id})
     return {"ok": True}
 
 
