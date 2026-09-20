@@ -637,7 +637,7 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         crew_group = ""
         loading_fee = {}
         if location_config and bool(location_config.get("loadingCostEnabled", False)):
-            crew_group = str(location_config.get("loadingGroup", "") or "")
+            crew_group = _crew_group(location_config.get("loadingGroup", "") or actual_location)
             if crew_group:
                 loading_fee = _loading_fee(product, qty, charge_mode_override=body.loadingFeeChargeMode)
         load_items.append({"productId": item.productId, "documentNo": item_ref, "sku": product.get("sku", ""), "name": product.get("name", ""), "channel": channel, "qty": qty, "unit": product.get("unit", ""), "weight": weight, "measureUnit": product.get("measureUnit", "kg") or "kg", "berat": weight * qty, "secondary": product.get("secondary", ""), "secondaryQty": float(product.get("secondaryQty", 0) or 0), "location": product.get("location", ""), "stackCode": stack_code, "locationCode": (location_config or {}).get("code", ""), "locationName": (location_config or {}).get("name", ""), "crewGroup": crew_group, "loadingFee": loading_fee, "fefoPolicy": guide.get("policy", "") if guide else "", "fefoMode": guide.get("mode", "") if guide else "", "fefoRecommendedStacks": guide.get("recommendedStacks", []) if guide else [], "fefoSelectionStatus": selection_status, "fefoExceptionReason": exception_reason if selection_status == "EXCEPTION" else "", "documentQty": float(item.documentQty or 0)})
@@ -810,12 +810,12 @@ async def settle_loading_cost(date: str, body: DailyLoadingSettlementInput, user
         },
         {"_id": 0, "loading_cost": 1, "items": 1},
     ).to_list(5000)
-    group = body.group.strip()
+    group = _crew_group(body.group) if body.group.strip() else ""
     amount = 0.0
     for load in loads:
         if group:
             for item in load.get("items", []):
-                item_group = item.get("crewGroup") or _crew_group(item.get("stackCode") or item.get("location") or load.get("unit_loading"))
+                item_group = _crew_group(item.get("crewGroup") or item.get("stackCode") or item.get("location") or load.get("unit_loading"))
                 if item_group == group:
                     amount += float((item.get("loadingFee") or {}).get(key, 0) or 0)
         else:
