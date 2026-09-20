@@ -110,11 +110,13 @@ async def dashboard_operations(user: dict = Depends(get_current_user)):
         {"status": {"$in": ["Menunggu", "Sedang Dimuat"]}},
         {"_id": 0, "id": 1, "status": 1, "bon_no": 1, "antrian": 1, "documents": 1, "items": 1},
     ).to_list(5000)
-    loading_unpaid = await db.outbound_loads.count_documents({
-        "status": "Selesai",
-        "loading_cost.chargeable": {"$gt": 0},
-        "loading_fee_payment_status": {"$in": ["BELUM_DIBAYAR", "SEBAGIAN", "", None]},
-    })
+    loading_unpaid = None
+    if has_role_permission(user.get("role"), "costView"):
+        loading_unpaid = await db.outbound_loads.count_documents({
+            "status": "Selesai",
+            "loading_cost.chargeable": {"$gt": 0},
+            "loading_fee_payment_status": {"$in": ["BELUM_DIBAYAR", "SEBAGIAN", "", None]},
+        })
     main_opnames = await db.stock_opnames.count_documents({"status": {"$in": ["DRAFT", "SUBMITTED"]}})
     cons_opnames = await db.consignment_opnames.count_documents({"status": {"$in": ["DRAFT", "SUBMITTED"]}})
     damaged_opnames = await db.consignment_damaged_opnames.count_documents({"status": {"$in": ["DRAFT", "SUBMITTED"]}})
@@ -145,7 +147,7 @@ async def dashboard_operations(user: dict = Depends(get_current_user)):
         "loadingPaymentsPending": loading_unpaid,
         "opnamesPending": main_opnames + cons_opnames + damaged_opnames,
         "arrangementPending": arrangement_pending,
-        "postCommitOpen": integrity_open,
+        "postCommitOpen": integrity_open if has_role_permission(user.get("role"), "masterWrite") else None,
     }
 
 
@@ -243,21 +245,22 @@ async def operational_report(
         "Reservasi", "Sisa Dijadwalkan", "Satuan", "Aktivitas Terakhir",
     ], so_rows)
 
-    cost_rows = []
-    for load in loads:
-        cost = load.get("loading_cost") or {}
-        if _n(cost.get("total")) <= EPS:
-            continue
-        cost_rows.append([
-            load.get("operational_date", ""), load.get("bon_no", ""), load.get("ref", ""),
-            cost.get("labor", 0), cost.get("daily", 0), cost.get("warehouse", 0), cost.get("total", 0),
-            cost.get("chargeable", 0), load.get("loading_fee_payment_total", 0),
-            load.get("loading_fee_payment_status", ""),
-        ])
-    _append_sheet(wb, "Biaya Muat", [
-        "Tanggal", "Bon Muat", "Referensi", "Buruh", "Harian", "Gudang", "Total",
-        "Ditagihkan", "Dibayar", "Status Bayar",
-    ], cost_rows)
+    if has_role_permission(user.get("role"), "costView"):
+        cost_rows = []
+        for load in loads:
+            cost = load.get("loading_cost") or {}
+            if _n(cost.get("total")) <= EPS:
+                continue
+            cost_rows.append([
+                load.get("operational_date", ""), load.get("bon_no", ""), load.get("ref", ""),
+                cost.get("labor", 0), cost.get("daily", 0), cost.get("warehouse", 0), cost.get("total", 0),
+                cost.get("chargeable", 0), load.get("loading_fee_payment_total", 0),
+                load.get("loading_fee_payment_status", ""),
+            ])
+        _append_sheet(wb, "Biaya Muat", [
+            "Tanggal", "Bon Muat", "Referensi", "Buruh", "Harian", "Gudang", "Total",
+            "Ditagihkan", "Dibayar", "Status Bayar",
+        ], cost_rows)
 
     info = wb.create_sheet("Info", 0)
     info.append(["LAPORAN OPERASIONAL PEPEG"])
