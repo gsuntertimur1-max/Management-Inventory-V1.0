@@ -141,7 +141,7 @@ const BazarPaket = () => {
         return { templateId: item.templateId, deliveredQty: delivered, returnedGoodQty: returnedGood, returnedDamagedQty: damaged };
       });
       await api.post(`/bazar/package-loads/${closing.id}/close`, { items, note: 'Rekonsiliasi distribusi paket' });
-      toast.success('Distribusi paket selesai dan stok telah direkonsiliasi');
+      toast.success('Distribusi paket selesai · komponen paket rusak masuk Area Barang Rusak Bazar');
       setClosing(null); await Promise.all([loadAll(), refreshConsignmentFlow()]);
     } catch (e) { toast.error(e?.response ? apiError(e) : e.message); }
   };
@@ -245,7 +245,7 @@ const BazarPaket = () => {
         {loads.map((load) => <div key={load.id} className="border border-[#243044] rounded-xl p-4">
           <div className="flex flex-wrap justify-between gap-2"><div><b>{load.loadNo}</b> · {load.destination}<div className="text-xs text-[#8b93a1] mt-1">{load.date} · {load.vehicleNo} · {load.driver || 'Pengemudi belum diisi'}</div><div className="font-mono text-[10px] text-[#93c5fd] mt-1">SJ: {load.suratJalanNo || 'belum dibuat'} · BM: {load.bonNo || 'belum dibuat'}</div></div><span className="text-xs px-2.5 py-1 rounded-full bg-[#2563eb]/15 text-[#93c5fd]">{load.status}</span></div>
           <div className="text-xs mt-3 space-y-1">{(load.items || []).map((x) => <div key={x.templateId}>{x.packageCode} · {x.packageName}: <b>{x.loadedQty}</b> paket</div>)}</div>
-          {load.status === 'SELESAI' && <div className="mt-3 pt-3 border-t border-[#243044] text-xs space-y-1">{(load.resultItems || []).map((x) => <div key={x.templateId}>{x.packageName}: <b>{x.deliveredQty}</b> disalurkan · <b>{x.returnedGoodQty}</b> retur baik · <b>{x.returnedDamagedQty}</b> retur rusak</div>)}</div>}
+          {load.status === 'SELESAI' && <div className="mt-3 pt-3 border-t border-[#243044] text-xs space-y-2">{(load.resultItems || []).map((x) => <div key={x.templateId}><div>{x.packageName}: <b>{x.deliveredQty}</b> disalurkan · <b>{x.returnedGoodQty}</b> retur baik · <b>{x.returnedDamagedQty}</b> retur rusak</div>{(x.damagedComponents || []).length > 0 && <div className="text-[#fbbf24] mt-1">Area Barang Rusak: {(x.damagedComponents || []).map((c) => `${c.name} ${c.damagedQty} ${c.unit}`).join(' · ')}</div>}</div>)}</div>}
           <div className="flex flex-wrap gap-2 mt-3">
             <button disabled={downloading === `${load.id}-surat-jalan`} onClick={() => downloadDocument(load, 'surat-jalan')} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#2563eb]/50 text-[#93c5fd] text-xs font-semibold"><FileText size={13}/>{downloading === `${load.id}-surat-jalan` ? 'Menyiapkan…' : 'Surat Jalan'}</button>
             <button disabled={downloading === `${load.id}-bon-muat`} onClick={() => downloadDocument(load, 'bon-muat')} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#64748b]/50 text-[#cbd5e1] text-xs font-semibold"><Printer size={13}/>{downloading === `${load.id}-bon-muat` ? 'Menyiapkan…' : 'Bon Muat'}</button>
@@ -267,7 +267,7 @@ const BazarPaket = () => {
 
     {closing && <div className="fixed inset-0 z-[90] bg-black/75 flex items-center justify-center p-4"><div className="card-surface w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
       <h2 className="font-display text-xl font-bold">Rekonsiliasi {closing.loadNo}</h2>
-      <p className="text-xs text-[#8b93a1] mt-1 mb-4">Isi jumlah disalurkan dan retur rusak. Retur baik dihitung otomatis.</p>
+      <p className="text-xs text-[#8b93a1] mt-1 mb-4">Isi jumlah disalurkan dan retur rusak. Retur baik dihitung otomatis. Isi paket yang kembali rusak akan dipindahkan per komponen ke Area Barang Rusak Bazar.</p>
       {(closing.items || []).map((item) => {
         const delivered = Number(closeRows[item.templateId]?.deliveredQty || 0);
         const damaged = Number(closeRows[item.templateId]?.returnedDamagedQty || 0);
