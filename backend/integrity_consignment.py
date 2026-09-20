@@ -339,6 +339,7 @@ async def analyze_consignment_integrity() -> dict:
 
     external_nd_docs = await db.bazar_external_nd.find({}, {"_id": 0}).to_list(10000)
     external_nd_lots = await db.bazar_external_nd_lots.find({}, {"_id": 0}).to_list(50000)
+    external_nd_ids = {str(row.get("id") or "") for row in external_nd_docs if str(row.get("id") or "")}
     nd_issues: list[dict] = []
     reference_usage = defaultdict(float)
     reference_meta = {}
@@ -352,6 +353,16 @@ async def analyze_consignment_integrity() -> dict:
             lots_by_nd[nd_id].append(lot)
         if lot_id:
             lot_index[lot_id] = lot
+        if nd_id and nd_id not in external_nd_ids:
+            nd_issues.append({
+                "severity": "ERROR",
+                "code": "EXTERNAL_ND_SOURCE_LOT_ORPHAN",
+                "ndId": nd_id,
+                "ndNo": lot.get("ndNo", ""),
+                "lotNo": lot.get("lotNo", ""),
+                "productId": lot.get("productId", ""),
+                "issue": "Lot sumber ND tidak memiliki dokumen ND induk.",
+            })
         received = _n(lot.get("receivedQty"))
         remaining = _n(lot.get("remainingQty"))
         returned = _n(lot.get("returnedQty"))
