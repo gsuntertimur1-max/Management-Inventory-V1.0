@@ -1052,8 +1052,10 @@ async def complete_outbound_load(load_id: str, body: LoadingCompletionInput | No
     completed_at = now_iso()
     completed_local = operational_now()
     fee_settings = await db.settings.find_one({"_id": "app"}, {"_id": 0, "holidays": 1}) or {}
-    loading_holiday = holiday_from_settings(completed_local, fee_settings.get("holidays") or [])
     started_local = local_datetime(load.get("started_at"), completed_local.tzinfo) or completed_local
+    # Hari libur mengikuti hari aktivitas dimulai, bukan waktu Bon dicetak
+    # dan bukan semata-mata waktu completion.
+    loading_holiday = holiday_from_settings(started_local, fee_settings.get("holidays") or [])
     split_inputs = {row.index: float(row.normalQtyBefore1600) for row in (body.items if body else [])}
     final_items = []
     for index, original in enumerate(load.get("items", [])):
