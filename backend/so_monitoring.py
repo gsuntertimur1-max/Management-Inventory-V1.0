@@ -5,7 +5,7 @@ from datetime import date
 
 from fastapi import APIRouter, Depends
 
-from backend.server import db, get_current_user, operational_now
+from backend.server import db, operational_now, require_cost_view
 
 router = APIRouter(prefix="/api")
 EPS = 1e-9
@@ -374,5 +374,5 @@ def fulfillment_integrity_issues(monitoring: dict) -> list[dict]:
 
 
 @router.get("/so-monitoring")
-async def so_monitoring(user: dict = Depends(get_current_user)):
+async def so_monitoring(user: dict = Depends(require_cost_view)):
     return await build_so_monitoring()
