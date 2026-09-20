@@ -338,13 +338,51 @@ async def analyze_consignment_integrity() -> dict:
     } for row in damaged_active_opnames)
 
     external_nd_docs = await db.bazar_external_nd.find({}, {"_id": 0}).to_list(10000)
+    external_nd_lots = await db.bazar_external_nd_lots.find({}, {"_id": 0}).to_list(50000)
     nd_issues: list[dict] = []
     reference_usage = defaultdict(float)
     reference_meta = {}
     so_owners = defaultdict(set)
+    lots_by_nd: dict[str, list[dict]] = defaultdict(list)
+    lot_index: dict[str, dict] = {}
+    for lot in external_nd_lots:
+        nd_id = str(lot.get("ndId") or "")
+        lot_id = str(lot.get("id") or "")
+        if nd_id:
+            lots_by_nd[nd_id].append(lot)
+        if lot_id:
+            lot_index[lot_id] = lot
+        received = _n(lot.get("receivedQty"))
+        remaining = _n(lot.get("remainingQty"))
+        returned = _n(lot.get("returnedQty"))
+        realized = _n(lot.get("realizedQty"))
+        if min(received, remaining, returned, realized) < -EPS or abs(received - remaining - returned - realized) > EPS:
+            nd_issues.append({
+                "severity": "ERROR",
+                "code": "EXTERNAL_ND_SOURCE_LOT_BALANCE",
+                "ndId": nd_id,
+                "ndNo": lot.get("ndNo", ""),
+                "lotNo": lot.get("lotNo", ""),
+                "productId": lot.get("productId", ""),
+                "receivedQty": received,
+                "remainingQty": remaining,
+                "returnedQty": returned,
+                "realizedQty": realized,
+                "issue": "Saldo lot sumber ND tidak memenuhi received = remaining + returned + realized.",
+            })
 
     for raw in external_nd_docs:
         doc = summarize_external_nd(raw)
+        doc_id = str(doc.get("id") or "")
+        doc_lots = lots_by_nd.get(doc_id, [])
+        lots_by_product: dict[str, list[dict]] = defaultdict(list)
+        for lot in doc_lots:
+            lots_by_product[str(lot.get("productId") or "")].append(lot)
+        realization_index = {
+            str(realization.get("id") or ""): realization
+            for realization in doc.get("realizations", [])
+            if str(realization.get("id") or "")
+        }
         nd_no = str(doc.get("ndNo") or "")
         if doc.get("cancelledAt") and any(doc.get(field) for field in ("receipts", "returns", "realizations", "soDocuments")):
             nd_issues.append({
@@ -362,6 +400,35 @@ async def analyze_consignment_integrity() -> dict:
             returned = _n(row.get("returned"))
             realized = _n(row.get("realized"))
             settled = _n(row.get("settled"))
+            product_id = str(row.get("productId") or "")
+            product_lots = lots_by_product.get(product_id, [])
+            lot_received = sum(_n(lot.get("receivedQty")) for lot in product_lots)
+            lot_remaining = sum(_n(lot.get("remainingQty")) for lot in product_lots)
+            if abs(lot_received - good) > EPS:
+                nd_issues.append({
+                    "severity": "ERROR",
+                    "code": "EXTERNAL_ND_SOURCE_LOT_RECEIPT_MISMATCH",
+                    "ndId": doc_id,
+                    "ndNo": nd_no,
+                    "productId": product_id,
+                    "goodReceivedQty": good,
+                    "sourceLotReceivedQty": lot_received,
+                    "difference": lot_received - good,
+                    "issue": "Penerimaan Baik ND tidak sama dengan total received pada lot sumber.",
+                })
+            expected_remaining = max(good - returned - realized, 0.0)
+            if abs(lot_remaining - expected_remaining) > EPS:
+                nd_issues.append({
+                    "severity": "ERROR",
+                    "code": "EXTERNAL_ND_SOURCE_LOT_REMAINING_MISMATCH",
+                    "ndId": doc_id,
+                    "ndNo": nd_no,
+                    "productId": product_id,
+                    "expectedRemainingQty": expected_remaining,
+                    "sourceLotRemainingQty": lot_remaining,
+                    "difference": lot_remaining - expected_remaining,
+                    "issue": "Sisa lot sumber ND tidak sama dengan saldo fisik ND yang belum diretur/direalisasi.",
+                })
             if good + damaged - ordered > EPS:
                 nd_issues.append({
                     "severity": "ERROR", "code": "EXTERNAL_ND_OVER_RECEIVED",
@@ -380,6 +447,112 @@ async def analyze_consignment_integrity() -> dict:
                     "ndId": doc.get("id", ""), "ndNo": nd_no, "productId": row.get("productId", ""),
                     "issue": "Kuantum SO melebihi realisasi Bazar/Paket.",
                 })
+
+        for returned_entry in doc.get("returns", []):
+            for item in returned_entry.get("items", []):
+                qty = _n(item.get("qty"))
+                allocations = item.get("sourceAllocations", [])
+                allocation_qty = sum(_n(allocation.get("qty")) for allocation in allocations)
+                if abs(allocation_qty - qty) > EPS:
+                    nd_issues.append({
+                        "severity": "ERROR",
+                        "code": "EXTERNAL_ND_RETURN_SOURCE_TRACE_MISMATCH",
+                        "ndId": doc_id,
+                        "ndNo": nd_no,
+                        "productId": item.get("productId", ""),
+                        "returnId": returned_entry.get("id", ""),
+                        "qty": qty,
+                        "sourceQty": allocation_qty,
+                        "issue": "Retur ND tidak memiliki alokasi lot sumber yang sama dengan kuantumnya.",
+                    })
+                for allocation in allocations:
+                    lot = lot_index.get(str(allocation.get("lotId") or ""))
+                    if not lot or str(lot.get("ndId") or "") != doc_id or str(lot.get("productId") or "") != str(item.get("productId") or ""):
+                        nd_issues.append({
+                            "severity": "ERROR",
+                            "code": "EXTERNAL_ND_RETURN_SOURCE_LOT_INVALID",
+                            "ndId": doc_id,
+                            "ndNo": nd_no,
+                            "lotId": allocation.get("lotId", ""),
+                            "lotNo": allocation.get("lotNo", ""),
+                            "productId": item.get("productId", ""),
+                            "issue": "Retur ND menunjuk lot sumber yang tidak sesuai ND/produk.",
+                        })
+
+        for realization in doc.get("realizations", []):
+            for item in realization.get("items", []):
+                qty = _n(item.get("qty"))
+                allocations = item.get("sourceAllocations", [])
+                allocation_qty = sum(_n(allocation.get("qty")) for allocation in allocations)
+                if abs(allocation_qty - qty) > EPS:
+                    nd_issues.append({
+                        "severity": "ERROR",
+                        "code": "EXTERNAL_ND_REALIZATION_SOURCE_TRACE_MISMATCH",
+                        "ndId": doc_id,
+                        "ndNo": nd_no,
+                        "productId": item.get("productId", ""),
+                        "realizationId": realization.get("id", ""),
+                        "qty": qty,
+                        "sourceQty": allocation_qty,
+                        "issue": "Realisasi ND tidak memiliki alokasi lot sumber yang sama dengan kuantumnya.",
+                    })
+                for allocation in allocations:
+                    lot = lot_index.get(str(allocation.get("lotId") or ""))
+                    if not lot or str(lot.get("ndId") or "") != doc_id or str(lot.get("productId") or "") != str(item.get("productId") or ""):
+                        nd_issues.append({
+                            "severity": "ERROR",
+                            "code": "EXTERNAL_ND_REALIZATION_SOURCE_LOT_INVALID",
+                            "ndId": doc_id,
+                            "ndNo": nd_no,
+                            "lotId": allocation.get("lotId", ""),
+                            "lotNo": allocation.get("lotNo", ""),
+                            "productId": item.get("productId", ""),
+                            "issue": "Realisasi ND menunjuk lot sumber yang tidak sesuai ND/produk.",
+                        })
+
+        for so_entry in doc.get("soDocuments", []):
+            for item in so_entry.get("items", []):
+                qty = _n(item.get("qty"))
+                allocations = item.get("realizationAllocations", [])
+                allocation_qty = sum(_n(allocation.get("qty")) for allocation in allocations)
+                if abs(allocation_qty - qty) > EPS:
+                    nd_issues.append({
+                        "severity": "ERROR",
+                        "code": "EXTERNAL_ND_SO_REALIZATION_TRACE_MISMATCH",
+                        "ndId": doc_id,
+                        "ndNo": nd_no,
+                        "soNo": so_entry.get("soNo", ""),
+                        "productId": item.get("productId", ""),
+                        "qty": qty,
+                        "realizationQty": allocation_qty,
+                        "issue": "SO ND tidak memiliki alokasi realisasi yang sama dengan kuantumnya.",
+                    })
+                for allocation in allocations:
+                    realization = realization_index.get(str(allocation.get("realizationId") or ""))
+                    if not realization:
+                        nd_issues.append({
+                            "severity": "ERROR",
+                            "code": "EXTERNAL_ND_SO_REALIZATION_INVALID",
+                            "ndId": doc_id,
+                            "ndNo": nd_no,
+                            "soNo": so_entry.get("soNo", ""),
+                            "realizationId": allocation.get("realizationId", ""),
+                            "issue": "SO menunjuk realisasi yang tidak ditemukan pada ND.",
+                        })
+                        continue
+                    source_qty = sum(_n(source.get("qty")) for source in allocation.get("sourceAllocations", []))
+                    if abs(source_qty - _n(allocation.get("qty"))) > EPS:
+                        nd_issues.append({
+                            "severity": "ERROR",
+                            "code": "EXTERNAL_ND_SO_SOURCE_TRACE_MISMATCH",
+                            "ndId": doc_id,
+                            "ndNo": nd_no,
+                            "soNo": so_entry.get("soNo", ""),
+                            "realizationId": allocation.get("realizationId", ""),
+                            "qty": _n(allocation.get("qty")),
+                            "sourceQty": source_qty,
+                            "issue": "Trace lot sumber pada alokasi SO tidak sama dengan kuantum realisasi.",
+                        })
 
         for realization in doc.get("realizations", []):
             activity_type = str(realization.get("activityType") or "")
