@@ -23,6 +23,56 @@ BACKUP_SCHEMA_VERSION = 1
 MAX_BACKUP_BYTES = 25 * 1024 * 1024
 MAX_RESTORE_DOCS = 100_000
 
+OPERATIONAL_RESET_COLLECTIONS = [
+    # Dokumen/transaksi utama
+    "transactions",
+    "surat_jalan",
+    "purchase_orders",
+    "outbound_loads",
+    "outbound_documents",
+    "supplier_returns",
+
+    # Stok fisik, tumpukan, lot/FEFO, opname, perawatan
+    "stack_allocations",
+    "stack_history",
+    "stack_treatments",
+    "stack_lots",
+    "stack_lot_movements",
+    "stock_opnames",
+
+    # Biaya dan recovery operasional
+    "loading_cost_settlements",
+    "unloading_cost_settlements",
+    "operational_postcommit_issues",
+    "operation_requests",
+    "operation_locks",
+    "unloading_sessions",
+
+    # Bazar/E-commerce/Paket: saldo dan transaksi, tetapi master Paket dipertahankan
+    "consignment_layouts",
+    "consignment_layout_history",
+    "consignment_movements",
+    "consignment_operation_history",
+    "consignment_opnames",
+    "consignment_damaged_balances",
+    "consignment_damaged_movements",
+    "consignment_damaged_opnames",
+    "bazar_trips",
+    "bazar_package_batches",
+    "bazar_package_loads",
+    "bazar_external_nd",
+    "bazar_external_nd_lots",
+    "ecom_orders",
+
+    # Histori marketplace operasional; akun/token/mapping SKU tetap dipertahankan
+    "marketplace_auth_sessions",
+    "marketplace_sync_logs",
+    "marketplace_webhook_events",
+
+    # Nomor urut operasional dimulai kembali dari awal
+    "counters",
+]
+
 BACKUP_COLLECTIONS = [
     "users",
     "settings",
@@ -193,6 +243,145 @@ async def set_maintenance(body: MaintenanceBody, user: dict = Depends(require_su
         upsert=True,
     )
     return {"enabled": bool(body.enabled), "note": body.note.strip()}
+
+
+@router.get("/admin/reset-operational/preview")
+async def reset_operational_preview(user: dict = Depends(require_superadmin)):
+    settings = await db.settings.find_one(
+        {"_id": "app"},
+        {"_id": 0, "maintenanceMode": 1},
+    ) or {}
+    active_loads = await db.outbound_loads.count_documents(
+        {"status": {"$in": ["Menunggu", "Sedang Dimuat"]}}
+    )
+    processing_requests = await db.operation_requests.count_documents({"status": "PROCESSING"})
+    active_locks = await db.operation_locks.count_documents(
+        {"expiresAt": {"$gt": datetime.now(timezone.utc)}}
+    )
+    key_counts = {}
+    for name in (
+        "transactions", "outbound_loads", "surat_jalan", "purchase_orders",
+        "stack_allocations", "stack_lots", "bazar_trips", "ecom_orders",
+        "consignment_layouts", "consignment_damaged_balances",
+    ):
+        key_counts[name] = await db[name].count_documents({})
+    return {
+        "maintenanceMode": bool(settings.get("maintenanceMode", False)),
+        "activeLoads": active_loads,
+        "processingRequests": processing_requests,
+        "activeLocks": active_locks,
+        "productsPreserved": await db.products.count_documents({}),
+        "suppliersPreserved": await db.suppliers.count_documents({}),
+        "packageTemplatesPreserved": await db.bazar_package_templates.count_documents({}),
+        "marketplaceMappingsPreserved": await db.marketplace_sku_mappings.count_documents({}),
+        "keyCounts": key_counts,
+    }
+
+
+@router.post("/admin/reset-operational")
+async def reset_operational_data(
+    reset_confirmation: str = Header(default="", alias="X-PEPEG-RESET-CONFIRM"),
+    backup_confirmation: str = Header(default="", alias="X-PEPEG-BACKUP-CONFIRM"),
+    user: dict = Depends(require_superadmin),
+):
+    if reset_confirmation != "RESET_OPERASIONAL_PEPEG":
+        raise HTTPException(status_code=400, detail="Konfirmasi Reset Operasional tidak valid")
+    if backup_confirmation != "BACKUP_TERSIMPAN":
+        raise HTTPException(status_code=400, detail="Reset ditolak: konfirmasi backup belum diberikan")
+
+    settings = await db.settings.find_one(
+        {"_id": "app"},
+        {"_id": 0, "maintenanceMode": 1},
+    ) or {}
+    if not settings.get("maintenanceMode"):
+        raise HTTPException(status_code=409, detail="Aktifkan Maintenance Mode sebelum Reset Operasional")
+
+    active_loads = await db.outbound_loads.count_documents(
+        {"status": {"$in": ["Menunggu", "Sedang Dimuat"]}}
+    )
+    if active_loads:
+        raise HTTPException(status_code=409, detail=f"Reset ditolak: masih ada {active_loads} pemuatan aktif")
+
+    processing_requests = await db.operation_requests.count_documents({"status": "PROCESSING"})
+    active_locks = await db.operation_locks.count_documents(
+        {"expiresAt": {"$gt": datetime.now(timezone.utc)}}
+    )
+    if processing_requests or active_locks:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Reset ditolak: masih ada proses aktif ({processing_requests} request / {active_locks} lock). Tunggu proses selesai lalu periksa ulang.",
+        )
+
+    master_before = {
+        "products": await db.products.count_documents({}),
+        "suppliers": await db.suppliers.count_documents({}),
+        "packageTemplates": await db.bazar_package_templates.count_documents({}),
+        "marketplaceMappings": await db.marketplace_sku_mappings.count_documents({}),
+        "users": await db.users.count_documents({}),
+    }
+    cleared_before = {
+        name: await db[name].count_documents({})
+        for name in OPERATIONAL_RESET_COLLECTIONS
+    }
+
+    try:
+        async with await client.start_session() as session:
+            async with session.start_transaction():
+                for name in OPERATIONAL_RESET_COLLECTIONS:
+                    await db[name].delete_many({}, session=session)
+
+                # Master SKU tetap ada; hanya saldo dan atribut stok aktif yang dinolkan.
+                await db.products.update_many(
+                    {},
+                    {"$set": {
+                        "stock": 0.0,
+                        "damaged": 0.0,
+                        "exp": "",
+                        "channelStock": {
+                            "PSO": {"stock": 0.0, "damaged": 0.0},
+                            "KOM": {"stock": 0.0, "damaged": 0.0},
+                        },
+                    }},
+                    session=session,
+                )
+    except Exception as exc:
+        logger.exception("Reset Operasional gagal dan transaksi database dibatalkan")
+        raise HTTPException(status_code=500, detail="Reset Operasional gagal; perubahan database dibatalkan") from exc
+
+    finished_at = datetime.now(timezone.utc).isoformat()
+    await db.settings.update_one(
+        {"_id": "app"},
+        {"$set": {
+            "maintenanceMode": True,
+            "maintenanceNote": "Reset Operasional selesai; verifikasi master SKU dan stok nol sebelum membuka operasional.",
+            "maintenanceUpdatedAt": finished_at,
+            "maintenanceUpdatedBy": user.get("name", ""),
+            "lastOperationalResetAt": finished_at,
+            "lastOperationalResetBy": user.get("name", ""),
+            "lastOperationalResetPreserved": master_before,
+        }},
+        upsert=True,
+    )
+
+    logger.warning(
+        "Reset Operasional PEPEG oleh %s; master dipertahankan=%s",
+        user.get("name", ""),
+        master_before,
+    )
+    return {
+        "reset": True,
+        "maintenanceMode": True,
+        "productsPreserved": master_before["products"],
+        "suppliersPreserved": master_before["suppliers"],
+        "packageTemplatesPreserved": master_before["packageTemplates"],
+        "marketplaceMappingsPreserved": master_before["marketplaceMappings"],
+        "usersPreserved": master_before["users"],
+        "clearedDocuments": sum(cleared_before.values()),
+        "clearedCollections": {
+            name: count for name, count in cleared_before.items() if count
+        },
+        "message": "Reset Operasional selesai. Master SKU/supplier/config tetap ada; seluruh saldo stok diset 0. Maintenance Mode tetap aktif.",
+    }
 
 
 @router.get("/admin/backups/export")
