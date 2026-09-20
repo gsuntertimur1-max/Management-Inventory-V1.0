@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Boxes, Layers3, RefreshCcw, ShoppingBag, Warehouse } from 'lucide-react';
+import { Boxes, FileCheck2, Layers3, PackageCheck, RefreshCcw, RotateCcw, ShoppingBag, Truck, Warehouse } from 'lucide-react';
 import Dashboard from './Dashboard';
 import './DashboardUnified.css';
 import { useData } from '../context/DataContext';
@@ -27,7 +27,7 @@ const SummaryCard = ({ icon: Icon, label, value, accent }) => <div className="ca
 </div>;
 
 const DashboardUnified = () => {
-  const { user, products, consignmentStock, monitoringStock, consignmentLastSync, consignmentSyncing, refreshConsignmentFlow } = useData();
+  const { user, products, consignmentStock, monitoringStock, consignmentDashboard, consignmentLastSync, consignmentSyncing, refreshConsignmentFlow } = useData();
   const scopedDestination = roleDestination(user?.role);
   const syncLabel = consignmentLastSync
     ? consignmentLastSync.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -57,6 +57,21 @@ const DashboardUnified = () => {
     });
     return { main, bazar, ecommerce, physical: mergeTotals(main, bazar, ecommerce) };
   }, [products, consignmentStock]);
+
+  const consignmentPosition = useMemo(() => {
+    const internal = consignmentDashboard?.internal || {};
+    const bazar = internal['Gudang Bazar'] || {};
+    const ecommerce = internal['Gudang E-commerce'] || {};
+    const external = consignmentDashboard?.externalND || {};
+    const activity = consignmentDashboard?.activityToday || {};
+    return {
+      bazarOutstanding: bazar.outstanding || {},
+      ecommerceOutstanding: ecommerce.outstanding || {},
+      externalOutstanding: external.outstanding || {},
+      internalSoIssued: mergeTotals(bazar.soIssued || {}, ecommerce.soIssued || {}),
+      activity,
+    };
+  }, [consignmentDashboard]);
 
   if (scopedDestination) {
     const isBazar = scopedDestination === 'Gudang Bazar';
@@ -88,6 +103,38 @@ const DashboardUnified = () => {
         <SummaryCard icon={Layers3} label="Total Stok Fisik" value={formatTotals(totals.physical)} accent="#22c55e" />
       </div>
     </section>
+
+    <section>
+      <div className="mb-3">
+        <div className="label-mono">Posisi Administratif Konsinyasi</div>
+        <p className="text-xs text-[#8b93a1] mt-1">Saldo administratif dipisahkan dari fisik. SO hanya menyelesaikan tanggung jawab konsinyasi dan tidak mengurangi stok fisik Bazar/E-commerce untuk kedua kali.</p>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <SummaryCard icon={ShoppingBag} label="GST → Bazar Belum SO" value={formatTotals(consignmentPosition.bazarOutstanding)} accent="#f59e0b" />
+        <SummaryCard icon={Boxes} label="GST → E-commerce Belum SO" value={formatTotals(consignmentPosition.ecommerceOutstanding)} accent="#0ea5e9" />
+        <SummaryCard icon={Warehouse} label="ND Gudang Lain → Bazar Belum SO" value={formatTotals(consignmentPosition.externalOutstanding)} accent="#a855f7" />
+        <SummaryCard icon={FileCheck2} label="SO Konsinyasi GST Terbit" value={formatTotals(consignmentPosition.internalSoIssued)} accent="#22c55e" />
+      </div>
+    </section>
+
+    <section className="card-surface p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div>
+          <div className="label-mono">Aktivitas Bazar & E-commerce Hari Ini</div>
+          <div className="text-xs text-[#6b7688] mt-1">{consignmentDashboard?.date || ''} · aktivitas fisik dan SO administratif ditampilkan terpisah</div>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
+        <div className="rounded-xl border border-[#242f3d] p-3"><div className="flex items-center gap-1.5 text-[#f59e0b]"><ShoppingBag size={14}/><span className="text-[10px] font-semibold uppercase">Bazar Terjual</span></div><div className="font-mono font-bold mt-2">{formatTotals(consignmentPosition.activity.bazarSold || {})}</div></div>
+        <div className="rounded-xl border border-[#242f3d] p-3"><div className="flex items-center gap-1.5 text-[#a855f7]"><PackageCheck size={14}/><span className="text-[10px] font-semibold uppercase">Paket Disalurkan</span></div><div className="font-mono font-bold mt-2">{formatTotals(consignmentPosition.activity.packageDelivered || {})}</div></div>
+        <div className="rounded-xl border border-[#242f3d] p-3"><div className="flex items-center gap-1.5 text-[#0ea5e9]"><Truck size={14}/><span className="text-[10px] font-semibold uppercase">Ecom Shipped</span></div><div className="font-mono font-bold mt-2">{formatTotals(consignmentPosition.activity.ecomShipped || {})}</div></div>
+        <div className="rounded-xl border border-[#242f3d] p-3"><div className="flex items-center gap-1.5 text-[#22c55e]"><RotateCcw size={14}/><span className="text-[10px] font-semibold uppercase">Retur Baik</span></div><div className="font-mono font-bold mt-2">{formatTotals(consignmentPosition.activity.returnedGood || {})}</div></div>
+        <div className="rounded-xl border border-[#242f3d] p-3"><div className="flex items-center gap-1.5 text-[#ef4444]"><RotateCcw size={14}/><span className="text-[10px] font-semibold uppercase">Retur Rusak</span></div><div className="font-mono font-bold mt-2">{formatTotals(consignmentPosition.activity.returnedDamaged || {})}</div></div>
+        <div className="rounded-xl border border-[#242f3d] p-3"><div className="flex items-center gap-1.5 text-[#60a5fa]"><FileCheck2 size={14}/><span className="text-[10px] font-semibold uppercase">SO GST Hari Ini</span></div><div className="font-mono font-bold mt-2">{formatTotals(consignmentPosition.activity.internalSoIssued || {})}</div></div>
+        <div className="rounded-xl border border-[#242f3d] p-3"><div className="flex items-center gap-1.5 text-[#c084fc]"><FileCheck2 size={14}/><span className="text-[10px] font-semibold uppercase">SO ND Lain Hari Ini</span></div><div className="font-mono font-bold mt-2">{formatTotals(consignmentPosition.activity.externalSoIssued || {})}</div></div>
+      </div>
+    </section>
+
     <OperationalOutstandingPanel />
     <Dashboard />
   </div>;
