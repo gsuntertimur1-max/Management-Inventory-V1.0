@@ -833,6 +833,6 @@ async def ensure_marketplace_indexes() -> None:
     await db.ecom_orders.create_index(
         [("marketplaceAccountId", 1), ("orderNo", 1)],
         unique=True,
-        name="ecom_marketplace_order_unique",
+        name="ecom_marketplace_account_order_unique",
         partialFilterExpression={"marketplaceAccountId": {"$type": "string"}},
     )
