@@ -12,6 +12,7 @@ import DashboardUnified from './pages/DashboardUnified';
 import DaftarProduk from './pages/DaftarProduk';
 import CatatStok from './pages/CatatStok';
 import Riwayat from './pages/Riwayat';
+import LaporanOperasional from './pages/LaporanOperasional';
 import RiwayatConsignment from './pages/RiwayatConsignment';
 import Pengeluaran from './pages/Pengeluaran';
 import MonitorSO from './pages/MonitorSO';
@@ -67,7 +68,7 @@ function AppRoutes() {
       <Route path="/" element={<Protected><DashboardUnified /></Protected>} />
       <Route path="/produk" element={<Protected permission="mainInventory"><DaftarProduk /></Protected>} />
       <Route path="/import" element={<Protected permission="masterWrite"><ImportData /></Protected>} />
-      <Route path="/tumpukan" element={<Protected><TumpukanUnified /></Protected>} />
+      <Route path="/tumpukan" element={<Protected permission="mainInventory"><TumpukanUnified /></Protected>} />
       <Route path="/fefo" element={<Protected permission="mainInventory"><FefoLot /></Protected>} />
       <Route path="/area-barang-rusak" element={<Protected permission="mainInventory"><AreaBarangRusak /></Protected>} />
       <Route path="/opname-gudang" element={<Protected permission="mainInventory"><OpnameGudang /></Protected>} />
@@ -87,6 +88,7 @@ function AppRoutes() {
       <Route path="/koreksi-operasional" element={<Protected permission="corrections"><KoreksiOperasional /></Protected>} />
       <Route path="/kontrol-integritas" element={<Protected permission="masterWrite"><><OutboundDocumentIntegrityPanel /><MainWarehouseE2EPanel /><KontrolIntegritas /></></Protected>} />
       <Route path="/riwayat" element={<Protected permission="mainInventory"><Riwayat /></Protected>} />
+      <Route path="/laporan-operasional" element={<Protected permission="mainInventory"><LaporanOperasional /></Protected>} />
       <Route path="/riwayat-bazar-ecom" element={<Protected permission="consignmentHistory"><RiwayatConsignment /></Protected>} />
       <Route path="/po" element={<Protected permission="mainInventory"><PurchaseOrder /></Protected>} />
       <Route path="/supplier" element={<Protected permission="mainInventory"><Supplier /></Protected>} />
