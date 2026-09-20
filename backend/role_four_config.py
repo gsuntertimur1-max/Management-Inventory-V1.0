@@ -47,21 +47,21 @@ ROLE_LABELS = {
 
 ROLE_PERMISSIONS = {
     ROLE_SUPERADMIN: {
-        "masterWrite", "inbound", "outbound", "rebagging", "qc", "users",
+        "mainInventory", "masterWrite", "inbound", "outbound", "rebagging", "qc", "users",
         "settings", "costView", "corrections", "warehouseApprove", "currentWrite",
         "bazarView", "bazarOps", "ecomView", "ecomOps", "consignmentView", "consignmentHistory",
     },
     ROLE_WAREHOUSE_HEAD: {
-        "inbound", "outbound", "costView", "corrections", "warehouseApprove",
+        "mainInventory", "inbound", "outbound", "costView", "corrections", "warehouseApprove",
         "currentWrite", "bazarView", "bazarOps", "ecomView", "ecomOps", "consignmentView", "consignmentHistory",
     },
     ROLE_ADMIN: {
-        "inbound", "outbound", "costView", "currentWrite",
+        "mainInventory", "inbound", "outbound", "costView", "currentWrite",
         "bazarView", "ecomView", "consignmentView",
     },
     ROLE_BAZAR: {"bazarView", "bazarOps", "consignmentView", "consignmentHistory"},
     ROLE_ECOM: {"ecomView", "ecomOps", "consignmentView", "consignmentHistory"},
-    ROLE_VIEWER: {"bazarView", "ecomView", "consignmentView"},
+    ROLE_VIEWER: {"mainInventory", "bazarView", "ecomView", "consignmentView"},
 }
 
 
