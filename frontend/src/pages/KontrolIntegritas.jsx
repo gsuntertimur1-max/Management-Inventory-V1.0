@@ -10,6 +10,38 @@ const badgeClass = (severity) => severity === 'ERROR'
     ? 'bg-[#78350f]/30 text-[#fcd34d] border-[#78350f]'
     : 'bg-[#14532d]/25 text-[#86efac] border-[#14532d]';
 
+
+const IssuePanel = ({ title, subtitle, rows = [] }) => {
+  if (!rows.length) return null;
+  return (
+    <div className="card-surface p-5">
+      <div className="mb-4">
+        <div className="label-mono text-[10px] text-[#fbbf24]">Kontrol Konsinyasi</div>
+        <h2 className="font-display text-xl font-bold mt-1">{title}</h2>
+        {subtitle && <p className="text-xs text-[#8b93a1] mt-1">{subtitle}</p>}
+      </div>
+      <div className="space-y-2">
+        {rows.map((row, index) => (
+          <div key={row.code || row.orderId || row.opnameId || row.ndId || `${row.productId || 'issue'}-${index}`} className={`rounded-xl border px-4 py-3 text-sm ${badgeClass(row.severity || 'WARNING')}`}>
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <div className="font-semibold">{row.code || row.issue || 'Temuan Integritas'}</div>
+                <div className="text-xs opacity-90 mt-1">{row.issue}</div>
+              </div>
+              <div className="font-mono text-[10px] opacity-80">
+                {row.destination || row.ndNo || row.orderNo || row.opnameNo || row.referenceNo || row.packageCode || ''}
+              </div>
+            </div>
+            {(row.name || row.sku || row.productId) && <div className="mt-2 text-xs opacity-80">{row.name || row.sku || row.productId}</div>}
+            {row.overBy !== undefined && <div className="mt-1 text-xs font-mono">Lebih: {formatNum(row.overBy)}</div>}
+            {row.difference !== undefined && <div className="mt-1 text-xs font-mono">Selisih: {formatNum(row.difference)}</div>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 const KontrolIntegritas = () => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -70,6 +102,16 @@ const KontrolIntegritas = () => {
         <div className="card-surface p-4"><div className="label-mono text-[9px]">Txn tanpa ID</div><div className="font-mono text-2xl font-bold mt-1">{summary.missingProductIdTransactions ?? '—'}</div></div>
       </div>
 
+      <div className="grid grid-cols-2 lg:grid-cols-7 gap-3">
+        <div className={`card-surface p-4 border ${Number(summary.consignmentLayoutMismatches || 0) > 0 ? 'border-[#7f1d1d]' : 'border-[#14532d]'}`}><div className="label-mono text-[9px]">Lokasi Konsinyasi</div><div className="font-mono text-2xl font-bold mt-1">{summary.consignmentLayoutMismatches ?? '—'}</div><div className="text-[10px] text-[#8b93a1] mt-1">mismatch ledger/lokasi</div></div>
+        <div className={`card-surface p-4 border ${Number(summary.consignmentReservationIssues || 0) > 0 ? 'border-[#7f1d1d]' : 'border-[#14532d]'}`}><div className="label-mono text-[9px]">Reservasi Bazar/Ecom</div><div className="font-mono text-2xl font-bold mt-1">{summary.consignmentReservationIssues ?? '—'}</div></div>
+        <div className={`card-surface p-4 border ${Number(summary.packageIntegrityIssues || 0) > 0 ? 'border-[#7f1d1d]' : 'border-[#14532d]'}`}><div className="label-mono text-[9px]">Paket</div><div className="font-mono text-2xl font-bold mt-1">{summary.packageIntegrityIssues ?? '—'}</div></div>
+        <div className={`card-surface p-4 border ${Number(summary.ecomOrderIntegrityIssues || 0) > 0 ? 'border-[#7f1d1d]' : 'border-[#14532d]'}`}><div className="label-mono text-[9px]">Order Ecom</div><div className="font-mono text-2xl font-bold mt-1">{summary.ecomOrderIntegrityIssues ?? '—'}</div></div>
+        <div className={`card-surface p-4 border ${Number(summary.consignmentDamagedIntegrityIssues || 0) > 0 ? 'border-[#7f1d1d]' : 'border-[#14532d]'}`}><div className="label-mono text-[9px]">Barang Rusak</div><div className="font-mono text-2xl font-bold mt-1">{summary.consignmentDamagedIntegrityIssues ?? '—'}</div></div>
+        <div className={`card-surface p-4 border ${Number(summary.externalNDIntegrityIssues || 0) > 0 ? 'border-[#7f1d1d]' : 'border-[#14532d]'}`}><div className="label-mono text-[9px]">ND Eksternal</div><div className="font-mono text-2xl font-bold mt-1">{summary.externalNDIntegrityIssues ?? '—'}</div></div>
+        <div className={`card-surface p-4 border ${Number(summary.consignmentOpnamePending || 0) > 0 ? 'border-[#78350f]' : 'border-[#14532d]'}`}><div className="label-mono text-[9px]">Opname Pending</div><div className="font-mono text-2xl font-bold mt-1">{summary.consignmentOpnamePending ?? '—'}</div></div>
+      </div>
+
       {(data?.systemIssues || []).length > 0 && (
         <div className="space-y-2">
           {data.systemIssues.map((issue) => (
@@ -111,6 +153,38 @@ const KontrolIntegritas = () => {
           </table>
         </div>
       </div>
+
+      <div className="card-surface p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+          <div><div className="label-mono text-[10px] text-[#93c5fd]">Bazar & E-commerce</div><h2 className="font-display text-xl font-bold mt-1">Ledger Konsinyasi | Lokasi Fisik</h2><p className="text-xs text-[#8b93a1] mt-1">Saldo ledger dan total lokasi Unit 18 harus sama. Pemeriksaan ini tidak melakukan adjustment otomatis.</p></div>
+          <div className={`border rounded-lg px-3 py-2 text-xs font-mono ${Number(summary.consignmentLayoutMismatches || 0) > 0 ? badgeClass('ERROR') : badgeClass('OK')}`}>{Number(summary.consignmentLayoutMismatches || 0) > 0 ? `${summary.consignmentLayoutMismatches} MISMATCH` : 'LOKASI SINKRON'}</div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm tbl">
+            <thead><tr className="text-left border-b border-[#1a222e]">{['Status', 'Lokasi', 'Produk', 'Ledger', 'Fisik', 'Selisih', 'Temuan'].map((h) => <th key={h} className="py-2.5 pr-4 whitespace-nowrap">{h}</th>)}</tr></thead>
+            <tbody>
+              {(data?.consignmentStockIntegrity || []).length === 0 ? <tr><td colSpan={7} className="py-8 text-center text-[#8b93a1]">Belum ada saldo konsinyasi.</td></tr> : (data?.consignmentStockIntegrity || []).map((row) => (
+                <tr key={`${row.destination}-${row.productId}`} className={`border-b border-[#131a24] ${row.severity === 'ERROR' ? 'bg-[#7f1d1d]/10' : ''}`}>
+                  <td className="py-3 pr-4"><span className={`inline-flex border rounded-full px-2 py-1 text-[10px] font-mono ${badgeClass(row.severity)}`}>{row.severity}</span></td>
+                  <td className="py-3 pr-4 whitespace-nowrap">{row.destination}</td>
+                  <td className="py-3 pr-4"><div className="font-semibold">{row.name}</div><div className="label-mono text-[10px]">{row.sku}</div></td>
+                  <td className="py-3 pr-4 font-mono whitespace-nowrap">{formatNum(row.ledgerQty)} {row.unit}</td>
+                  <td className="py-3 pr-4 font-mono whitespace-nowrap">{formatNum(row.layoutQty)} {row.unit}</td>
+                  <td className={`py-3 pr-4 font-mono whitespace-nowrap ${Math.abs(Number(row.difference || 0)) > 0.000001 ? 'text-[#ef4444]' : 'text-[#4ade80]'}`}>{formatNum(row.difference)}</td>
+                  <td className="py-3 text-xs">{(row.issues || []).join(' · ') || 'Sinkron'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <IssuePanel title="Reservasi Konsinyasi Berlebih" subtitle="Perjalanan Bazar, Paket Jadi, atau order E-commerce tidak boleh mengikat stok melebihi saldo fisik." rows={data?.consignmentReservationIssues || []} />
+      <IssuePanel title="Integritas Paket Bazar" subtitle="Memeriksa batch Paket Jadi dan reservasi pemuatan Paket." rows={data?.packageIntegrityIssues || []} />
+      <IssuePanel title="Integritas Order E-commerce" subtitle="Status RESERVED/PACKING/SHIPPED/CANCELLED dicocokkan dengan movement pengiriman." rows={data?.ecomOrderIntegrityIssues || []} />
+      <IssuePanel title="Area Barang Rusak Bazar/Ecom" subtitle="Saldo barang rusak harus sama dengan total movement barang rusak." rows={data?.consignmentDamagedIntegrityIssues || []} />
+      <IssuePanel title="Stock Opname Konsinyasi Aktif" subtitle="Draft atau opname menunggu persetujuan ditampilkan agar snapshot tidak tertinggal terlalu lama." rows={data?.consignmentOpnamePending || []} />
+      <IssuePanel title="Integritas ND Gudang Lain" subtitle="Memeriksa ordered, received, retur, realisasi, SO, dan kapasitas kegiatan Bazar/Paket." rows={data?.externalNDIntegrityIssues || []} />
 
       <div className="card-surface p-5">
         <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
