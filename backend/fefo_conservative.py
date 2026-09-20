@@ -142,7 +142,7 @@ async def _product_guard(product_ids: list[str], lock_products: bool):
     if not lock_products:
         yield
         return
-    async with _product_guard(product_ids, lock_products):
+    async with operation_guard(product_lock_keys(product_ids)):
         yield
 
 
@@ -200,7 +200,7 @@ async def consume_stack_lots_conservative(load: dict, *, lock_products: bool = T
     legacy_budget: dict[tuple[str, str], float] = {}
     legacy_protected = 0.0
 
-    async with operation_guard(product_lock_keys(product_ids)):
+    async with _product_guard(product_ids, lock_products):
         for pkey, requested in physical_requested.items():
             product_id, stack_code = pkey
             if not product_id or not stack_code:
