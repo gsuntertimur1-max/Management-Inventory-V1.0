@@ -5,7 +5,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from backend.server import db, now_iso, require_admin, require_write
-from backend.outbound_flow import complete_outbound_load
+from backend.outbound_flow import LoadingCompletionInput, complete_outbound_load
 from backend.operational_guards import (
     _load_product_ids,
     _tag_load_transaction_product_ids,
@@ -150,12 +150,19 @@ async def _enrich_completed_outbound(load_id: str, load: dict, surat_jalan: dict
 
 
 @router.post("/outbound-loads/{load_id}/complete")
-async def hardened_complete_outbound(load_id: str, request: Request, user: dict = Depends(require_write)):
+async def hardened_complete_outbound(
+    load_id: str,
+    request: Request,
+    body: LoadingCompletionInput | None = None,
+    user: dict = Depends(require_write),
+):
     _, product_ids = await _load_product_ids(load_id)
 
     async def action():
         # Core stock/document mutation remains authoritative and rollback-capable.
-        result = await complete_outbound_load(load_id, user)
+        # Payload pecahan sebelum/sesudah 16.00 wajib diteruskan; waktu Bon Muat
+        # tidak pernah dipakai sebagai waktu mulai aktivitas.
+        result = await complete_outbound_load(load_id, body, user)
         load = result.get("load") or await db.outbound_loads.find_one({"id": load_id}, {"_id": 0}) or {}
         enrichment = await _enrich_completed_outbound(load_id, load, result.get("suratJalan"), products_locked=True)
         result.update(enrichment)
