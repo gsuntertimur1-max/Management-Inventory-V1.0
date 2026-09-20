@@ -25,6 +25,7 @@ from backend.server import (
     ensure_channel_stock,
     normalize_channel,
     get_operational_location,
+    has_role_permission,
 )
 from backend.stack_allocations import allocate_stock_to_stack, decrease_stack_allocation
 from backend.work_time_costs import handling_fee, holiday_from_settings, normalize_unloading_group, work_split
@@ -302,7 +303,16 @@ async def _hydrate_legacy_po(doc: dict) -> dict:
 @router.get("/purchase-orders-v2")
 async def list_purchase_orders(user: dict = Depends(get_current_user)):
     docs = await db.purchase_orders.find({}, {"_id": 0}).sort("date", -1).to_list(1000)
-    return [await _hydrate_legacy_po(doc) for doc in docs]
+    rows = [await _hydrate_legacy_po(doc) for doc in docs]
+    if has_role_permission(user.get("role"), "costView"):
+        return rows
+    cleaned = []
+    for row in rows:
+        copy = dict(row)
+        copy.pop("total", None)
+        copy["items"] = [{key: value for key, value in item.items() if key != "cost"} for item in row.get("items", [])]
+        cleaned.append(copy)
+    return cleaned
 
 
 @router.post("/purchase-orders-v2")
