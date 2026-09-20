@@ -40,6 +40,7 @@ router = APIRouter(prefix="/api")
 logger = logging.getLogger(__name__)
 _LOCK_TTL_MINUTES = 5
 _REQUEST_TTL_HOURS = 24
+_PROCESSING_STALE_MINUTES = 10
 
 
 def lock_keys(*groups: Iterable[str]) -> list[str]:
@@ -131,7 +132,24 @@ async def idempotent_operation(
     if existing:
         if existing.get("status") == "DONE" and "response" in existing:
             return existing["response"]
-        raise HTTPException(status_code=409, detail="Permintaan yang sama sedang diproses. Coba ulang beberapa saat lagi.")
+        created_at = existing.get("createdAt")
+        if isinstance(created_at, str):
+            try:
+                created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            except ValueError:
+                created_at = None
+        now_check = datetime.now(timezone.utc)
+        is_stale = bool(
+            existing.get("status") == "PROCESSING"
+            and isinstance(created_at, datetime)
+            and created_at.tzinfo is not None
+            and created_at < now_check - timedelta(minutes=_PROCESSING_STALE_MINUTES)
+        )
+        if is_stale:
+            await db.operation_requests.delete_one({"_id": document_id, "status": "PROCESSING"})
+            logger.warning("Melepas idempotency request stale: %s", document_id)
+        else:
+            raise HTTPException(status_code=409, detail="Permintaan yang sama sedang diproses. Coba ulang beberapa saat lagi.")
 
     now = datetime.now(timezone.utc)
     try:
