@@ -7,6 +7,7 @@ const api = axios.create({
   // REACT_APP_BACKEND_URL remains optional for local development.
   baseURL: `${configuredBackend}/api`,
   withCredentials: true,
+  timeout: 45000,
 });
 
 const MUTATING_METHODS = new Set(['post', 'put', 'patch', 'delete']);
@@ -133,8 +134,13 @@ export const printApiFile = async (path) => {
 
 export const apiError = (e) => {
   const detail = e?.response?.data?.detail;
-  if (typeof detail === 'string') return detail;
+  const requestId = e?.response?.data?.requestId || e?.response?.headers?.['x-request-id'];
+  if (typeof detail === 'string') return requestId ? `${detail} (ID: ${requestId})` : detail;
   if (Array.isArray(detail)) return detail.map((d) => d?.msg || JSON.stringify(d)).join(' ');
+  if (e?.code === 'ECONNABORTED') return 'Koneksi ke server melewati batas waktu. Coba ulang; sistem akan memakai kunci transaksi yang sama agar tidak tercatat ganda.';
+  if (!e?.response) return navigator.onLine === false
+    ? 'Perangkat sedang offline. Jangan membuat transaksi baru sampai koneksi kembali.'
+    : 'Koneksi ke server terputus. Coba ulang; transaksi yang sama dilindungi dari pencatatan ganda.';
   return e?.message || 'Terjadi kesalahan';
 };
 
