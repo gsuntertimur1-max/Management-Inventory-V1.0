@@ -7,6 +7,7 @@ from backend.operational_guards import idempotent_operation
 from backend.outbound_flow import (
     DailyLoadingSettlementInput,
     LoadingFeePaymentInput,
+    _crew_group,
     record_loading_fee_payment,
     settle_loading_cost,
 )
@@ -14,6 +15,7 @@ from backend.cost_payments import (
     DailyUnloadingSettlementInput,
     settle_unloading_cost,
 )
+from backend.work_time_costs import normalize_unloading_group
 
 router = APIRouter(prefix="/api")
 
@@ -41,7 +43,7 @@ async def hardened_loading_settlement(
     request: Request,
     user: dict = Depends(require_write),
 ):
-    group = body.group.strip()
+    group = _crew_group(body.group) if body.group.strip() else ""
     return await idempotent_operation(
         request,
         user,
@@ -58,7 +60,7 @@ async def hardened_unloading_settlement(
     request: Request,
     user: dict = Depends(require_write),
 ):
-    group = body.group.strip()
+    group = normalize_unloading_group(body.group) if body.group.strip() else ""
     return await idempotent_operation(
         request,
         user,
