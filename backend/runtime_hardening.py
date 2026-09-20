@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Callable, Awaitable
 
 from fastapi import HTTPException, Request
@@ -34,7 +35,7 @@ def scoped_role_blocks_main_read(role: str | None, path: str) -> bool:
         return False
     normalized = str(path or "").rstrip("/")
     prefixes = (
-        "/api/transactions", "/api/surat-jalan", "/api/purchase-orders",
+        "/api/products", "/api/suppliers", "/api/transactions", "/api/surat-jalan", "/api/purchase-orders",
         "/api/outbound-loads", "/api/stack-allocations", "/api/stack-treatments",
         "/api/stock-opnames", "/api/integrity-control", "/api/operational-corrections",
         "/api/supplier-returns", "/api/damaged-stock-area", "/api/stock-transfers",
@@ -66,7 +67,14 @@ async def ensure_performance_indexes() -> None:
         (db.transactions, [("time", -1)], "transactions_time"),
         (db.transactions, [("operation_id", 1), ("time", -1)], "transactions_operation"),
         (db.transactions, [("product_id", 1), ("time", -1)], "transactions_product_time"),
+        (db.transactions, [("load_id", 1), ("time", -1)], "transactions_load_time"),
         (db.surat_jalan, [("time", -1)], "surat_jalan_time"),
+        (db.stack_history, [("time", -1)], "stack_history_time"),
+        (db.stack_history, [("stackCode", 1), ("time", -1)], "stack_history_stack_time"),
+        (db.consignment_movements, [("time", -1)], "consignment_movement_time"),
+        (db.consignment_operation_history, [("time", -1)], "consignment_operation_history_time"),
+        (db.purchase_orders, [("date", -1), ("status", 1)], "purchase_order_date_status"),
+        (db.outbound_documents, [("updatedAt", -1)], "outbound_document_updated"),
         (db.stack_allocations, [("stackCode", 1), ("productName", 1)], "stack_location_product"),
         (db.stack_treatments, [("warehouse", 1), ("stackCode", 1), ("startDate", -1)], "treatment_location_date"),
         (db.stock_opnames, [("warehouse", 1), ("status", 1), ("createdAt", -1)], "stock_opname_warehouse_status"),
@@ -128,6 +136,23 @@ async def _cleanup_new_operational_collections() -> None:
 
 
 async def hardening_middleware(request: Request, call_next: Callable[[Request], Awaitable]):
+    request_id = str(request.headers.get("X-Request-ID") or uuid.uuid4().hex)[:100]
+    method = request.method.upper()
+    path = request.url.path.rstrip("/")
+
+    if method in {"POST", "PUT", "PATCH", "DELETE"} and not (
+        path.startswith("/api/auth/")
+        or path.startswith("/api/admin/backups/")
+        or path == "/api/admin/maintenance"
+    ):
+        settings = await db.settings.find_one({"_id": "app"}, {"_id": 0, "maintenanceMode": 1}) or {}
+        if settings.get("maintenanceMode"):
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "PEPEG sedang Maintenance Mode. Transaksi sementara dikunci.", "requestId": request_id},
+                headers={"X-Request-ID": request_id},
+            )
+
     if blocks_legacy_product_mutation(request.method, request.url.path):
         return JSONResponse(status_code=409, content={"detail": "Endpoint master produk lama dinonaktifkan untuk mencegah perubahan stok langsung. Gunakan /api/products-master dan transaksi stok."})
     if blocks_legacy_direct_transaction(request.method, request.url.path):
@@ -144,8 +169,17 @@ async def hardening_middleware(request: Request, call_next: Callable[[Request], 
     if request.method.upper() == "GET" and request.url.path.rstrip("/") == "/api/export/products.xlsx":
         return await _export_products_xlsx(request)
 
-    response = await call_next(request)
-    if request.method.upper() == "POST" and request.url.path.rstrip("/") == "/api/admin/reset-data" and 200 <= response.status_code < 300:
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.exception("Unhandled request error requestId=%s method=%s path=%s", request_id, method, path)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Terjadi kesalahan server. Gunakan Request ID saat melaporkan masalah.", "requestId": request_id},
+            headers={"X-Request-ID": request_id},
+        )
+    response.headers["X-Request-ID"] = request_id
+    if method == "POST" and path == "/api/admin/reset-data" and 200 <= response.status_code < 300:
         try:
             await _cleanup_new_operational_collections()
         except Exception as exc:
