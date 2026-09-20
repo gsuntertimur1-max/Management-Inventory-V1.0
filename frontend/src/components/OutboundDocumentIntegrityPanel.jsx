@@ -38,10 +38,12 @@ const OutboundDocumentIntegrityPanel = () => {
         <button type="button" onClick={load} disabled={loading} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-[#2a3443] text-xs disabled:opacity-50"><RefreshCcw size={14} className={loading ? 'animate-spin' : ''} /> Periksa</button>
       </div>
 
-      <div className="grid grid-cols-3 gap-2 mb-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-2 mb-4">
         <div className="rounded-lg bg-[#0b0f17] p-3"><div className="label-mono text-[9px]">Temuan</div><div className="font-mono text-xl font-bold mt-1">{summary.outboundDocumentIntegrityIssues ?? '—'}</div></div>
         <div className="rounded-lg border border-[#7f1d1d] bg-[#7f1d1d]/10 p-3"><div className="label-mono text-[9px] text-[#fca5a5]">Error</div><div className="font-mono text-xl font-bold text-[#ef4444] mt-1">{summary.outboundDocumentIntegrityErrors ?? '—'}</div></div>
         <div className="rounded-lg border border-[#78350f] bg-[#78350f]/10 p-3"><div className="label-mono text-[9px] text-[#fcd34d]">Peringatan</div><div className="font-mono text-xl font-bold text-[#fbbf24] mt-1">{summary.outboundDocumentIntegrityWarnings ?? '—'}</div></div>
+        <div className="rounded-lg border border-[#14532d] bg-[#14532d]/10 p-3"><div className="label-mono text-[9px] text-[#86efac]">SJ Format Baru</div><div className="font-mono text-xl font-bold text-[#4ade80] mt-1">{summary.suratJalanCurrentCount ?? '—'}</div></div>
+        <div className="rounded-lg border border-[#3f3f46] bg-[#18181b]/40 p-3"><div className="label-mono text-[9px] text-[#a1a1aa]">SJ Arsip Legacy</div><div className="font-mono text-xl font-bold text-[#d4d4d8] mt-1">{summary.suratJalanLegacyCount ?? '—'}</div></div>
       </div>
 
       {loading ? <div className="py-8 text-center text-sm text-[#8b93a1]">Memeriksa relasi dokumen...</div> : rows.length === 0 ? (
