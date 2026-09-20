@@ -30,6 +30,7 @@ const EMPTY = {
   consignmentLayoutHistory: [],
   consignmentOpnames: [],
   monitoringStock: [],
+  consignmentDashboard: null,
   supplierReturns: [],
   settings: DEFAULT_SETTINGS,
 };
@@ -56,13 +57,14 @@ export const DataProvider = ({ children }) => {
     try {
       const scopedDestination = roleDestination(user?.role);
       if (scopedDestination) {
-        const [p, consignmentStockRes, consignmentLayoutsRes, consignmentHistoryRes, consignmentOpnamesRes, monitoringStockRes, settingsRes] = await Promise.all([
+        const [p, consignmentStockRes, consignmentLayoutsRes, consignmentHistoryRes, consignmentOpnamesRes, monitoringStockRes, consignmentDashboardRes, settingsRes] = await Promise.all([
           api.get('/product-catalog'),
           api.get('/consignment-stock'),
           api.get('/consignment-layouts'),
           api.get('/consignment-layout-history'),
           api.get('/consignment-opnames'),
           api.get('/monitoring-stock'),
+          api.get('/dashboard-consignment-position'),
           api.get('/settings'),
         ]);
         setState({
@@ -73,11 +75,12 @@ export const DataProvider = ({ children }) => {
           consignmentLayoutHistory: consignmentHistoryRes.data,
           consignmentOpnames: consignmentOpnamesRes.data,
           monitoringStock: monitoringStockRes.data,
+          consignmentDashboard: consignmentDashboardRes.data,
           settings: { ...DEFAULT_SETTINGS, ...settingsRes.data },
         });
         return;
       }
-      const [p, suppliersRes, sj, loads, po, t, stacks, treatments, consignmentStockRes, consignmentLayoutsRes, consignmentHistoryRes, consignmentOpnamesRes, monitoringStockRes, supplierReturnsRes, settingsRes, usersRes] = await Promise.all([
+      const [p, suppliersRes, sj, loads, po, t, stacks, treatments, consignmentStockRes, consignmentLayoutsRes, consignmentHistoryRes, consignmentOpnamesRes, monitoringStockRes, consignmentDashboardRes, supplierReturnsRes, settingsRes, usersRes] = await Promise.all([
         api.get('/products'),
         api.get('/suppliers'),
         api.get('/surat-jalan'),
@@ -91,6 +94,7 @@ export const DataProvider = ({ children }) => {
         api.get('/consignment-layout-history'),
         api.get('/consignment-opnames'),
         api.get('/monitoring-stock'),
+        api.get('/dashboard-consignment-position'),
         api.get('/supplier-returns'),
         api.get('/settings'),
         hasPermission(user?.role, 'users') ? api.get('/users') : Promise.resolve({ data: [] }),
@@ -110,6 +114,7 @@ export const DataProvider = ({ children }) => {
         consignmentLayoutHistory: consignmentHistoryRes.data,
         consignmentOpnames: consignmentOpnamesRes.data,
         monitoringStock: monitoringStockRes.data,
+        consignmentDashboard: consignmentDashboardRes.data,
         supplierReturns: supplierReturnsRes.data,
         settings: { ...DEFAULT_SETTINGS, ...settingsRes.data },
       });
@@ -199,14 +204,16 @@ export const DataProvider = ({ children }) => {
     consignmentSyncInFlight.current = true;
     setConsignmentSyncing(true);
     try {
-      const [stockRes, monitoringRes] = await Promise.all([
+      const [stockRes, monitoringRes, dashboardRes] = await Promise.all([
         api.get('/consignment-stock'),
         api.get('/monitoring-stock'),
+        api.get('/dashboard-consignment-position'),
       ]);
       setState((prev) => ({
         ...prev,
         consignmentStock: stockRes.data,
         monitoringStock: monitoringRes.data,
+        consignmentDashboard: dashboardRes.data,
       }));
       setConsignmentLastSync(new Date());
       return stockRes.data;
