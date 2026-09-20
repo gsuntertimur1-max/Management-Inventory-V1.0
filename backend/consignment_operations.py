@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import List, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from pymongo import ReturnDocument
@@ -13,6 +13,7 @@ from backend.role_four_config import has_role_permission, role_destination
 from backend.consignment_documents import next_bazar_document_numbers
 import backend.consignment as consignment_module
 from backend.consignment_damaged import credit_consignment_damaged
+from backend.operational_guards import idempotent_operation, lock_keys
 
 router = APIRouter(prefix="/api")
 EPS = 1e-9
@@ -470,58 +471,160 @@ async def create_ecom_order(body: EcomOrderCreate, user: dict = Depends(get_curr
 
 
 @router.post("/ecom/orders/{order_id}/status")
-async def update_ecom_status(order_id: str, body: EcomStatusBody, user: dict = Depends(get_current_user)):
+async def update_ecom_status(
+    order_id: str,
+    body: EcomStatusBody,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
     _ensure_access(user, ECOM, write=True)
-    order = await db.ecom_orders.find_one({"id": order_id}, {"_id": 0})
-    if not order:
+    initial = await db.ecom_orders.find_one({"id": order_id}, {"_id": 0})
+    if not initial:
         raise HTTPException(status_code=404, detail="Pesanan E-commerce tidak ditemukan")
-    current = order.get("status", "RESERVED")
-    allowed = {"RESERVED": {"PACKING", "CANCELLED", "SHIPPED"}, "PACKING": {"SHIPPED", "CANCELLED"}}
-    if body.status == current:
-        return order
-    if body.status not in allowed.get(current, set()):
-        raise HTTPException(status_code=409, detail=f"Status {current} tidak dapat diubah menjadi {body.status}")
 
-    now = now_iso()
-    if body.status == "SHIPPED":
-        for item in order.get("items", []):
-            # Repair any legacy/missing location before reducing it. After this,
-            # a shipment cannot silently succeed without a physical E-commerce location.
-            await consignment_module.sync_consignment_layout_balance(
-                ECOM,
-                item.get("productId", ""),
-                operator=user.get("name", ""),
-                operation_key=f"ecom-pre-ship:{order_id}:{item.get('productId', '')}",
-                note="Validasi lokasi fisik sebelum pesanan E-commerce dikirim.",
-            )
-            event_key = f"ecom-ship:{order_id}:{item['productId']}"
-            movement = {
-                "id": new_id(), "eventKey": event_key, "time": now, "destination": ECOM,
-                "movementType": "ECOM_DIKIRIM", "referenceId": order_id, "referenceNo": order.get("orderNo", ""),
-                "productId": item["productId"], "sku": item.get("sku", ""), "name": item.get("name", ""),
-                "unit": item.get("unit", ""), "channel": item.get("channel", "KOM"), "delta": -_n(item.get("qty")),
-                "operator": user.get("name", ""),
+    product_ids = sorted({
+        str(item.get("productId") or "")
+        for item in initial.get("items", [])
+        if str(item.get("productId") or "")
+    })
+
+    async def action():
+        order = await db.ecom_orders.find_one({"id": order_id}, {"_id": 0})
+        if not order:
+            raise HTTPException(status_code=404, detail="Pesanan E-commerce tidak ditemukan")
+        current = order.get("status", "RESERVED")
+        allowed = {"RESERVED": {"PACKING", "CANCELLED", "SHIPPED"}, "PACKING": {"SHIPPED", "CANCELLED"}}
+        if body.status == current:
+            return order
+        if body.status not in allowed.get(current, set()):
+            raise HTTPException(status_code=409, detail=f"Status {current} tidak dapat diubah menjadi {body.status}")
+
+        now = now_iso()
+        movement_keys: list[str] = []
+        synced_products: set[str] = set()
+        operation_id = f"ecom-status:{order_id}:{body.status}"
+        order_updated = False
+        history_saved = False
+
+        try:
+            if body.status == "SHIPPED":
+                for item in order.get("items", []):
+                    product_id = str(item.get("productId") or "")
+                    if not product_id:
+                        continue
+                    await consignment_module.sync_consignment_layout_balance(
+                        ECOM,
+                        product_id,
+                        operator=user.get("name", ""),
+                        operation_key=f"{operation_id}:pre:{product_id}",
+                        note="Validasi lokasi fisik sebelum pesanan E-commerce dikirim.",
+                    )
+
+                    event_key = f"ecom-ship:{order_id}:{product_id}"
+                    if await db.consignment_movements.find_one({"eventKey": event_key}, {"_id": 1}):
+                        raise HTTPException(
+                            status_code=409,
+                            detail="Movement pengiriman E-commerce sudah ada tetapi status order belum selesai. Periksa Kontrol Integritas.",
+                        )
+                    movement = {
+                        "id": new_id(),
+                        "eventKey": event_key,
+                        "operationId": operation_id,
+                        "time": now,
+                        "destination": ECOM,
+                        "movementType": "ECOM_DIKIRIM",
+                        "referenceId": order_id,
+                        "referenceNo": order.get("orderNo", ""),
+                        "productId": product_id,
+                        "sku": item.get("sku", ""),
+                        "name": item.get("name", ""),
+                        "unit": item.get("unit", ""),
+                        "channel": item.get("channel", "KOM"),
+                        "delta": -_n(item.get("qty")),
+                        "operator": user.get("name", ""),
+                    }
+                    await db.consignment_movements.insert_one(dict(movement))
+                    movement_keys.append(event_key)
+                    synced_products.add(product_id)
+
+                for product_id in sorted(synced_products):
+                    await consignment_module.sync_consignment_layout_balance(
+                        ECOM,
+                        product_id,
+                        operator=user.get("name", ""),
+                        operation_key=f"{operation_id}:ship:{product_id}",
+                        note=f"Pengurangan lokasi fisik untuk order E-commerce {order.get('orderNo', '')}.",
+                    )
+
+            patch = {
+                "status": body.status,
+                "updatedAt": now,
+                "updatedBy": user.get("name", ""),
+                "statusNote": body.note.strip(),
             }
-            await db.consignment_movements.update_one({"eventKey": event_key}, {"$setOnInsert": movement}, upsert=True)
-            await consignment_module.decrease_consignment_layouts(
-                ECOM,
-                item.get("productId", ""),
-                _n(item.get("qty")),
-                user.get("name", ""),
-                operation_key=f"ecom-ship:{order_id}:{item.get('productId', '')}",
+            if body.trackingNo.strip():
+                patch["trackingNo"] = body.trackingNo.strip()
+            if body.status == "SHIPPED":
+                patch["shippedAt"] = now
+            if body.status == "CANCELLED":
+                patch["cancelledAt"] = now
+
+            result = await db.ecom_orders.update_one(
+                {"id": order_id, "status": current},
+                {"$set": patch},
             )
+            if result.matched_count == 0:
+                raise HTTPException(status_code=409, detail="Status order berubah saat diproses")
+            order_updated = True
 
-    patch = {"status": body.status, "updatedAt": now, "updatedBy": user.get("name", ""), "statusNote": body.note.strip()}
-    if body.trackingNo.strip():
-        patch["trackingNo"] = body.trackingNo.strip()
-    if body.status == "SHIPPED": patch["shippedAt"] = now
-    if body.status == "CANCELLED": patch["cancelledAt"] = now
-    await db.ecom_orders.update_one({"id": order_id}, {"$set": patch})
-    updated = await db.ecom_orders.find_one({"id": order_id}, {"_id": 0})
-    await _history(ECOM, f"ECOM_{body.status}", order_id, f"{order.get('marketplace', '')}/{order.get('orderNo', '')}", user.get("name", ""), order.get("items", []), body.note,
-                   {"trackingNo": patch.get("trackingNo", order.get("trackingNo", "")), "fromStatus": current, "toStatus": body.status})
-    return updated
+            await _history(
+                ECOM,
+                f"ECOM_{body.status}",
+                order_id,
+                f"{order.get('marketplace', '')}/{order.get('orderNo', '')}",
+                user.get("name", ""),
+                order.get("items", []),
+                body.note,
+                {
+                    "trackingNo": patch.get("trackingNo", order.get("trackingNo", "")),
+                    "fromStatus": current,
+                    "toStatus": body.status,
+                    "operationId": operation_id,
+                },
+            )
+            history_saved = True
+            return await db.ecom_orders.find_one({"id": order_id}, {"_id": 0})
+        except Exception:
+            if history_saved:
+                await db.consignment_operation_history.delete_many({"operationId": operation_id})
+            if order_updated:
+                await db.ecom_orders.replace_one({"id": order_id}, dict(order), upsert=False)
+            if movement_keys:
+                await db.consignment_movements.delete_many({"eventKey": {"$in": movement_keys}})
+            for product_id in sorted(synced_products):
+                try:
+                    await consignment_module.sync_consignment_layout_balance(
+                        ECOM,
+                        product_id,
+                        operator="Sistem (rollback E-commerce)",
+                        operation_key=f"{operation_id}:rollback:{product_id}",
+                        note="Rollback perubahan status E-commerce yang tidak selesai.",
+                    )
+                except Exception:
+                    pass
+            raise
 
+    keys = lock_keys(
+        [f"ecom-order:{order_id}"],
+        (f"consignment:{ECOM}:{product_id}" for product_id in product_ids),
+    )
+    return await idempotent_operation(
+        request,
+        user,
+        f"ecom-order-status:{order_id}:{body.status}",
+        keys,
+        action,
+    )
 
 @router.post("/ecom/orders/{order_id}/return")
 async def receive_ecom_return(order_id: str, body: EcomReturnBody, user: dict = Depends(get_current_user)):
