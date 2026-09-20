@@ -255,7 +255,7 @@ const CatatStok = ({ panel = '' }) => {
       setSoBalances({});
       return undefined;
     }
-    const refs = documentRefs.map((item) => item.trim()).filter((item) => item.toUpperCase().startsWith('SO/'));
+    const refs = outboundRefsKey.split('|').map((item) => item.trim()).filter((item) => item.toUpperCase().startsWith('SO/'));
     if (!refs.length) {
       setSoBalances({});
       return undefined;
