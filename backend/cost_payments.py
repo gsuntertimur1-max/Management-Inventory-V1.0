@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from pymongo.errors import OperationFailure
 
 from backend.server import db, get_current_user, now_iso, require_write
+from backend.work_time_costs import normalize_unloading_group
 
 router = APIRouter(prefix="/api")
 
@@ -20,7 +21,14 @@ class DailyUnloadingSettlementInput(BaseModel):
 
 def unloading_total(transactions: list[dict], recipient: str, group: str = "") -> float:
     key = "labor" if recipient == "BURUH" else "daily"
-    return sum(float((row.get("unloading_cost") or {}).get(key, 0) or 0) for row in transactions if not group or str(row.get("unloading_group") or "") == group)
+    target_group = normalize_unloading_group(group) if group else ""
+    total = 0.0
+    for row in transactions:
+        row_group = normalize_unloading_group(row.get("unloading_group", ""))
+        if target_group and row_group != target_group:
+            continue
+        total += float((row.get("unloading_cost") or {}).get(key, 0) or 0)
+    return total
 
 
 async def ensure_cost_payment_indexes() -> None:
@@ -61,7 +69,7 @@ async def settle_unloading_cost(
         },
         {"_id": 0, "unloading_cost": 1, "unloading_group": 1},
     ).to_list(10000)
-    group = body.group.strip()
+    group = normalize_unloading_group(body.group) if body.group.strip() else ""
     amount = unloading_total(transactions, body.recipient, group)
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Tidak ada biaya bongkar yang perlu dibayarkan untuk tanggal ini")
