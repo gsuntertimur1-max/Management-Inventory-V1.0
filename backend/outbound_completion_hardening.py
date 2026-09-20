@@ -15,6 +15,7 @@ from backend.operational_guards import (
     surat_jalan_with_exact_locations,
 )
 import backend.fefo_conservative as fefo_conservative
+import backend.consignment as consignment_module
 from backend.fefo_atomic import consume_tracked_fefo_atomic
 
 fefo_conservative._consume_tracked_fefo = consume_tracked_fefo_atomic
@@ -87,6 +88,33 @@ async def _enrich_completed_outbound(load_id: str, load: dict, surat_jalan: dict
         logger.exception("Outbound %s selesai tetapi enrichment Surat Jalan gagal", load_id)
         await _record_issue(load_id, "SURAT_JALAN_LOCATION", exc)
         warnings.append("Lokasi detail Surat Jalan belum tersinkron dan masuk antrean perbaikan integritas.")
+
+    destination = str(load.get("consignment_destination") or "").strip()
+    if destination in consignment_module.DESTINATIONS:
+        try:
+            product_ids = sorted({
+                str(item.get("productId") or "")
+                for item in (load.get("items") or [])
+                if str(item.get("productId") or "")
+            })
+            preferred_stack = str(load.get("consignment_zone") or "")
+            operator = str(load.get("completed_by") or load.get("created_by") or "Sistem")
+            sync_rows = []
+            for product_id in product_ids:
+                sync_rows.append(await consignment_module.sync_consignment_layout_balance(
+                    destination,
+                    product_id,
+                    operator=operator,
+                    preferred_stack=preferred_stack,
+                    operation_key=f"main-consignment-inbound:{load_id}:{product_id}",
+                    note="Penempatan otomatis setelah barang selesai dimuat dari Gudang Utama.",
+                ))
+            result["consignmentLayoutSync"] = sync_rows
+            await _resolve_issue(load_id, "CONSIGNMENT_LAYOUT_SYNC")
+        except Exception as exc:
+            logger.exception("Outbound %s selesai tetapi lokasi Bazar/E-commerce belum sinkron", load_id)
+            await _record_issue(load_id, "CONSIGNMENT_LAYOUT_SYNC", exc)
+            warnings.append("Saldo Bazar/E-commerce sudah bertambah, tetapi lokasi fisiknya perlu sinkronisasi ulang.")
 
     try:
         fefo = await consume_stack_lots_conservative(load, lock_products=not products_locked)
