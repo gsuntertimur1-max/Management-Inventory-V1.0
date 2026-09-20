@@ -12,7 +12,7 @@ const NAV_GROUPS = [
   {
     label: 'Inventori', icon: PackageSearch, items: [
       { to: '/produk', label: 'Daftar Produk', icon: Boxes, permission: 'mainInventory' },
-      { to: '/tumpukan', label: 'Tumpukan Stok', icon: Layers },
+      { to: '/tumpukan', label: 'Tumpukan Stok', icon: Layers, permission: 'mainInventory' },
       { to: '/fefo', label: 'Lot & FEFO', icon: CalendarClock, permission: 'mainInventory' },
       { to: '/area-barang-rusak', label: 'Area Barang Rusak', icon: PackageX, permission: 'mainInventory' },
       { to: '/opname-gudang', label: 'Stock Opname GBB', icon: ClipboardCheck, permission: 'mainInventory' },
