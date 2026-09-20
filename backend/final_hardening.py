@@ -94,6 +94,236 @@ def _append_sheet(wb: Workbook, title: str, headers: list[str], rows: list[list[
     return ws
 
 
+
+def _dashboard_add_unit(target: dict[str, float], unit: str, qty: float) -> None:
+    key = str(unit or "Unit").strip() or "Unit"
+    target[key] = target.get(key, 0.0) + float(qty or 0)
+
+
+def _dashboard_clean_totals(values: dict[str, float]) -> dict[str, float]:
+    return {
+        key: round(value, 6)
+        for key, value in sorted(values.items())
+        if abs(float(value or 0)) > EPS
+    }
+
+
+@router.get("/dashboard-consignment-position")
+async def dashboard_consignment_position(user: dict = Depends(get_current_user)):
+    """Pisahkan posisi fisik dari tanggung jawab administratif konsinyasi.
+
+    Internal/main = stok yang keluar dari GST I/II melalui ND/Memo menuju
+    Gudang Bazar/E-commerce. SO hanya menyelesaikan tanggung jawab administratif
+    dan TIDAK mengurangi fisik konsinyasi lagi.
+    """
+    scoped = role_destination(user.get("role"))
+    allowed_destinations = [scoped] if scoped else ["Gudang Bazar", "Gudang E-commerce"]
+
+    internal = {
+        destination: {
+            "consigned": {},
+            "returnedToMain": {},
+            "soIssued": {},
+            "outstanding": {},
+        }
+        for destination in allowed_destinations
+    }
+
+    loads = await db.outbound_loads.find(
+        {
+            "status": "Selesai",
+            "document_type": {"$in": ["ND", "MEMO"]},
+            "consignment_destination": {"$in": allowed_destinations},
+        },
+        {
+            "_id": 0,
+            "id": 1,
+            "consignment_destination": 1,
+            "items": 1,
+            "document_links": 1,
+        },
+    ).to_list(20000)
+
+    for load in loads:
+        destination = str(load.get("consignment_destination") or "")
+        if destination not in internal:
+            continue
+        source_by_product: dict[str, dict] = {}
+        for item in load.get("items") or []:
+            product_id = str(item.get("productId") or "")
+            if not product_id:
+                continue
+            row = source_by_product.setdefault(product_id, {
+                "qty": 0.0,
+                "unit": str(item.get("unit") or "Unit"),
+            })
+            row["qty"] += _n(item.get("qty"))
+        returned_by_product: dict[str, float] = {}
+        so_by_product: dict[str, float] = {}
+        for link in load.get("document_links") or []:
+            link_type = str(link.get("type") or "").upper()
+            for item in link.get("items") or []:
+                product_id = str(item.get("productId") or "")
+                if not product_id:
+                    continue
+                if link_type in {"CR", "RETUR"}:
+                    returned_by_product[product_id] = returned_by_product.get(product_id, 0.0) + _n(item.get("goodQty")) + _n(item.get("damagedQty"))
+                elif link_type == "SO":
+                    so_by_product[product_id] = so_by_product.get(product_id, 0.0) + _n(item.get("qty"))
+
+        for product_id, source in source_by_product.items():
+            unit = source["unit"]
+            consigned = _n(source["qty"])
+            returned = _n(returned_by_product.get(product_id))
+            so_issued = _n(so_by_product.get(product_id))
+            outstanding = max(consigned - returned - so_issued, 0.0)
+            _dashboard_add_unit(internal[destination]["consigned"], unit, consigned)
+            _dashboard_add_unit(internal[destination]["returnedToMain"], unit, returned)
+            _dashboard_add_unit(internal[destination]["soIssued"], unit, so_issued)
+            _dashboard_add_unit(internal[destination]["outstanding"], unit, outstanding)
+
+    for destination in internal:
+        for key in internal[destination]:
+            internal[destination][key] = _dashboard_clean_totals(internal[destination][key])
+
+    # ND dari gudang lain bukan bagian outstanding GST I/II. Tampilkan terpisah.
+    external_nd = {"received": {}, "returned": {}, "soIssued": {}, "outstanding": {}}
+    if not scoped or scoped == "Gudang Bazar":
+        external_docs = await db.bazar_external_nd.find(
+            {"cancelledAt": {"$exists": False}},
+            {"_id": 0, "items": 1, "receipts": 1, "returns": 1, "soDocuments": 1},
+        ).to_list(10000)
+        for doc in external_docs:
+            identities = {
+                str(item.get("productId") or ""): str(item.get("unit") or "Unit")
+                for item in doc.get("items") or []
+            }
+            received: dict[str, float] = {}
+            returned: dict[str, float] = {}
+            settled: dict[str, float] = {}
+            for receipt in doc.get("receipts") or []:
+                for item in receipt.get("items") or []:
+                    pid = str(item.get("productId") or "")
+                    received[pid] = received.get(pid, 0.0) + _n(item.get("goodQty")) + _n(item.get("damagedQty"))
+            for entry in doc.get("returns") or []:
+                for item in entry.get("items") or []:
+                    pid = str(item.get("productId") or "")
+                    returned[pid] = returned.get(pid, 0.0) + _n(item.get("qty"))
+            for so in doc.get("soDocuments") or []:
+                for item in so.get("items") or []:
+                    pid = str(item.get("productId") or "")
+                    settled[pid] = settled.get(pid, 0.0) + _n(item.get("qty"))
+            for pid in set(received) | set(returned) | set(settled):
+                unit = identities.get(pid, "Unit")
+                recv = _n(received.get(pid))
+                ret = _n(returned.get(pid))
+                so_qty = _n(settled.get(pid))
+                outstanding = max(recv - ret - so_qty, 0.0)
+                _dashboard_add_unit(external_nd["received"], unit, recv)
+                _dashboard_add_unit(external_nd["returned"], unit, ret)
+                _dashboard_add_unit(external_nd["soIssued"], unit, so_qty)
+                _dashboard_add_unit(external_nd["outstanding"], unit, outstanding)
+        external_nd = {key: _dashboard_clean_totals(value) for key, value in external_nd.items()}
+
+    local_now = operational_now()
+    start_local = datetime.combine(local_now.date(), datetime.min.time(), JAKARTA_TZ)
+    end_local = start_local + timedelta(days=1)
+    start_utc = start_local.astimezone(timezone.utc).isoformat()
+    end_utc = end_local.astimezone(timezone.utc).isoformat()
+
+    activity = {
+        "bazarSold": {},
+        "packageDelivered": {},
+        "ecomShipped": {},
+        "returnedGood": {},
+        "returnedDamaged": {},
+        "soIssued": {},
+    }
+
+    movements = await db.consignment_movements.find(
+        {"time": {"$gte": start_utc, "$lt": end_utc}, "destination": {"$in": allowed_destinations}},
+        {"_id": 0},
+    ).to_list(50000)
+    for move in movements:
+        movement_type = str(move.get("movementType") or "")
+        unit = str(move.get("unit") or "Unit")
+        if movement_type == "BAZAR_PENJUALAN":
+            _dashboard_add_unit(activity["bazarSold"], unit, _n(move.get("soldQty")))
+        elif movement_type == "PAKET_KELUAR":
+            _dashboard_add_unit(activity["packageDelivered"], unit, _n(move.get("deliveredComponentQty")))
+        elif movement_type == "ECOM_DIKIRIM":
+            _dashboard_add_unit(activity["ecomShipped"], unit, abs(_n(move.get("delta"))))
+        elif movement_type == "ECOM_RETUR":
+            _dashboard_add_unit(activity["returnedGood"], unit, _n(move.get("goodQty")))
+            _dashboard_add_unit(activity["returnedDamaged"], unit, _n(move.get("damagedQty")))
+
+    # Retur Bazar/Paket dicatat pada hasil penutupan kegiatan; konversikan Paket
+    # kembali ke kuantitas komponen supaya tidak mencampur "Paket" dengan Pack/PCS.
+    if not scoped or scoped == "Gudang Bazar":
+        trips = await db.bazar_trips.find(
+            {"closedAt": {"$gte": start_utc, "$lt": end_utc}, "status": "SELESAI"},
+            {"_id": 0, "resultItems": 1},
+        ).to_list(10000)
+        for trip in trips:
+            for item in trip.get("resultItems") or []:
+                unit = str(item.get("unit") or "Unit")
+                _dashboard_add_unit(activity["returnedGood"], unit, _n(item.get("returnedGoodQty")))
+                _dashboard_add_unit(activity["returnedDamaged"], unit, _n(item.get("returnedDamagedQty")))
+
+        package_loads = await db.bazar_package_loads.find(
+            {"closedAt": {"$gte": start_utc, "$lt": end_utc}, "status": "SELESAI"},
+            {"_id": 0, "resultItems": 1},
+        ).to_list(10000)
+        for load in package_loads:
+            for item in load.get("resultItems") or []:
+                returned_good_packages = _n(item.get("returnedGoodQty"))
+                returned_damaged_packages = _n(item.get("returnedDamagedQty"))
+                for component in item.get("components") or []:
+                    per_package = _n(component.get("qty"))
+                    unit = str(component.get("unit") or "Unit")
+                    _dashboard_add_unit(activity["returnedGood"], unit, returned_good_packages * per_package)
+                    _dashboard_add_unit(activity["returnedDamaged"], unit, returned_damaged_packages * per_package)
+
+    # SO administratif internal yang diterbitkan hari ini.
+    for load in loads:
+        for link in load.get("document_links") or []:
+            if str(link.get("type") or "").upper() != "SO":
+                continue
+            link_time = str(link.get("time") or "")
+            if not (start_utc <= link_time < end_utc):
+                continue
+            for item in link.get("items") or []:
+                _dashboard_add_unit(activity["soIssued"], str(item.get("unit") or "Unit"), _n(item.get("qty")))
+
+    if not scoped or scoped == "Gudang Bazar":
+        today_text = local_now.strftime("%Y-%m-%d")
+        external_docs_today = await db.bazar_external_nd.find(
+            {"soDocuments.soDate": today_text},
+            {"_id": 0, "soDocuments": 1},
+        ).to_list(10000)
+        for doc in external_docs_today:
+            for so in doc.get("soDocuments") or []:
+                if str(so.get("soDate") or "") != today_text:
+                    continue
+                for item in so.get("items") or []:
+                    _dashboard_add_unit(activity["soIssued"], str(item.get("unit") or "Unit"), _n(item.get("qty")))
+
+    activity = {key: _dashboard_clean_totals(value) for key, value in activity.items()}
+
+    return {
+        "date": local_now.strftime("%Y-%m-%d"),
+        "scope": scoped or "MAIN",
+        "internal": internal,
+        "externalND": external_nd,
+        "activityToday": activity,
+        "notes": {
+            "internal": "Outstanding GST I/II = konsinyasi keluar - retur ke gudang - SO administratif.",
+            "external": "ND Gudang Lain dipisahkan dan tidak masuk outstanding GST I/II.",
+            "physical": "SO administratif tidak mengurangi stok fisik Bazar/E-commerce untuk kedua kali.",
+        },
+    }
+
+
 @router.get("/dashboard-operations")
 async def dashboard_operations(user: dict = Depends(get_current_user)):
     scoped = role_destination(user.get("role"))
