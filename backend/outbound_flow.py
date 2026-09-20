@@ -44,6 +44,9 @@ class OutboundItemInput(BaseModel):
     productId: str
     qty: float = Field(gt=0)
     documentNo: str = ""
+    # Total kuantum produk pada dokumen induk. Untuk SO baru wajib diisi;
+    # untuk pengambilan SO berikutnya sistem memakai master SO yang sudah tersimpan.
+    documentQty: float = Field(default=0, ge=0)
     stackCode: str = ""
     channel: str = ""
     fefoExceptionReason: str = Field(default="", max_length=500)
@@ -189,6 +192,236 @@ class SettlementInput(BaseModel):
     note: str = ""
 
 
+def _doc_key(value: str) -> str:
+    return str(value or "").strip().upper()
+
+
+async def _so_usage(document_no: str, exclude_load_id: str = "") -> dict[str, dict]:
+    target = _doc_key(document_no)
+    query: dict = {
+        "document_type": "SO",
+        "status": {"$ne": "Dibatalkan"},
+        "$or": [{"ref": {"$regex": f"^{re.escape(target)}$", "$options": "i"}}, {"documents": {"$regex": f"^{re.escape(target)}$", "$options": "i"}}],
+    }
+    if exclude_load_id:
+        query["id"] = {"$ne": exclude_load_id}
+    loads = await db.outbound_loads.find(query, {"_id": 0, "id": 1, "ref": 1, "status": 1, "items": 1}).to_list(10000)
+    usage: dict[str, dict] = defaultdict(lambda: {"completedQty": 0.0, "reservedQty": 0.0})
+    for load in loads:
+        status = str(load.get("status") or "")
+        if status not in {"Menunggu", "Sedang Dimuat", "Selesai"}:
+            continue
+        fallback = _doc_key(load.get("ref", ""))
+        for item in load.get("items", []):
+            if _doc_key(item.get("documentNo") or fallback) != target:
+                continue
+            product_id = str(item.get("productId") or "")
+            if not product_id:
+                continue
+            qty = float(item.get("qty", 0) or 0)
+            if status == "Selesai":
+                usage[product_id]["completedQty"] += qty
+            else:
+                usage[product_id]["reservedQty"] += qty
+    return dict(usage)
+
+
+async def _so_balance(document_no: str, exclude_load_id: str = "") -> dict:
+    key = _doc_key(document_no)
+    master = await db.outbound_documents.find_one({"documentNo": key, "documentType": "SO"}, {"_id": 0})
+    usage = await _so_usage(key, exclude_load_id=exclude_load_id)
+    if not master:
+        return {
+            "exists": False,
+            "documentNo": key,
+            "documentType": "SO",
+            "status": "BELUM_TERDAFTAR",
+            "items": [],
+            "legacyUsage": usage,
+        }
+
+    rows = []
+    all_complete = bool(master.get("items"))
+    any_completed = False
+    for item in master.get("items", []):
+        product_id = str(item.get("productId") or "")
+        ordered = float(item.get("orderedQty", 0) or 0)
+        used = usage.get(product_id, {})
+        completed = float(used.get("completedQty", 0) or 0)
+        reserved = float(used.get("reservedQty", 0) or 0)
+        committed = completed + reserved
+        remaining = max(ordered - committed, 0.0)
+        any_completed = any_completed or completed > 1e-9
+        all_complete = all_complete and completed + 1e-9 >= ordered
+        rows.append({
+            **item,
+            "completedQty": completed,
+            "reservedQty": reserved,
+            "committedQty": committed,
+            "remainingQty": remaining,
+        })
+    status = "SELESAI" if all_complete else "SEBAGIAN" if any_completed else "BELUM_DIAMBIL"
+    return {**master, "exists": True, "status": status, "items": rows}
+
+
+async def _prepare_so_documents(
+    *,
+    refs: list[str],
+    body_items: list[OutboundItemInput],
+    products: dict[str, dict],
+    party: str,
+    exclude_load_id: str = "",
+) -> tuple[list[dict], dict[str, list[dict]]]:
+    """Validate SO capacity and build master documents without mutating DB."""
+    requested: dict[tuple[str, str], float] = defaultdict(float)
+    supplied_totals: dict[tuple[str, str], set[float]] = defaultdict(set)
+    for item in body_items:
+        document_no = _doc_key(item.documentNo or (refs[0] if refs else ""))
+        if not document_no:
+            continue
+        key = (document_no, item.productId)
+        requested[key] += float(item.qty)
+        if float(item.documentQty or 0) > 1e-9:
+            supplied_totals[key].add(float(item.documentQty))
+
+    prepared_docs: list[dict] = []
+    progress: dict[str, list[dict]] = {}
+    for raw_ref in refs:
+        document_no = _doc_key(raw_ref)
+        current = await db.outbound_documents.find_one(
+            {"documentNo": document_no, "documentType": "SO"},
+            {"_id": 0},
+        )
+        if current and str(current.get("party") or "").strip() and party.strip() and str(current.get("party") or "").strip() != party.strip():
+            raise HTTPException(
+                status_code=409,
+                detail=f"SO {document_no} sudah terdaftar untuk penerima {current.get('party', '')}.",
+            )
+
+        usage = await _so_usage(document_no, exclude_load_id=exclude_load_id)
+        existing_items = {
+            str(item.get("productId") or ""): dict(item)
+            for item in (current or {}).get("items", [])
+            if str(item.get("productId") or "")
+        }
+        document_progress = []
+        document_product_ids = sorted({
+            product_id
+            for (doc_no, product_id), qty in requested.items()
+            if doc_no == document_no and qty > 1e-9
+        })
+
+        for product_id in document_product_ids:
+            product = products.get(product_id) or {}
+            req = float(requested.get((document_no, product_id), 0) or 0)
+            totals = supplied_totals.get((document_no, product_id), set())
+            if len(totals) > 1:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Kuantum induk SO {document_no} untuk {product.get('name', 'produk')} tidak konsisten pada beberapa baris.",
+                )
+            supplied = next(iter(totals), 0.0)
+            existing = existing_items.get(product_id)
+            if existing:
+                ordered = float(existing.get("orderedQty", 0) or 0)
+                if supplied > 1e-9 and abs(supplied - ordered) > 1e-9:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Kuantum induk SO {document_no} untuk {product.get('name', 'produk')} sudah tercatat {ordered:g} {product.get('unit', '')} dan tidak boleh berubah saat pengambilan.",
+                    )
+            else:
+                if supplied <= 1e-9:
+                    legacy = usage.get(product_id, {})
+                    legacy_used = float(legacy.get("completedQty", 0) or 0) + float(legacy.get("reservedQty", 0) or 0)
+                    extra = f" Pengambilan lama yang sudah tercatat {legacy_used:g} {product.get('unit', '')}." if legacy_used > 1e-9 else ""
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Isi Kuantum SO total untuk {product.get('name', 'produk')} pada {document_no}.{extra}",
+                    )
+                ordered = supplied
+                existing = {
+                    "productId": product_id,
+                    "sku": product.get("sku", ""),
+                    "name": product.get("name", ""),
+                    "unit": product.get("unit", ""),
+                    "channel": normalize_channel(product.get("channel"), "KOM"),
+                    "orderedQty": ordered,
+                }
+                existing_items[product_id] = existing
+
+            used = usage.get(product_id, {})
+            completed = float(used.get("completedQty", 0) or 0)
+            reserved = float(used.get("reservedQty", 0) or 0)
+            committed = completed + reserved
+            remaining_before = max(ordered - committed, 0.0)
+            if req > remaining_before + 1e-9:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Sisa SO {document_no} untuk {product.get('name', 'produk')} hanya {remaining_before:g} {product.get('unit', '')}. "
+                        f"Total SO {ordered:g}; selesai {completed:g}; masih terreservasi {reserved:g}."
+                    ),
+                )
+            document_progress.append({
+                "productId": product_id,
+                "name": product.get("name", ""),
+                "unit": product.get("unit", ""),
+                "orderedQty": ordered,
+                "completedBefore": completed,
+                "reservedBefore": reserved,
+                "currentLoadQty": req,
+                "remainingAfter": max(remaining_before - req, 0.0),
+            })
+
+        if not current:
+            now = now_iso()
+            current = {
+                "id": new_id(),
+                "documentNo": document_no,
+                "documentType": "SO",
+                "party": party.strip(),
+                "items": [],
+                "createdAt": now,
+                "createdBy": "",
+                "updatedAt": now,
+            }
+        current = {
+            **current,
+            "documentNo": document_no,
+            "documentType": "SO",
+            "party": str(current.get("party") or party).strip(),
+            "items": list(existing_items.values()),
+            "updatedAt": now_iso(),
+        }
+        prepared_docs.append(current)
+        progress[document_no] = document_progress
+
+    return prepared_docs, progress
+
+
+async def _persist_so_documents(prepared_docs: list[dict], operator: str) -> None:
+    for doc in prepared_docs:
+        saved = dict(doc)
+        if not saved.get("createdBy"):
+            saved["createdBy"] = operator
+        saved["updatedBy"] = operator
+        await db.outbound_documents.replace_one(
+            {"documentNo": saved["documentNo"], "documentType": "SO"},
+            saved,
+            upsert=True,
+        )
+
+
+@router.get("/outbound-document-balance")
+async def outbound_document_balance(documentNo: str, user: dict = Depends(get_current_user)):
+    document_no = _doc_key(documentNo)
+    if not document_no:
+        raise HTTPException(status_code=400, detail="Nomor dokumen wajib diisi")
+    if not document_no.startswith("SO/"):
+        raise HTTPException(status_code=400, detail="Kontrol saldo dokumen bertahap saat ini khusus SO")
+    return await _so_balance(document_no)
+
+
 def _weighing_entries(average: float, minimum: float, maximum: float) -> list[dict]:
     target = round(average * 100)
     low, high = round(minimum * 100), round(maximum * 100)
@@ -310,9 +543,10 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
     elif any(item_ref and item_ref not in refs for item_ref in item_document_refs):
         raise HTTPException(status_code=400, detail="Dokumen komoditas belum didaftarkan")
 
-    for ref in refs:
-        if await db.outbound_loads.find_one({"$or": [{"ref": ref}, {"documents": ref}, {"document_links.no": ref}]}):
-            raise HTTPException(status_code=409, detail=f"Nomor dokumen {ref} sudah digunakan")
+    if body.documentType != "SO":
+        for ref in refs:
+            if await db.outbound_loads.find_one({"$or": [{"ref": ref}, {"documents": ref}, {"document_links.no": ref}]}):
+                raise HTTPException(status_code=409, detail=f"Nomor dokumen {ref} sudah digunakan")
 
     requested = defaultdict(float)
     item_order = []
@@ -360,6 +594,16 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         if qty > available + 1e-9:
             raise HTTPException(status_code=400, detail=f"Stok {channel} untuk {product.get('name', 'produk')} tidak mencukupi. Tersedia {available:g} {product.get('unit', '')}")
 
+    so_documents = []
+    so_progress = {}
+    if body.documentType == "SO":
+        so_documents, so_progress = await _prepare_so_documents(
+            refs=refs,
+            body_items=body.items,
+            products=products,
+            party=party,
+        )
+
     multi_source = len(refs) > 1 or len(body.items) > 1
     load_items = []
     fefo_guides = {}
@@ -396,7 +640,7 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
             crew_group = str(location_config.get("loadingGroup", "") or "")
             if crew_group:
                 loading_fee = _loading_fee(product, qty, charge_mode_override=body.loadingFeeChargeMode)
-        load_items.append({"productId": item.productId, "documentNo": item_ref, "sku": product.get("sku", ""), "name": product.get("name", ""), "channel": channel, "qty": qty, "unit": product.get("unit", ""), "weight": weight, "measureUnit": product.get("measureUnit", "kg") or "kg", "berat": weight * qty, "secondary": product.get("secondary", ""), "secondaryQty": float(product.get("secondaryQty", 0) or 0), "location": product.get("location", ""), "stackCode": stack_code, "locationCode": (location_config or {}).get("code", ""), "locationName": (location_config or {}).get("name", ""), "crewGroup": crew_group, "loadingFee": loading_fee, "fefoPolicy": guide.get("policy", "") if guide else "", "fefoMode": guide.get("mode", "") if guide else "", "fefoRecommendedStacks": guide.get("recommendedStacks", []) if guide else [], "fefoSelectionStatus": selection_status, "fefoExceptionReason": exception_reason if selection_status == "EXCEPTION" else ""})
+        load_items.append({"productId": item.productId, "documentNo": item_ref, "sku": product.get("sku", ""), "name": product.get("name", ""), "channel": channel, "qty": qty, "unit": product.get("unit", ""), "weight": weight, "measureUnit": product.get("measureUnit", "kg") or "kg", "berat": weight * qty, "secondary": product.get("secondary", ""), "secondaryQty": float(product.get("secondaryQty", 0) or 0), "location": product.get("location", ""), "stackCode": stack_code, "locationCode": (location_config or {}).get("code", ""), "locationName": (location_config or {}).get("name", ""), "crewGroup": crew_group, "loadingFee": loading_fee, "fefoPolicy": guide.get("policy", "") if guide else "", "fefoMode": guide.get("mode", "") if guide else "", "fefoRecommendedStacks": guide.get("recommendedStacks", []) if guide else [], "fefoSelectionStatus": selection_status, "fefoExceptionReason": exception_reason if selection_status == "EXCEPTION" else "", "documentQty": float(item.documentQty or 0)})
 
     if body.kondisi == "BAIK":
         quantities_by_stack = defaultdict(float)
@@ -468,6 +712,7 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         "gross_max": float(body.grossMax) if body.weighingForm else 0,
         "weighing_entries": _weighing_entries(float(body.grossWeight), float(body.grossMin), float(body.grossMax)) if body.weighingForm else [],
         "document_links": [],
+        "so_document_progress": so_progress if body.documentType == "SO" else {},
         "document_status": "Menunggu Pemuatan",
         "loading_cost": loading_cost,
         "loading_fee_payments": [],
@@ -484,6 +729,12 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         "surat_jalan_no": "",
     }
     await db.outbound_loads.insert_one(dict(doc))
+    try:
+        if body.documentType == "SO":
+            await _persist_so_documents(so_documents, user.get("name", ""))
+    except Exception:
+        await db.outbound_loads.delete_one({"id": doc["id"]})
+        raise
     return doc
 
 
@@ -616,10 +867,11 @@ async def edit_outbound_load(load_id: str, body: OutboundEditInput, user: dict =
     elif any(item_ref and item_ref not in documents for item_ref in item_refs):
         raise HTTPException(status_code=400, detail="Dokumen komoditas belum didaftarkan")
 
-    for number in documents:
-        duplicate = await db.outbound_loads.find_one({"id": {"$ne": load_id}, "$or": [{"ref": number}, {"documents": number}, {"document_links.no": number}]}, {"_id": 1})
-        if duplicate:
-            raise HTTPException(status_code=409, detail=f"Nomor dokumen {number} sudah digunakan")
+    if load.get("document_type") != "SO":
+        for number in documents:
+            duplicate = await db.outbound_loads.find_one({"id": {"$ne": load_id}, "$or": [{"ref": number}, {"documents": number}, {"document_links.no": number}]}, {"_id": 1})
+            if duplicate:
+                raise HTTPException(status_code=409, detail=f"Nomor dokumen {number} sudah digunakan")
 
     requested = defaultdict(float)
     channel_requested = defaultdict(float)
@@ -646,6 +898,17 @@ async def edit_outbound_load(load_id: str, body: OutboundEditInput, user: dict =
         available = max(channel_balance(product, channel, field) - await _reserved_qty(product_id, load.get("kondisi", "BAIK"), exclude_id=load_id, channel=channel), 0)
         if qty > available + 1e-9:
             raise HTTPException(status_code=400, detail=f"Stok {channel} untuk {product.get('name', 'produk')} tidak mencukupi")
+
+    edit_so_documents = []
+    edit_so_progress = {}
+    if load.get("document_type") == "SO":
+        edit_so_documents, edit_so_progress = await _prepare_so_documents(
+            refs=documents,
+            body_items=body.items,
+            products=products,
+            party=load.get("party", ""),
+            exclude_load_id=load_id,
+        )
 
     revised_items = []
     edit_fefo_guides = {}
@@ -675,7 +938,7 @@ async def edit_outbound_load(load_id: str, body: OutboundEditInput, user: dict =
                 raise HTTPException(status_code=400, detail=f"Tumpukan {stack_code} bukan prioritas FEFO. Isi alasan pengecualian sebelum menyimpan edit.")
             selection_status = "EXCEPTION" if is_exception else ("PRIORITY" if stack_code in guide.get("recommendedStacks", []) else "NO_GUIDE")
         channel = normalize_channel(submitted.channel, normalize_channel(product.get("channel")))
-        revised_items.append({**previous, "documentNo": document_no, "qty": qty, "channel": channel, "berat": float(product.get("weight", 0) or 0) * qty, "loadingFee": _loading_fee(product, qty, charge_mode_override=(previous.get("loadingFee") or {}).get("mode", "")), "stackCode": stack_code, "crewGroup": _crew_group(stack_code or product.get("location", "")), "fefoPolicy": guide.get("policy", previous.get("fefoPolicy", "")) if guide else previous.get("fefoPolicy", ""), "fefoMode": guide.get("mode", previous.get("fefoMode", "")) if guide else previous.get("fefoMode", ""), "fefoRecommendedStacks": guide.get("recommendedStacks", previous.get("fefoRecommendedStacks", [])) if guide else previous.get("fefoRecommendedStacks", []), "fefoSelectionStatus": selection_status, "fefoExceptionReason": exception_reason if selection_status == "EXCEPTION" else ""})
+        revised_items.append({**previous, "documentNo": document_no, "qty": qty, "channel": channel, "berat": float(product.get("weight", 0) or 0) * qty, "loadingFee": _loading_fee(product, qty, charge_mode_override=(previous.get("loadingFee") or {}).get("mode", "")), "stackCode": stack_code, "crewGroup": _crew_group(stack_code or product.get("location", "")), "fefoPolicy": guide.get("policy", previous.get("fefoPolicy", "")) if guide else previous.get("fefoPolicy", ""), "fefoMode": guide.get("mode", previous.get("fefoMode", "")) if guide else previous.get("fefoMode", ""), "fefoRecommendedStacks": guide.get("recommendedStacks", previous.get("fefoRecommendedStacks", [])) if guide else previous.get("fefoRecommendedStacks", []), "fefoSelectionStatus": selection_status, "fefoExceptionReason": exception_reason if selection_status == "EXCEPTION" else "", "documentQty": float(submitted.documentQty or previous.get("documentQty", 0) or 0)})
 
     if load.get("kondisi", "BAIK") == "BAIK":
         edit_by_stack = defaultdict(float)
@@ -695,10 +958,17 @@ async def edit_outbound_load(load_id: str, body: OutboundEditInput, user: dict =
         "documents": documents, "ref": documents[0], "polisi": body.polisi.strip(), "pengambil": body.pengambil.strip(),
         "items": revised_items, "total_unit": sum(float(item.get("qty", 0) or 0) for item in revised_items),
         "total_berat": sum(float(item.get("berat", 0) or 0) for item in revised_items), "loading_cost": loading_cost,
+        "so_document_progress": edit_so_progress if load.get("document_type") == "SO" else load.get("so_document_progress", {}),
         "edit_history": list(load.get("edit_history") or []) + [{"time": now, "by": user.get("name", ""), "before": old_snapshot}],
         "updated_at": now,
     }
     await db.outbound_loads.update_one({"id": load_id}, {"$set": changes})
+    try:
+        if load.get("document_type") == "SO":
+            await _persist_so_documents(edit_so_documents, user.get("name", ""))
+    except Exception:
+        await db.outbound_loads.replace_one({"id": load_id}, dict(load), upsert=False)
+        raise
     return await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
 
 
