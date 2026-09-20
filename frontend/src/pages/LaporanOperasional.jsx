@@ -11,6 +11,7 @@ const LaporanOperasional = () => {
   const [start, setStart] = useState(iso(first));
   const [end, setEnd] = useState(iso(today));
   const [busy, setBusy] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
 
   const download = async () => {
     if (!start || !end) return toast.error('Pilih periode laporan');
@@ -26,6 +27,23 @@ const LaporanOperasional = () => {
       toast.error(apiError(error));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const downloadPdf = async () => {
+    if (!start || !end) return toast.error('Pilih periode laporan');
+    if (end < start) return toast.error('Tanggal akhir tidak boleh lebih kecil dari tanggal awal');
+    setPdfBusy(true);
+    try {
+      await downloadApiFile(
+        `/reports/operational.pdf?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
+        `laporan_operasional_${start}_${end}.pdf`,
+      );
+      toast.success('PDF laporan berhasil dibuat');
+    } catch (error) {
+      toast.error(apiError(error));
+    } finally {
+      setPdfBusy(false);
     }
   };
 
@@ -56,9 +74,14 @@ const LaporanOperasional = () => {
         </div></div>
       </div>
 
-      <button onClick={download} disabled={busy} className="btn-primary mt-5 w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 rounded-lg font-semibold disabled:opacity-60">
-        <Download size={16}/>{busy ? 'Membuat laporan...' : 'Unduh Laporan XLSX'}
-      </button>
+      <div className="mt-5 flex flex-col sm:flex-row gap-2">
+        <button onClick={download} disabled={busy || pdfBusy} className="btn-primary w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 rounded-lg font-semibold disabled:opacity-60">
+          <Download size={16}/>{busy ? 'Membuat XLSX...' : 'Unduh XLSX'}
+        </button>
+        <button onClick={downloadPdf} disabled={busy || pdfBusy} className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 rounded-lg border border-[#294263] text-[#93c5fd] font-semibold disabled:opacity-60">
+          <Download size={16}/>{pdfBusy ? 'Membuat PDF...' : 'Unduh PDF'}
+        </button>
+      </div>
     </div>
   </div>;
 };
