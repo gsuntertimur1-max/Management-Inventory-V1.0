@@ -6,6 +6,7 @@ import { DataProvider, useData } from './context/DataContext';
 import Layout from './components/Layout';
 import PengeluaranReservationPanel from './components/PengeluaranReservationPanel';
 import OutboundDocumentIntegrityPanel from './components/OutboundDocumentIntegrityPanel';
+import MainWarehouseE2EPanel from './components/MainWarehouseE2EPanel';
 import Login from './pages/Login';
 import DashboardUnified from './pages/DashboardUnified';
 import DaftarProduk from './pages/DaftarProduk';
@@ -84,7 +85,7 @@ function AppRoutes() {
       <Route path="/pengeluaran" element={<Protected permission="outboundPage"><><PengeluaranReservationPanel /><Pengeluaran /></></Protected>} />
       <Route path="/monitoring-so" element={<Protected permission="outboundPage"><MonitorSO /></Protected>} />
       <Route path="/koreksi-operasional" element={<Protected permission="corrections"><KoreksiOperasional /></Protected>} />
-      <Route path="/kontrol-integritas" element={<Protected permission="masterWrite"><><OutboundDocumentIntegrityPanel /><KontrolIntegritas /></></Protected>} />
+      <Route path="/kontrol-integritas" element={<Protected permission="masterWrite"><><OutboundDocumentIntegrityPanel /><MainWarehouseE2EPanel /><KontrolIntegritas /></></Protected>} />
       <Route path="/riwayat" element={<Protected permission="mainInventory"><Riwayat /></Protected>} />
       <Route path="/riwayat-bazar-ecom" element={<Protected permission="consignmentHistory"><RiwayatConsignment /></Protected>} />
       <Route path="/po" element={<Protected permission="mainInventory"><PurchaseOrder /></Protected>} />
