@@ -27,7 +27,7 @@ from backend.server import (
     get_operational_location,
 )
 from backend.stack_allocations import allocate_stock_to_stack, decrease_stack_allocation
-from backend.work_time_costs import handling_fee, holiday_from_settings, work_split
+from backend.work_time_costs import handling_fee, holiday_from_settings, normalize_unloading_group, work_split
 
 router = APIRouter(prefix="/api")
 
@@ -532,7 +532,7 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
                 item.normalQtyBefore1600 if (body.unloadingSessionId or body.unloadingStartTime) else None,
             )
             if location_config and bool(location_config.get("unloadingCostEnabled", False)):
-                unloading_group = str(location_config.get("unloadingGroup", "") or "")
+                unloading_group = normalize_unloading_group(location_config.get("unloadingGroup", ""))
                 if unloading_group:
                     unloading_fee = _unloading_fee(
                         product,
