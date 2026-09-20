@@ -5,6 +5,7 @@ import './DashboardUnified.css';
 import { useData } from '../context/DataContext';
 import { formatNum } from '../mock';
 import { roleDestination } from '../lib/permissions';
+import OperationalOutstandingPanel from '../components/OperationalOutstandingPanel';
 
 const addByUnit = (target, unit, qty) => {
   const key = String(unit || 'Unit').trim() || 'Unit';
@@ -69,6 +70,7 @@ const DashboardUnified = () => {
           <SummaryCard icon={Layers3} label="Ruang Lingkup Akses" value={isBazar ? 'BAZAR' : 'E-COM'} accent="#22c55e" />
         </div>
       </section>
+      <OperationalOutstandingPanel />
       <section className="card-surface p-6">
         <div className="flex items-center justify-between gap-3 mb-4"><div><div className="label-mono text-[10px]">Monitoring Lokasi</div><h2 className="font-display text-xl font-bold mt-1">{scopedDestination}</h2></div><span className="text-xs px-2.5 py-1 rounded-full bg-[#2563eb]/15 text-[#60a5fa]">{rows.length} baris</span></div>
         {rows.length === 0 ? <p className="text-sm text-[#8b93a1]">Belum ada stok aktif pada lokasi ini.</p> : <div className="overflow-x-auto"><table className="w-full text-sm tbl"><thead><tr className="text-left border-b border-[#1a222e]"><th className="py-2.5 pr-3">SKU</th><th className="py-2.5 pr-3">Komoditi</th><th className="py-2.5 pr-3">Saluran</th><th className="py-2.5">Saldo</th></tr></thead><tbody>{rows.map((item) => <tr key={`${item.productId}-${item.channel}`} className="border-b border-[#131a24]"><td className="py-3 pr-3 font-mono text-xs text-[#93c5fd]">{item.sku || '—'}</td><td className="py-3 pr-3 font-medium">{item.name}</td><td className="py-3 pr-3">{item.channel}</td><td className="py-3 font-mono">{formatNum(item.qty)} {item.unit}</td></tr>)}</tbody></table></div>}
@@ -86,6 +88,7 @@ const DashboardUnified = () => {
         <SummaryCard icon={Layers3} label="Total Stok Fisik" value={formatTotals(totals.physical)} accent="#22c55e" />
       </div>
     </section>
+    <OperationalOutstandingPanel />
     <Dashboard />
   </div>;
 };
