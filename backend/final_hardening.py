@@ -228,6 +228,37 @@ async def operational_report(
         row.get("unit", ""), row.get("operator", ""),
     ] for row in cons_moves])
 
+    so_monitoring = await build_so_monitoring()
+    so_rows = []
+    for record in so_monitoring.get("records", []):
+        for item in record.get("items", []):
+            so_rows.append([
+                record.get("documentNo", ""), record.get("status", ""), record.get("party", ""),
+                item.get("sku", ""), item.get("name", ""), item.get("orderedQty"),
+                item.get("completedQty", 0), item.get("reservedQty", 0), item.get("remainingQty"),
+                item.get("unit", ""), record.get("lastActivity", ""),
+            ])
+    _append_sheet(wb, "Outstanding SO", [
+        "Nomor SO", "Status", "Penerima", "SKU", "Produk", "Kuantum SO", "Selesai",
+        "Reservasi", "Sisa Dijadwalkan", "Satuan", "Aktivitas Terakhir",
+    ], so_rows)
+
+    cost_rows = []
+    for load in loads:
+        cost = load.get("loading_cost") or {}
+        if _n(cost.get("total")) <= EPS:
+            continue
+        cost_rows.append([
+            load.get("operational_date", ""), load.get("bon_no", ""), load.get("ref", ""),
+            cost.get("labor", 0), cost.get("daily", 0), cost.get("warehouse", 0), cost.get("total", 0),
+            cost.get("chargeable", 0), load.get("loading_fee_payment_total", 0),
+            load.get("loading_fee_payment_status", ""),
+        ])
+    _append_sheet(wb, "Biaya Muat", [
+        "Tanggal", "Bon Muat", "Referensi", "Buruh", "Harian", "Gudang", "Total",
+        "Ditagihkan", "Dibayar", "Status Bayar",
+    ], cost_rows)
+
     info = wb.create_sheet("Info", 0)
     info.append(["LAPORAN OPERASIONAL PEPEG"])
     info.append(["Periode", f"{start_label} s.d. {end_label}"])
@@ -296,7 +327,7 @@ def _cell(row, headers: dict[str, int], name: str, default=None):
 
 
 def _normalize_import_row(row, headers) -> dict:
-    sku = _text(_cell(row, headers, "SKU"))
+    sku = _text(_cell(row, headers, "SKU")).upper()
     name = _text(_cell(row, headers, "Nama"))
     if not sku or not name:
         raise ValueError("SKU dan Nama wajib diisi")
@@ -384,20 +415,43 @@ async def _import_master_xlsx(file: UploadFile) -> dict:
         str(row.get("sku") or "").upper(): row
         for row in await db.products.find({}, {"_id": 0}).to_list(50000)
     }
-    inserted = updated = skipped = 0
+    settings = await db.settings.find_one({"_id": "app"}, {"_id": 0, "categories": 1}) or {}
+    valid_categories = {
+        _text(item.get("name")).lower()
+        for item in settings.get("categories") or []
+        if _text(item.get("name"))
+    }
+    category_errors = [
+        {"row": row_no, "error": f"Kategori {doc.get('category')} belum terdaftar di Pengaturan"}
+        for row_no, doc in parsed
+        if doc.get("category") and valid_categories and doc.get("category", "").lower() not in valid_categories
+    ]
+    if category_errors:
+        raise HTTPException(status_code=400, detail={"message": "Import dibatalkan karena kategori belum terdaftar", "errors": category_errors[:50]})
+
+    inserted = updated = protected = 0
     suppliers = set()
-    for _, doc in parsed:
+    for _, original_doc in parsed:
+        doc = dict(original_doc)
         key = doc["sku"].upper()
         current = existing.get(key)
         if current:
+            has_balance = _n(current.get("stock")) > EPS or _n(current.get("damaged")) > EPS
+            if has_balance and doc.get("channel") != str(current.get("channel") or "KOM").upper():
+                doc["channel"] = str(current.get("channel") or "KOM").upper()
+                protected += 1
+
             packaging_changed = (
                 _n(current.get("secondaryQty")) != _n(doc.get("secondaryQty"))
                 or _text(current.get("secondary")) != _text(doc.get("secondary"))
             )
-            if packaging_changed and await db.stack_allocations.find_one({"productId": current["id"]}, {"_id": 1}):
-                skipped += 1
-                continue
-            # Jangan pernah menyentuh stock, damaged, exp, channelStock, atau id.
+            has_allocation = bool(await db.stack_allocations.find_one({"productId": current["id"]}, {"_id": 1}))
+            if packaging_changed and has_allocation:
+                doc["secondary"] = current.get("secondary", "")
+                doc["secondaryQty"] = _n(current.get("secondaryQty"))
+                protected += 1
+
+            # Jangan pernah menyentuh stock, damaged, exp, channelStock, lot, ataupun id.
             await db.products.update_one({"id": current["id"]}, {"$set": doc})
             updated += 1
         else:
@@ -428,7 +482,8 @@ async def _import_master_xlsx(file: UploadFile) -> dict:
     return {
         "inserted": inserted,
         "updated": updated,
-        "skipped": skipped,
+        "protectedFields": protected,
+        "skipped": 0,
         "suppliersAdded": suppliers_added,
         "rows": len(parsed),
     }
