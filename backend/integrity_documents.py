@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends
 from backend.server import db, require_master_write
 from backend.integrity_postcommit import integrity_control as base_integrity_control
 from backend.integrity_consignment import analyze_consignment_integrity
+from backend.so_monitoring import build_so_monitoring, fulfillment_integrity_issues
 
 router = APIRouter(prefix="/api")
 EPS = 1e-9
@@ -202,8 +203,12 @@ async def integrity_control(user: dict = Depends(require_master_write)):
     ).to_list(100000)
 
     document_issues = analyze_outbound_document_integrity(loads, surat_jalan, transactions)
+    so_monitoring = await build_so_monitoring()
+    so_issues = fulfillment_integrity_issues(so_monitoring)
     errors = sum(1 for row in document_issues if row.get("severity") == "ERROR")
     warnings = sum(1 for row in document_issues if row.get("severity") == "WARNING")
+    so_errors = sum(1 for row in so_issues if row.get("severity") == "ERROR")
+    so_warnings = sum(1 for row in so_issues if row.get("severity") == "WARNING")
 
     system_issues = list(data.get("systemIssues") or [])
     if errors:
@@ -217,6 +222,18 @@ async def integrity_control(user: dict = Depends(require_master_write)):
             "severity": "WARNING",
             "code": "OUTBOUND_DOCUMENT_INTEGRITY_WARNING",
             "message": f"Ada {warnings} peringatan relasi dokumen/antrian pengeluaran.",
+        })
+    if so_errors:
+        system_issues.append({
+            "severity": "ERROR",
+            "code": "SO_FULFILLMENT_INTEGRITY",
+            "message": f"Ada {so_errors} masalah integritas pada pemenuhan SO bertahap.",
+        })
+    if so_warnings:
+        system_issues.append({
+            "severity": "WARNING",
+            "code": "SO_FULFILLMENT_WARNING",
+            "message": f"Ada {so_warnings} peringatan pada monitoring SO bertahap.",
         })
 
     consignment = await analyze_consignment_integrity()
@@ -239,6 +256,7 @@ async def integrity_control(user: dict = Depends(require_master_write)):
 
     data["systemIssues"] = system_issues
     data["outboundDocumentIntegrityIssues"] = document_issues[:1000]
+    data["soFulfillmentIntegrityIssues"] = so_issues[:1000]
     for key in (
         "consignmentStockIntegrity",
         "consignmentReservationIssues",
@@ -255,6 +273,12 @@ async def integrity_control(user: dict = Depends(require_master_write)):
     summary["outboundDocumentIntegrityIssues"] = len(document_issues)
     summary["outboundDocumentIntegrityErrors"] = errors
     summary["outboundDocumentIntegrityWarnings"] = warnings
+    summary["soMonitoringTotal"] = int((so_monitoring.get("summary") or {}).get("total", 0) or 0)
+    summary["soMonitoringOutstanding"] = int((so_monitoring.get("summary") or {}).get("outstanding", 0) or 0)
+    summary["soMonitoringLegacy"] = int((so_monitoring.get("summary") or {}).get("legacy", 0) or 0)
+    summary["soFulfillmentIntegrityIssues"] = len(so_issues)
+    summary["soFulfillmentIntegrityErrors"] = so_errors
+    summary["soFulfillmentIntegrityWarnings"] = so_warnings
     summary["systemErrors"] = sum(1 for issue in system_issues if str(issue.get("severity") or "") == "ERROR")
     summary["systemWarnings"] = sum(1 for issue in system_issues if str(issue.get("severity") or "") == "WARNING")
     data["summary"] = summary
