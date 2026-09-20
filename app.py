@@ -10,6 +10,7 @@ from backend.inventory_flow import router as inventory_flow_router
 from backend.master_products import router as master_products_router
 from backend.outbound_flow import router as outbound_flow_router
 from backend.outbound_reservation_view import router as outbound_reservation_view_router
+from backend.so_monitoring import router as so_monitoring_router
 from backend.outbound_start_guard import router as outbound_start_guard_router
 from backend.reservation_mutation_guards import router as reservation_mutation_guards_router
 from backend.supplier_lifecycle_guards import router as supplier_lifecycle_guards_router
@@ -112,6 +113,8 @@ app.include_router(pdf_documents_router)
 app.include_router(queue_flow_router)
 # Authoritative outbound reservation view is available to authenticated operators.
 app.include_router(outbound_reservation_view_router)
+# Satu SO dapat mempunyai beberapa pemuatan; monitor induk mengelompokkan seluruh Bon Muat/SJ per SO.
+app.include_router(so_monitoring_router)
 # Outbound document wrapper is the authoritative /integrity-control route: it layers
 # Bon Muat/SJ/transaction cross-checks over post-commit + lot/document checks.
 app.include_router(integrity_documents_router)
