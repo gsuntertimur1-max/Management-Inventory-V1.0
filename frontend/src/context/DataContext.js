@@ -234,8 +234,8 @@ export const DataProvider = ({ children }) => {
   }, []);
 
   useEffect(() => {
-    const token = localStorage.getItem('bulog_token');
-    if (!token) { setChecking(false); return; }
+    // Auth utama memakai cookie HttpOnly. Bearer lama tetap dibaca interceptor
+    // selama masa transisi, tetapi tidak lagi menjadi syarat untuk memulihkan sesi.
     api.get('/auth/me')
       .then((r) => setUser(r.data))
       .catch(() => setToken(null))
@@ -293,7 +293,8 @@ export const DataProvider = ({ children }) => {
   const login = async (username, password) => {
     try {
       const { data } = await api.post('/auth/login', { username, password });
-      setToken(data.token);
+      // Token baru disimpan hanya pada cookie HttpOnly dari server.
+      setToken(null);
       setUser(data.user);
       return { ok: true };
     } catch (e) {
