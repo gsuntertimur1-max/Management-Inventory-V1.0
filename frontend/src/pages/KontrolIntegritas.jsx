@@ -118,6 +118,14 @@ const KontrolIntegritas = () => {
 
       <IssuePanel category="Kontrol Biaya Operasional" title="Integritas Biaya Muat & Bongkar" subtitle="Memeriksa komponen Buruh/Harian/Gudang, split normal-lembur, waktu kerja aktual, grup mandor, settlement, dan pembayaran pengambil." rows={data?.handlingCostIntegrityIssues || []} />
 
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className={`card-surface p-4 border ${Number(summary.stackCardIntegrityErrors || 0) > 0 ? 'border-[#7f1d1d]' : Number(summary.stackCardIntegrityWarnings || 0) > 0 ? 'border-[#78350f]' : 'border-[#14532d]'}`}><div className="label-mono text-[9px]">Kartu Tumpukan</div><div className="font-mono text-2xl font-bold mt-1">{summary.stackCardIntegrityIssues ?? '—'}</div><div className="text-[10px] text-[#8b93a1] mt-1">{summary.stackCardIntegrityErrors || 0} error · {summary.stackCardIntegrityWarnings || 0} perlu diperbarui</div></div>
+        <div className="card-surface p-4"><div className="label-mono text-[9px]">SJ Format Baru</div><div className="font-mono text-2xl font-bold mt-1">{summary.suratJalanCurrentCount ?? '—'}</div><div className="text-[10px] text-[#8b93a1] mt-1">SJ/09100-09200/YYYYMM/nnnn</div></div>
+        <div className="card-surface p-4 border border-[#3f3f46]"><div className="label-mono text-[9px]">SJ Arsip Legacy</div><div className="font-mono text-2xl font-bold mt-1">{summary.suratJalanLegacyCount ?? '—'}</div><div className="text-[10px] text-[#8b93a1] mt-1">dipertahankan tanpa renumber</div></div>
+      </div>
+
+      <IssuePanel category="Kontrol Dokumen Cetak" title="Kartu Tumpukan" subtitle="Memeriksa identitas produk, satuan kuantum, kesesuaian perkalian dengan saldo tumpukan, dan susunan fisik yang perlu dihitung ulang setelah pengeluaran." rows={data?.stackCardIntegrityIssues || []} />
+
       <div className="grid grid-cols-2 lg:grid-cols-7 gap-3">
         <div className={`card-surface p-4 border ${Number(summary.consignmentLayoutMismatches || 0) > 0 ? 'border-[#7f1d1d]' : 'border-[#14532d]'}`}><div className="label-mono text-[9px]">Lokasi Konsinyasi</div><div className="font-mono text-2xl font-bold mt-1">{summary.consignmentLayoutMismatches ?? '—'}</div><div className="text-[10px] text-[#8b93a1] mt-1">mismatch ledger/lokasi</div></div>
         <div className={`card-surface p-4 border ${Number(summary.consignmentReservationIssues || 0) > 0 ? 'border-[#7f1d1d]' : 'border-[#14532d]'}`}><div className="label-mono text-[9px]">Reservasi Bazar/Ecom</div><div className="font-mono text-2xl font-bold mt-1">{summary.consignmentReservationIssues ?? '—'}</div></div>
