@@ -17,6 +17,7 @@ const BazarPaket = () => {
   const [history, setHistory] = useState([]);
   const [saving, setSaving] = useState(false);
   const [downloading, setDownloading] = useState('');
+  const [packageBusy, setPackageBusy] = useState('');
 
   const [master, setMaster] = useState({ code: '', name: '', note: '', productId: '', qty: '' });
   const [components, setComponents] = useState([]);
@@ -87,20 +88,28 @@ const BazarPaket = () => {
   };
 
   const unpackBatch = async (batch) => {
-    const raw = window.prompt(`Jumlah paket yang akan dibongkar dari ${batch.batchNo} (maks. ${batch.remainingQty}):`, '');
+    if (packageBusy) return;
+    const raw = window.prompt(`Jumlah paket yang akan dibongkar dari ${batch.batchNo} (maks. bebas: ${batch.remainingQty}):`, '');
     const qty = Number(raw || 0);
     if (qty <= 0) return;
+    setPackageBusy(`unpack:${batch.id}`);
     try {
       await api.post(`/bazar/package-batches/${batch.id}/unpack`, { qty, note: 'Pembongkaran Paket Jadi' });
       toast.success('Paket dibongkar; komponen kembali tersedia sebagai stok loose');
-      await loadAll();
+      await Promise.all([loadAll(), refreshConsignmentFlow()]);
     } catch (e) { toast.error(apiError(e)); }
+    finally { setPackageBusy(''); }
   };
 
   const addLoadItem = () => {
     if (!loadForm.templateId || Number(loadForm.qty) <= 0) return toast.error('Pilih Paket Jadi dan jumlah muat');
     const row = packageStock.find((x) => x.id === loadForm.templateId);
     if (!row) return;
+    const existing = loadItems.find((x) => x.templateId === row.id);
+    const nextQty = Number(existing?.qty || 0) + Number(loadForm.qty);
+    if (nextQty > Number(row.availableQty || 0)) {
+      return toast.error(`Paket ${row.name} tersedia hanya ${row.availableQty}`);
+    }
     setLoadItems((prev) => {
       const found = prev.find((x) => x.templateId === row.id);
       if (found) return prev.map((x) => x.templateId === row.id ? { ...x, qty: Number(x.qty) + Number(loadForm.qty) } : x);
@@ -132,6 +141,8 @@ const BazarPaket = () => {
   };
 
   const closeLoad = async () => {
+    if (!closing || packageBusy) return;
+    setPackageBusy(`close:${closing.id}`);
     try {
       const items = (closing.items || []).map((item) => {
         const delivered = Number(closeRows[item.templateId]?.deliveredQty || 0);
@@ -144,6 +155,7 @@ const BazarPaket = () => {
       toast.success('Distribusi paket selesai · komponen paket rusak masuk Area Barang Rusak Bazar');
       setClosing(null); await Promise.all([loadAll(), refreshConsignmentFlow()]);
     } catch (e) { toast.error(e?.response ? apiError(e) : e.message); }
+    finally { setPackageBusy(''); }
   };
 
   const downloadDocument = async (load, type) => {
@@ -257,7 +269,7 @@ const BazarPaket = () => {
 
     <section className="card-surface p-5">
       <div className="font-semibold flex items-center gap-2 mb-4"><Undo2 size={17}/> Batch Paket Jadi</div>
-      <div className="space-y-2 max-h-[300px] overflow-auto">{batches.filter((x) => Number(x.remainingQty) > 0).map((x) => <div key={x.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-[#1f2937] pb-2 text-xs"><div><b>{x.batchNo}</b> · {x.packageName}<div className="text-[#8b93a1]">Dirakit {x.assembledQty} · sisa {x.remainingQty}</div></div><button onClick={() => unpackBatch(x)} className="px-3 py-1.5 rounded-lg border border-[#64748b]/40 text-[#cbd5e1]">Bongkar Paket</button></div>)}</div>
+      <div className="space-y-2 max-h-[300px] overflow-auto">{batches.filter((x) => Number(x.remainingQty) > 0).map((x) => <div key={x.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-[#1f2937] pb-2 text-xs"><div><b>{x.batchNo}</b> · {x.packageName}<div className="text-[#8b93a1]">Dirakit {x.assembledQty} · sisa {x.remainingQty}</div></div><button disabled={Boolean(packageBusy)} onClick={() => unpackBatch(x)} className="px-3 py-1.5 rounded-lg border border-[#64748b]/40 text-[#cbd5e1] disabled:opacity-50">{packageBusy === `unpack:${x.id}` ? 'Memproses…' : 'Bongkar Paket'}</button></div>)}</div>
     </section>
 
     <section className="card-surface p-5">
@@ -281,7 +293,7 @@ const BazarPaket = () => {
           </div>
         </div>;
       })}
-      <div className="flex justify-end gap-2 mt-5"><button onClick={() => setClosing(null)} className="px-4 py-2 rounded-lg border border-[#243044]">Batal</button><button onClick={closeLoad} className="btn-primary px-5 py-2 rounded-lg font-semibold">Selesaikan Distribusi</button></div>
+      <div className="flex justify-end gap-2 mt-5"><button onClick={() => setClosing(null)} className="px-4 py-2 rounded-lg border border-[#243044]">Batal</button><button disabled={Boolean(packageBusy)} onClick={closeLoad} className="btn-primary px-5 py-2 rounded-lg font-semibold disabled:opacity-50">{closing && packageBusy === `close:${closing.id}` ? 'Memproses…' : 'Selesaikan Distribusi'}</button></div>
     </div></div>}
   </div>;
 };
