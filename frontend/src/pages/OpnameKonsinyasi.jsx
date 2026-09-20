@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, ClipboardCheck, RefreshCcw, Save, Send, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { useData } from '../context/DataContext';
@@ -51,14 +51,14 @@ const OpnameKonsinyasi = () => {
     return Array.from(grouped.values()).sort((a, b) => String(a.name).localeCompare(String(b.name), 'id'));
   }, [consignmentStock, destination]);
 
-  const loadOpnames = async () => {
+  const loadOpnames = useCallback(async () => {
     const { data } = await api.get('/consignment-opnames', { params: { destination } });
     setOpnames(data || []);
-  };
+  }, [destination]);
 
   useEffect(() => {
     loadOpnames().catch(() => {});
-  }, [destination]);
+  }, [loadOpnames]);
 
   const active = useMemo(
     () => opnames.find((row) => ['DRAFT', 'SUBMITTED'].includes(row.status)),
@@ -77,7 +77,7 @@ const OpnameKonsinyasi = () => {
     setActual(nextActual);
     setLineNotes(nextNotes);
     setNote(active?.note || '');
-  }, [active?.id, destination, liveRows.length]);
+  }, [displayedRows, active?.note, active?.id, destination]);
 
   const payloadItems = () => (displayedRows || []).map((row) => ({
     productId: row.productId,
