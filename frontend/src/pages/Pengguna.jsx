@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, X, ShieldCheck, User as UserIcon, KeyRound, Trash2, Power } from 'lucide-react';
 import { useData } from '../context/DataContext';
-import { apiError } from '../lib/api';
+import api, { apiError } from '../lib/api';
 import { toast } from 'sonner';
 import { ROLE_COLORS, ROLE_LABELS, USER_ROLES, canonicalRole, roleLabel } from '../lib/permissions';
 
@@ -42,6 +42,12 @@ const Pengguna = () => {
   const [pwdModal, setPwdModal] = useState(null);
   const [newPwd, setNewPwd] = useState('');
   const [delModal, setDelModal] = useState(null);
+  const [permissionMatrix, setPermissionMatrix] = useState(null);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    api.get('/role-permission-matrix').then(({ data }) => setPermissionMatrix(data)).catch(() => setPermissionMatrix(null));
+  }, [isAdmin]);
 
   const save = async () => {
     if (!form.name.trim() || !form.username.trim() || !form.password) {
@@ -109,6 +115,11 @@ const Pengguna = () => {
       <div className="card-surface p-4 text-xs text-[#aab4c4]">
         <span className="font-semibold text-white">Aturan akses:</span> Superadmin memiliki akses penuh · Kepala Gudang menangani operasional, koreksi, biaya, persetujuan, serta Bazar/E-commerce · Admin Operasional menangani inbound, outbound, biaya, dan monitoring · Petugas Bazar hanya menjalankan proses Bazar · Petugas E-commerce hanya menjalankan proses E-commerce · Viewer hanya membaca data yang diizinkan.
       </div>
+
+      {isAdmin && permissionMatrix && <div className="card-surface p-5">
+        <div className="mb-4"><div className="label-mono text-[10px]">Audit Permission Backend</div><h2 className="font-display text-lg font-bold mt-1">Matriks 6 Peran</h2><p className="text-xs text-[#8b93a1] mt-1">Matriks ini dibaca langsung dari backend agar menu frontend dan izin API tidak berbeda.</p></div>
+        <div className="overflow-x-auto"><table className="w-full text-xs tbl min-w-[900px]"><thead><tr><th className="text-left py-2 pr-3">Peran</th>{permissionMatrix.permissions.map((p) => <th key={p} className="py-2 px-2 text-center">{p}</th>)}</tr></thead><tbody>{permissionMatrix.roles.map((role) => <tr key={role} className="border-t border-[#1a222e]"><td className="py-2 pr-3 font-semibold whitespace-nowrap">{roleLabel(role)}</td>{permissionMatrix.permissions.map((p) => <td key={p} className={`py-2 px-2 text-center font-mono ${permissionMatrix.matrix?.[role]?.[p] ? 'text-[#22c55e]' : 'text-[#64748b]'}`}>{permissionMatrix.matrix?.[role]?.[p] ? 'YA' : '—'}</td>)}</tr>)}</tbody></table></div>
+      </div>}
 
       <div className="card-surface p-6">
         <div className="overflow-x-auto">
