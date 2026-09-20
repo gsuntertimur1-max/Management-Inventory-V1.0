@@ -237,7 +237,8 @@ async def dashboard_consignment_position(user: dict = Depends(get_current_user))
         "ecomShipped": {},
         "returnedGood": {},
         "returnedDamaged": {},
-        "soIssued": {},
+        "internalSoIssued": {},
+        "externalSoIssued": {},
     }
 
     movements = await db.consignment_movements.find(
@@ -293,7 +294,7 @@ async def dashboard_consignment_position(user: dict = Depends(get_current_user))
             if not (start_utc <= link_time < end_utc):
                 continue
             for item in link.get("items") or []:
-                _dashboard_add_unit(activity["soIssued"], str(item.get("unit") or "Unit"), _n(item.get("qty")))
+                _dashboard_add_unit(activity["internalSoIssued"], str(item.get("unit") or "Unit"), _n(item.get("qty")))
 
     if not scoped or scoped == "Gudang Bazar":
         today_text = local_now.strftime("%Y-%m-%d")
@@ -306,7 +307,7 @@ async def dashboard_consignment_position(user: dict = Depends(get_current_user))
                 if str(so.get("soDate") or "") != today_text:
                     continue
                 for item in so.get("items") or []:
-                    _dashboard_add_unit(activity["soIssued"], str(item.get("unit") or "Unit"), _n(item.get("qty")))
+                    _dashboard_add_unit(activity["externalSoIssued"], str(item.get("unit") or "Unit"), _n(item.get("qty")))
 
     activity = {key: _dashboard_clean_totals(value) for key, value in activity.items()}
 
