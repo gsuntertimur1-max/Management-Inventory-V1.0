@@ -248,7 +248,7 @@ const Pengeluaran = () => {
     documents: [...(load.documents || [load.ref])],
     polisi: load.polisi || '',
     pengambil: load.pengambil || '',
-    items: (load.items || []).map((item) => ({ productId: item.productId, name: item.name, unit: item.unit, qty: item.qty, documentNo: item.documentNo || load.ref || '', stackCode: item.stackCode || '', channel: item.channel || '' })),
+    items: (load.items || []).map((item) => ({ productId: item.productId, name: item.name, unit: item.unit, qty: item.qty, documentNo: item.documentNo || load.ref || '', documentQty: item.documentQty || 0, stackCode: item.stackCode || '', channel: item.channel || '' })),
   });
   const updateEditItem = (index, patch) => setEditModal((prev) => ({ ...prev, items: prev.items.map((item, i) => i === index ? { ...item, ...patch } : item) }));
   const saveEdit = async () => {
@@ -261,7 +261,7 @@ const Pengeluaran = () => {
     if (editModal.items.some((item) => Number(item.qty) <= 0)) return toast.error('Kuantum harus lebih dari 0');
     setBusyId(editModal.load.id);
     try {
-      await editOutboundLoad(editModal.load.id, { documents, polisi: editModal.polisi, pengambil: editModal.pengambil, items: editModal.items.map((item) => ({ productId: item.productId, qty: Number(item.qty), documentNo: item.documentNo || documents[0], stackCode: item.stackCode || '', channel: item.channel || '' })) });
+      await editOutboundLoad(editModal.load.id, { documents, polisi: editModal.polisi, pengambil: editModal.pengambil, items: editModal.items.map((item) => ({ productId: item.productId, qty: Number(item.qty), documentNo: item.documentNo || documents[0], documentQty: Number(item.documentQty || 0), stackCode: item.stackCode || '', channel: item.channel || '' })) });
       toast.success('Pengeluaran berhasil dikoreksi');
       setEditModal(null);
     } catch (e) {
