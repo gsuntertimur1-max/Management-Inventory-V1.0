@@ -8,9 +8,9 @@ from pydantic import BaseModel, Field
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
-from backend.server import db, get_current_user, new_id, now_iso, normalize_channel
-from backend.role_four_config import has_role_permission, role_destination
-from backend.operational_guards import idempotent_operation
+from backend.server import db, get_current_user, new_id, now_iso, normalize_channel, next_sequence, operational_now
+from backend.role_four_config import has_role_permission, role_destination, require_operational_approval
+from backend.operational_guards import idempotent_operation, lock_keys
 from backend.consignment_locations import normalize_consignment_stack_code
 import backend.consignment as consignment_module
 
@@ -95,6 +95,10 @@ async def ensure_consignment_damaged_indexes() -> None:
     )
     await db.consignment_damaged_movements.create_index("eventKey", unique=True, name="consignment_damaged_event_unique")
     await db.consignment_damaged_movements.create_index([("destination", 1), ("time", -1)])
+    await db.consignment_damaged_opnames.create_index(
+        [("destination", 1), ("status", 1), ("createdAt", -1)],
+        name="consignment_damaged_opname_status",
+    )
 
 
 async def damaged_stock_rows(destination: str = "") -> list[dict]:
@@ -445,5 +449,516 @@ async def sell_consignment_damaged(body: DamagedSaleInput, request: Request, use
         user,
         f"consignment-damaged-sale:{destination}:{product_id}:{channel}",
         [f"consignment-damaged:{destination}:{product_id}:{channel}"],
+        action,
+    )
+
+
+class DamagedOpnameItemInput(BaseModel):
+    productId: str
+    channel: str = ""
+    actualQty: float = Field(ge=0)
+    note: str = ""
+
+
+class DamagedOpnameCreate(BaseModel):
+    destination: Literal["Gudang Bazar", "Gudang E-commerce"]
+    items: list[DamagedOpnameItemInput] = Field(default_factory=list)
+    note: str = ""
+
+
+class DamagedOpnameUpdate(BaseModel):
+    items: list[DamagedOpnameItemInput] = Field(default_factory=list)
+    note: str = ""
+
+
+class DamagedOpnameDecision(BaseModel):
+    note: str = ""
+
+
+async def _damaged_opname_snapshot(destination: str) -> list[dict]:
+    destination = str(destination or "").strip()
+    balances = await db.consignment_damaged_balances.find(
+        {"destination": destination},
+        {"_id": 0},
+    ).to_list(10000)
+
+    rows: dict[tuple[str, str], dict] = {}
+    for balance in balances:
+        product_id = str(balance.get("productId") or "")
+        if not product_id:
+            continue
+        channel = normalize_channel(balance.get("channel"), "KOM")
+        rows[(product_id, channel)] = {
+            "productId": product_id,
+            "channel": channel,
+            "sku": balance.get("sku", ""),
+            "name": balance.get("name", ""),
+            "unit": balance.get("unit", ""),
+            "systemQty": _n(balance.get("qty")),
+            "actualQty": _n(balance.get("qty")),
+            "difference": 0.0,
+            "note": "",
+        }
+
+    # Sertakan produk konsinyasi aktif walaupun saldo rusaknya masih nol agar
+    # temuan fisik saat opname dapat dicatat sebagai adjustment resmi.
+    stock_rows = await consignment_module.consignment_stock(destination)
+    for row in stock_rows:
+        product_id = str(row.get("productId") or "")
+        if not product_id:
+            continue
+        channel = normalize_channel(row.get("channel"), "KOM")
+        key = (product_id, channel)
+        if key not in rows:
+            rows[key] = {
+                "productId": product_id,
+                "channel": channel,
+                "sku": row.get("sku", ""),
+                "name": row.get("name", ""),
+                "unit": row.get("unit", ""),
+                "systemQty": 0.0,
+                "actualQty": 0.0,
+                "difference": 0.0,
+                "note": "",
+            }
+
+    return sorted(
+        rows.values(),
+        key=lambda row: (str(row.get("name") or "").lower(), row.get("channel", ""), row.get("sku", "")),
+    )
+
+
+async def _current_damaged_qty(destination: str) -> dict[tuple[str, str], float]:
+    rows = await db.consignment_damaged_balances.find(
+        {"destination": destination},
+        {"_id": 0, "productId": 1, "channel": 1, "qty": 1},
+    ).to_list(10000)
+    return {
+        (str(row.get("productId") or ""), normalize_channel(row.get("channel"), "KOM")): _n(row.get("qty"))
+        for row in rows
+        if str(row.get("productId") or "")
+    }
+
+
+@router.get("/consignment-damaged-opnames")
+async def list_consignment_damaged_opnames(
+    destination: str = "",
+    user: dict = Depends(get_current_user),
+):
+    scoped = role_destination(user.get("role"))
+    requested = str(destination or "").strip()
+    resolved = scoped or requested
+    if scoped and requested and requested != scoped:
+        raise HTTPException(status_code=403, detail=f"Akun ini hanya memiliki akses ke {scoped}")
+    if resolved:
+        _ensure_access(user, resolved, write=False)
+    elif not has_role_permission(user.get("role"), "consignmentView"):
+        raise HTTPException(status_code=403, detail="Tidak memiliki akses stock opname barang rusak")
+    query = {"destination": resolved} if resolved else {}
+    return await db.consignment_damaged_opnames.find(query, {"_id": 0}).sort("createdAt", -1).to_list(5000)
+
+
+@router.post("/consignment-damaged-opnames")
+async def create_consignment_damaged_opname(
+    body: DamagedOpnameCreate,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    destination = _ensure_access(user, body.destination, write=True)
+
+    async def action():
+        existing = await db.consignment_damaged_opnames.find_one(
+            {"destination": destination, "status": {"$in": ["DRAFT", "SUBMITTED"]}},
+            {"_id": 0, "no": 1},
+        )
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Masih ada stock opname barang rusak aktif: {existing.get('no', '')}",
+            )
+
+        snapshot = await _damaged_opname_snapshot(destination)
+        if not snapshot:
+            raise HTTPException(status_code=400, detail="Belum ada produk Bazar/E-commerce yang dapat diopname pada Area Barang Rusak")
+
+        submitted = {
+            (item.productId, normalize_channel(item.channel, "KOM")): item
+            for item in body.items
+        }
+        valid_keys = {(row["productId"], row["channel"]) for row in snapshot}
+        if any(key not in valid_keys for key in submitted):
+            raise HTTPException(status_code=400, detail="Ada produk yang tidak termasuk snapshot Area Barang Rusak")
+
+        lines = []
+        for row in snapshot:
+            patch = submitted.get((row["productId"], row["channel"]))
+            actual = float(patch.actualQty) if patch else float(row["systemQty"])
+            lines.append({
+                **row,
+                "actualQty": actual,
+                "difference": actual - float(row["systemQty"]),
+                "note": patch.note.strip() if patch else "",
+            })
+
+        op_now = operational_now()
+        date_text = op_now.strftime("%Y%m%d")
+        seq = await next_sequence(f"consignment-damaged-opname:{date_text}")
+        now = now_iso()
+        doc = {
+            "id": new_id(),
+            "no": f"OPR-{date_text}-{seq:03d}",
+            "time": now,
+            "destination": destination,
+            "location": DAMAGED_LOCATIONS[destination],
+            "status": "DRAFT",
+            "items": lines,
+            "note": body.note.strip(),
+            "operator": user.get("name", ""),
+            "createdAt": now,
+            "createdBy": user.get("name", ""),
+            "updatedAt": now,
+            "updatedBy": user.get("name", ""),
+            "submittedAt": "",
+            "submittedBy": "",
+            "approvedAt": "",
+            "approvedBy": "",
+            "approvalNote": "",
+            "rejectedAt": "",
+            "rejectedBy": "",
+            "rejectionNote": "",
+        }
+        await db.consignment_damaged_opnames.insert_one(dict(doc))
+        return doc
+
+    return await idempotent_operation(
+        request,
+        user,
+        f"consignment-damaged-opname-create:{destination}",
+        [f"consignment-damaged-opname-active:{destination}"],
+        action,
+    )
+
+
+@router.put("/consignment-damaged-opnames/{opname_id}")
+async def update_consignment_damaged_opname(
+    opname_id: str,
+    body: DamagedOpnameUpdate,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    initial = await db.consignment_damaged_opnames.find_one({"id": opname_id}, {"_id": 0})
+    if not initial:
+        raise HTTPException(status_code=404, detail="Stock opname barang rusak tidak ditemukan")
+    destination = _ensure_access(user, initial.get("destination", ""), write=True)
+
+    async def action():
+        current = await db.consignment_damaged_opnames.find_one({"id": opname_id}, {"_id": 0})
+        if not current or current.get("status") != "DRAFT":
+            raise HTTPException(status_code=409, detail="Hanya stock opname barang rusak DRAFT yang dapat diubah")
+
+        submitted = {
+            (item.productId, normalize_channel(item.channel, "KOM")): item
+            for item in body.items
+        }
+        valid_keys = {
+            (str(row.get("productId") or ""), normalize_channel(row.get("channel"), "KOM"))
+            for row in current.get("items", [])
+        }
+        if any(key not in valid_keys for key in submitted):
+            raise HTTPException(status_code=400, detail="Ada produk yang tidak termasuk snapshot opname")
+
+        lines = []
+        for original in current.get("items", []):
+            revised = dict(original)
+            key = (str(original.get("productId") or ""), normalize_channel(original.get("channel"), "KOM"))
+            patch = submitted.get(key)
+            if patch:
+                revised["actualQty"] = float(patch.actualQty)
+                revised["note"] = patch.note.strip()
+            revised["difference"] = _n(revised.get("actualQty")) - _n(revised.get("systemQty"))
+            lines.append(revised)
+
+        now = now_iso()
+        result = await db.consignment_damaged_opnames.update_one(
+            {"id": opname_id, "status": "DRAFT"},
+            {"$set": {
+                "items": lines,
+                "note": body.note.strip(),
+                "updatedAt": now,
+                "updatedBy": user.get("name", ""),
+            }},
+        )
+        if result.matched_count == 0:
+            raise HTTPException(status_code=409, detail="Stock opname barang rusak berubah saat disimpan")
+        return await db.consignment_damaged_opnames.find_one({"id": opname_id}, {"_id": 0})
+
+    return await idempotent_operation(
+        request,
+        user,
+        f"consignment-damaged-opname-update:{opname_id}",
+        [f"consignment-damaged-opname:{opname_id}", f"consignment-damaged-opname-active:{destination}"],
+        action,
+    )
+
+
+@router.post("/consignment-damaged-opnames/{opname_id}/submit")
+async def submit_consignment_damaged_opname(
+    opname_id: str,
+    body: DamagedOpnameDecision,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    opname = await db.consignment_damaged_opnames.find_one({"id": opname_id}, {"_id": 0})
+    if not opname:
+        raise HTTPException(status_code=404, detail="Stock opname barang rusak tidak ditemukan")
+    destination = _ensure_access(user, opname.get("destination", ""), write=True)
+
+    async def action():
+        now = now_iso()
+        result = await db.consignment_damaged_opnames.update_one(
+            {"id": opname_id, "status": "DRAFT"},
+            {"$set": {
+                "status": "SUBMITTED",
+                "submittedAt": now,
+                "submittedBy": user.get("name", ""),
+                "submissionNote": body.note.strip(),
+                "updatedAt": now,
+                "updatedBy": user.get("name", ""),
+            }},
+        )
+        if result.matched_count == 0:
+            raise HTTPException(status_code=409, detail="Stock opname barang rusak sudah berubah atau tidak lagi DRAFT")
+        return await db.consignment_damaged_opnames.find_one({"id": opname_id}, {"_id": 0})
+
+    return await idempotent_operation(
+        request,
+        user,
+        f"consignment-damaged-opname-submit:{opname_id}",
+        [f"consignment-damaged-opname:{opname_id}", f"consignment-damaged-opname-active:{destination}"],
+        action,
+    )
+
+
+@router.post("/consignment-damaged-opnames/{opname_id}/approve")
+async def approve_consignment_damaged_opname(
+    opname_id: str,
+    body: DamagedOpnameDecision,
+    request: Request,
+    user: dict = Depends(require_operational_approval),
+):
+    initial = await db.consignment_damaged_opnames.find_one({"id": opname_id}, {"_id": 0})
+    if not initial:
+        raise HTTPException(status_code=404, detail="Stock opname barang rusak tidak ditemukan")
+    destination = str(initial.get("destination") or "")
+    affected = [
+        (
+            str(line.get("productId") or ""),
+            normalize_channel(line.get("channel"), "KOM"),
+        )
+        for line in initial.get("items", [])
+        if abs(_n(line.get("difference"))) > EPS and str(line.get("productId") or "")
+    ]
+
+    async def action():
+        opname = await db.consignment_damaged_opnames.find_one({"id": opname_id}, {"_id": 0})
+        if not opname or opname.get("status") != "SUBMITTED":
+            raise HTTPException(status_code=409, detail="Stock opname barang rusak tidak lagi menunggu persetujuan")
+
+        current = await _current_damaged_qty(destination)
+        for line in opname.get("items", []):
+            key = (str(line.get("productId") or ""), normalize_channel(line.get("channel"), "KOM"))
+            current_qty = _n(current.get(key, 0.0))
+            snapshot_qty = _n(line.get("systemQty"))
+            if abs(current_qty - snapshot_qty) > EPS:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Saldo rusak {line.get('name', '')} berubah sejak snapshot ({snapshot_qty:g} → {current_qty:g}). Buat ulang opname.",
+                )
+
+        operation_id = new_id()
+        approved_at = now_iso()
+        inserted_events: list[str] = []
+        applied_balances: list[dict] = []
+        history_saved = False
+        status_saved = False
+
+        try:
+            for line in opname.get("items", []):
+                difference = _n(line.get("actualQty")) - _n(line.get("systemQty"))
+                if abs(difference) <= EPS:
+                    continue
+
+                product_id = str(line.get("productId") or "")
+                channel = normalize_channel(line.get("channel"), "KOM")
+                event_key = f"consignment-damaged-opname:{opname_id}:{product_id}:{channel}"
+                movement = {
+                    "id": new_id(),
+                    "eventKey": event_key,
+                    "operationId": operation_id,
+                    "time": approved_at,
+                    "destination": destination,
+                    "location": DAMAGED_LOCATIONS[destination],
+                    "movementType": "OPNAME_RUSAK_ADJUSTMENT",
+                    "referenceId": opname_id,
+                    "referenceNo": opname.get("no", ""),
+                    "productId": product_id,
+                    "sku": line.get("sku", ""),
+                    "name": line.get("name", ""),
+                    "unit": line.get("unit", ""),
+                    "channel": channel,
+                    "delta": difference,
+                    "systemQty": _n(line.get("systemQty")),
+                    "physicalQty": _n(line.get("actualQty")),
+                    "operator": user.get("name", ""),
+                    "note": line.get("note", "") or body.note.strip(),
+                }
+                await db.consignment_damaged_movements.insert_one(dict(movement))
+                inserted_events.append(event_key)
+
+                balance_filter = {
+                    "destination": destination,
+                    "productId": product_id,
+                    "channel": channel,
+                }
+                existing = await db.consignment_damaged_balances.find_one(balance_filter, {"_id": 0})
+                if existing:
+                    result = await db.consignment_damaged_balances.update_one(
+                        {**balance_filter, "qty": _n(line.get("systemQty"))},
+                        {"$inc": {"qty": difference}, "$set": {
+                            "updatedAt": approved_at,
+                            "updatedBy": user.get("name", ""),
+                        }},
+                    )
+                    if result.matched_count == 0:
+                        raise HTTPException(status_code=409, detail=f"Saldo rusak {line.get('name', '')} berubah saat approval")
+                    applied_balances.append({
+                        "mode": "UPDATE",
+                        "filter": balance_filter,
+                        "difference": difference,
+                    })
+                else:
+                    if difference < -EPS:
+                        raise HTTPException(status_code=409, detail=f"Saldo rusak {line.get('name', '')} tidak tersedia untuk dikurangi")
+                    doc = {
+                        "id": new_id(),
+                        "destination": destination,
+                        "location": DAMAGED_LOCATIONS[destination],
+                        "productId": product_id,
+                        "sku": line.get("sku", ""),
+                        "name": line.get("name", ""),
+                        "unit": line.get("unit", ""),
+                        "channel": channel,
+                        "qty": difference,
+                        "createdAt": approved_at,
+                        "updatedAt": approved_at,
+                        "updatedBy": user.get("name", ""),
+                    }
+                    await db.consignment_damaged_balances.insert_one(dict(doc))
+                    applied_balances.append({
+                        "mode": "INSERT",
+                        "filter": balance_filter,
+                        "id": doc["id"],
+                    })
+
+            await db.consignment_operation_history.insert_one({
+                "id": new_id(),
+                "operationId": operation_id,
+                "time": approved_at,
+                "destination": destination,
+                "eventType": "OPNAME_BARANG_RUSAK_DISETUJUI",
+                "referenceId": opname_id,
+                "referenceNo": opname.get("no", ""),
+                "operator": user.get("name", ""),
+                "items": opname.get("items", []),
+                "note": body.note.strip(),
+                "damagedArea": DAMAGED_LOCATIONS[destination],
+            })
+            history_saved = True
+
+            result = await db.consignment_damaged_opnames.update_one(
+                {"id": opname_id, "status": "SUBMITTED"},
+                {"$set": {
+                    "status": "APPROVED",
+                    "approvedAt": approved_at,
+                    "approvedBy": user.get("name", ""),
+                    "approvalNote": body.note.strip(),
+                    "adjustmentOperationId": operation_id,
+                    "updatedAt": approved_at,
+                    "updatedBy": user.get("name", ""),
+                }},
+            )
+            if result.matched_count == 0:
+                raise HTTPException(status_code=409, detail="Status opname barang rusak berubah saat approval")
+            status_saved = True
+            return await db.consignment_damaged_opnames.find_one({"id": opname_id}, {"_id": 0})
+
+        except Exception:
+            if status_saved:
+                await db.consignment_damaged_opnames.update_one(
+                    {"id": opname_id, "status": "APPROVED", "adjustmentOperationId": operation_id},
+                    {"$set": {"status": "SUBMITTED", "updatedAt": now_iso(), "updatedBy": "Sistem (rollback opname rusak)"},
+                     "$unset": {"approvedAt": "", "approvedBy": "", "approvalNote": "", "adjustmentOperationId": ""}},
+                )
+            if history_saved:
+                await db.consignment_operation_history.delete_many({"operationId": operation_id})
+            for applied in reversed(applied_balances):
+                if applied["mode"] == "UPDATE":
+                    await db.consignment_damaged_balances.update_one(
+                        applied["filter"],
+                        {"$inc": {"qty": -_n(applied["difference"])}, "$set": {"updatedAt": now_iso(), "updatedBy": "Sistem (rollback opname rusak)"}},
+                    )
+                else:
+                    await db.consignment_damaged_balances.delete_one({**applied["filter"], "id": applied["id"]})
+            if inserted_events:
+                await db.consignment_damaged_movements.delete_many({"eventKey": {"$in": inserted_events}})
+            raise
+
+    keys = lock_keys(
+        [f"consignment-damaged-opname:{opname_id}", f"consignment-damaged-opname-active:{destination}"],
+        (f"consignment-damaged:{destination}:{product_id}:{channel}" for product_id, channel in affected),
+    )
+    return await idempotent_operation(
+        request,
+        user,
+        f"consignment-damaged-opname-approve:{opname_id}",
+        keys,
+        action,
+    )
+
+
+@router.post("/consignment-damaged-opnames/{opname_id}/reject")
+async def reject_consignment_damaged_opname(
+    opname_id: str,
+    body: DamagedOpnameDecision,
+    request: Request,
+    user: dict = Depends(require_operational_approval),
+):
+    opname = await db.consignment_damaged_opnames.find_one({"id": opname_id}, {"_id": 0})
+    if not opname:
+        raise HTTPException(status_code=404, detail="Stock opname barang rusak tidak ditemukan")
+    destination = str(opname.get("destination") or "")
+
+    async def action():
+        now = now_iso()
+        result = await db.consignment_damaged_opnames.update_one(
+            {"id": opname_id, "status": "SUBMITTED"},
+            {"$set": {
+                "status": "REJECTED",
+                "rejectedAt": now,
+                "rejectedBy": user.get("name", ""),
+                "rejectionNote": body.note.strip(),
+                "updatedAt": now,
+                "updatedBy": user.get("name", ""),
+            }},
+        )
+        if result.matched_count == 0:
+            raise HTTPException(status_code=409, detail="Hanya opname barang rusak SUBMITTED yang dapat ditolak")
+        return await db.consignment_damaged_opnames.find_one({"id": opname_id}, {"_id": 0})
+
+    return await idempotent_operation(
+        request,
+        user,
+        f"consignment-damaged-opname-reject:{opname_id}",
+        [f"consignment-damaged-opname:{opname_id}", f"consignment-damaged-opname-active:{destination}"],
         action,
     )
