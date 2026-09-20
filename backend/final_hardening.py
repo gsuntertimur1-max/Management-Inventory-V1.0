@@ -231,6 +231,20 @@ async def dashboard_consignment_position(user: dict = Depends(get_current_user))
     start_utc = start_local.astimezone(timezone.utc).isoformat()
     end_utc = end_local.astimezone(timezone.utc).isoformat()
 
+    damaged_physical = {destination: {} for destination in allowed_destinations}
+    damaged_rows = await db.consignment_damaged_balances.find(
+        {"destination": {"$in": allowed_destinations}, "qty": {"$gt": EPS}},
+        {"_id": 0, "destination": 1, "unit": 1, "qty": 1},
+    ).to_list(20000)
+    for row in damaged_rows:
+        destination = str(row.get("destination") or "")
+        if destination in damaged_physical:
+            _dashboard_add_unit(damaged_physical[destination], str(row.get("unit") or "Unit"), _n(row.get("qty")))
+    damaged_physical = {
+        destination: _dashboard_clean_totals(values)
+        for destination, values in damaged_physical.items()
+    }
+
     activity = {
         "bazarSold": {},
         "packageDelivered": {},
@@ -316,6 +330,7 @@ async def dashboard_consignment_position(user: dict = Depends(get_current_user))
         "scope": scoped or "MAIN",
         "internal": internal,
         "externalND": external_nd,
+        "damagedPhysical": damaged_physical,
         "activityToday": activity,
         "notes": {
             "internal": "Outstanding GST I/II = konsinyasi keluar - retur ke gudang - SO administratif.",
