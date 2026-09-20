@@ -14,7 +14,7 @@ const ImportData = () => {
     setBusy(true);
     try {
       const res = await importCsv(file);
-      toast.success(`Import master berhasil — ${res.inserted} SKU baru, ${res.updated} SKU diperbarui`);
+      toast.success(`Import selesai — ${res.inserted} SKU baru, ${res.updated} diperbarui${res.protectedFields ? `, ${res.protectedFields} field operasional dipertahankan` : ''}`);
       setFile(null);
     } catch (e) {
       toast.error(apiError(e));
@@ -33,7 +33,7 @@ const ImportData = () => {
           <h1 className="font-display text-4xl font-bold">Import Master SKU</h1>
         </div>
         <div className="card-surface p-8 text-center">
-          <p className="text-[#8b93a1]">Peran Anda hanya dapat melihat data. Import master hanya dapat dilakukan Superadmin atau Admin.</p>
+          <p className="text-[#8b93a1]">Peran Anda hanya dapat melihat data. Import master hanya dapat dilakukan Superadmin.</p>
         </div>
       </div>
     );
@@ -72,7 +72,8 @@ const ImportData = () => {
               'Gunakan template XLSX dari aplikasi',
               'Kolom wajib minimal: sku dan nama',
               'Kolom jumlah stok tidak digunakan',
-              'SKU yang sama diperbarui tanpa mengubah stok',
+              'SKU yang sama diperbarui tanpa mengubah stok, lot, transaksi, atau kedaluwarsa',
+              'Channel bersaldo dan kemasan yang sudah dipakai tumpukan otomatis dipertahankan',
               'Isi kemasan sekunder diisi dalam jumlah pack primer, misalnya 8 pack per karung',
               'Supplier baru otomatis ditambahkan',
             ].map((text) => (
