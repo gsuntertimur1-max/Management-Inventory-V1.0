@@ -474,7 +474,8 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
     else:
         unloading_started_at = _unloading_started_at(body.unloadingStartTime, op_now)
     fee_settings = await db.settings.find_one({"_id": "app"}, {"_id": 0, "holidays": 1}) or {}
-    unloading_holiday = holiday_from_settings(op_now, fee_settings.get("holidays") or [])
+    # Hari libur bongkar mengikuti waktu Mulai Bongkar yang sebenarnya.
+    unloading_holiday = holiday_from_settings(unloading_started_at, fee_settings.get("holidays") or [])
     operation_id = new_id()
     transaction_ref = po.get("no") if po else (body.ref.strip() or f"IN-{op_now.strftime('%Y%m%d%H%M%S%f')}")
     time = now_iso()
@@ -583,6 +584,8 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
                 "weighing_entries": _weighing_entries(float(body.grossWeight), float(body.grossMin), float(body.grossMax)) if body.weighingForm and include_weighing else [],
                 "unloading_group": unloading_group,
                 "unloading_cost": loading_cost,
+                "unloading_cost_basis_qty": total_qty if loading_cost else 0,
+                "unloading_cost_basis_unit": product.get("unit", "") if loading_cost else "",
                 "unloading_work": ({
                     "regularQty": loading_cost.get("regularQty", 0),
                     "overtimeQty": loading_cost.get("overtimeQty", 0),
