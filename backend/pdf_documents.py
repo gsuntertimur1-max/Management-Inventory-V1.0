@@ -405,7 +405,7 @@ def _draw_sj_copy(c: canvas.Canvas, sj: dict, x: float, y: float, width: float, 
     footer_y = 18 * mm; c.setStrokeColor(colors.HexColor("#527D96")); c.line(left, footer_y + 11*mm, right, footer_y + 11*mm); c.setFillColor(colors.HexColor("#244B63")); c.setFont("Helvetica-Bold", 8); c.drawString(left, footer_y + 5*mm, "Delivery Tracking"); c.setFillColor(colors.black); c.setFont("Helvetica", 5.8); c.drawString(left, footer_y, "Dicetak oleh: KOMPLEKS GUDANG SUNTER TIMUR I & II"); c.drawRightString(right, footer_y, f"Tanggal cetak: {_date(operational_now().isoformat(), True)}")
 
 
-@router.get("/export/surat-jalan/{sj_id}.pdf")
+@router.get("/export/surat-jalan-legacy/{sj_id}.pdf", include_in_schema=False)
 async def export_surat_jalan_pdf(sj_id: str, user: dict = Depends(get_current_user)):
     sj = await db.surat_jalan.find_one({"id": sj_id}, {"_id": 0})
     if not sj: raise HTTPException(status_code=404, detail="Surat Jalan tidak ditemukan")
