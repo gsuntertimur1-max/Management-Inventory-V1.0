@@ -176,12 +176,11 @@ def _render_bon(load: dict, label: str):
     table_h = (2 * colly_row_h) + tonase_row_h + loading_row_h
 
     content_height_mm = 112.0
-    for document_no, rows in grouped.items():
-        content_height_mm += len(_wrap_text(f"Dokumen: {document_no}", "Helvetica-Bold", 8.5, content_width)) * 4.0 + 2.0
-        for item in rows.values():
-            content_height_mm += len(_wrap_text(str(item.get("name", "")), "Helvetica-Bold", 8.5, content_width)) * 4.2
-            content_height_mm += len(_wrap_text(f"Tumpukan: {item.get('stack', '-')}", "Helvetica-Bold", 8.0, content_width)) * 4.0
-            content_height_mm += (table_h / mm) + 6.0
+    for item in grouped.values():
+        content_height_mm += len(_wrap_text(str(item.get("name", "")), "Helvetica-Bold", 8.5, content_width)) * 4.2
+        content_height_mm += len(_wrap_text(f"Dokumen: {item.get('documentLabel', '-')}", "Helvetica", 7.5, content_width)) * 3.7
+        content_height_mm += len(_wrap_text(f"Tumpukan: {item.get('stackLabel', '-')}", "Helvetica-Bold", 8.0, content_width)) * 4.0
+        content_height_mm += (table_h / mm) + 7.0
 
     fields = [
         ("Tanggal", _date(load.get("started_at") or load.get("created_at"), True)),
@@ -243,95 +242,101 @@ def _render_bon(load: dict, label: str):
     c.setDash()
     y -= 5.0 * mm
     c.setFont("Helvetica-Bold", 7.0)
-    c.drawString(left, y, "RINCIAN PEMUATAN PER DOKUMEN")
+    c.drawString(left, y, "RINCIAN PEMUATAN")
     y -= 5.0 * mm
 
     weight_totals = OrderedDict()
-    for document_no, rows in grouped.items():
+    for item in grouped.values():
+        qty = float(item.get("qty", 0) or 0)
+        measure = _measure_unit(item)
+        weight_value = float(item.get("berat", 0) or 0)
+        weight_totals[measure] = weight_totals.get(measure, 0.0) + weight_value
+
         c.setFont("Helvetica-Bold", 8.5)
-        for line in _wrap_text(f"Dokumen: {document_no}", "Helvetica-Bold", 8.5, content_width):
+        for line in _wrap_text(str(item.get("name", "")), "Helvetica-Bold", 8.5, content_width):
+            c.drawString(left, y, line)
+            y -= 4.2 * mm
+
+        c.setFont("Helvetica", 7.5)
+        for line in _wrap_text(f"Dokumen: {item.get('documentLabel', '-')}", "Helvetica", 7.5, content_width):
+            c.drawString(left, y, line)
+            y -= 3.7 * mm
+
+        c.setFont("Helvetica-Bold", 8.0)
+        for line in _wrap_text(f"Tumpukan: {item.get('stackLabel', '-')}", "Helvetica-Bold", 8.0, content_width):
             c.drawString(left, y, line)
             y -= 4.0 * mm
-        y -= 1.2 * mm
+        y -= 1.0 * mm
 
-        for item in rows.values():
-            qty = float(item.get("qty", 0) or 0)
-            measure = _measure_unit(item)
-            weight_value = float(item.get("berat", 0) or 0)
-            weight_totals[measure] = weight_totals.get(measure, 0.0) + weight_value
+        secondary_qty = float(item.get("secondaryQty", 0) or 0)
+        secondary_name = str(item.get("secondary") or "").strip()
+        primary_unit = str(item.get("unit") or "pcs").strip()
+        full_secondary = int(qty // secondary_qty) if secondary_qty > 0 else 0
+        loose_primary = qty - (full_secondary * secondary_qty) if secondary_qty > 0 else qty
+        secondary_number = _num(full_secondary) if secondary_qty > 0 else "-"
+        secondary_unit = secondary_name if secondary_qty > 0 and secondary_name else "-"
+        loose_number = _num(loose_primary)
 
-            c.setFont("Helvetica-Bold", 8.5)
-            for line in _wrap_text(str(item.get("name", "")), "Helvetica-Bold", 8.5, content_width):
-                c.drawString(left, y, line)
-                y -= 4.2 * mm
-            c.setFont("Helvetica-Bold", 8.0)
-            for line in _wrap_text(f"Tumpukan: {item.get('stack', '-')}", "Helvetica-Bold", 8.0, content_width):
-                c.drawString(left, y, line)
-                y -= 4.0 * mm
-            y -= 1.0 * mm
+        stack_label = str(item.get("stackLabel") or load.get("unit_loading") or "-")
+        loading_location = stack_label
+        if "," not in stack_label and "/" in stack_label:
+            loading_location = stack_label
+        elif "," in stack_label:
+            loading_location = load.get("unit_loading") or stack_label
 
-            secondary_qty = float(item.get("secondaryQty", 0) or 0)
-            secondary_name = str(item.get("secondary") or "").strip()
-            primary_unit = str(item.get("unit") or "pcs").strip()
-            full_secondary = int(qty // secondary_qty) if secondary_qty > 0 else 0
-            loose_primary = qty - (full_secondary * secondary_qty) if secondary_qty > 0 else qty
-            secondary_number = _num(full_secondary) if secondary_qty > 0 else "-"
-            secondary_unit = secondary_name if secondary_qty > 0 and secondary_name else "-"
-            loose_number = _num(loose_primary)
-            loading_location = str(item.get("stack", "") or load.get("unit_loading") or "-")
+        table_left = left
+        table_right = right
+        table_width = table_right - table_left
+        unit_w = table_width - table_label_w - table_number_w
+        table_top = y
+        table_bottom = table_top - table_h
+        x_label = table_left + table_label_w
+        x_number = x_label + table_number_w
 
-            table_left = left
-            table_right = right
-            table_width = table_right - table_left
-            unit_w = table_width - table_label_w - table_number_w
-            table_top = y
-            table_bottom = table_top - table_h
-            x_label = table_left + table_label_w
-            x_number = x_label + table_number_w
+        c.setLineWidth(0.7)
+        c.rect(table_left, table_bottom, table_width, table_h, fill=0, stroke=1)
+        c.line(x_label, table_bottom, x_label, table_top)
+        c.line(x_number, table_bottom + loading_row_h, x_number, table_top)
+        y_loading_top = table_bottom + loading_row_h
+        y_tonase_top = y_loading_top + tonase_row_h
+        y_colly_second_top = y_tonase_top + colly_row_h
+        c.line(table_left, y_loading_top, table_right, y_loading_top)
+        c.line(table_left, y_tonase_top, table_right, y_tonase_top)
+        c.line(x_label, y_colly_second_top, table_right, y_colly_second_top)
 
-            c.setLineWidth(0.7)
-            c.rect(table_left, table_bottom, table_width, table_h, fill=0, stroke=1)
-            c.line(x_label, table_bottom, x_label, table_top)
-            c.line(x_number, table_bottom + loading_row_h, x_number, table_top)
-            y_loading_top = table_bottom + loading_row_h
-            y_tonase_top = y_loading_top + tonase_row_h
-            y_colly_second_top = y_tonase_top + colly_row_h
-            c.line(table_left, y_loading_top, table_right, y_loading_top)
-            c.line(table_left, y_tonase_top, table_right, y_tonase_top)
-            c.line(x_label, y_colly_second_top, table_right, y_colly_second_top)
+        label_center = table_left + (table_label_w / 2)
+        c.setFont("Helvetica-Bold", 7.0)
+        c.drawCentredString(label_center, y_tonase_top + colly_row_h - 1.2 * mm, "Colly:")
+        c.drawCentredString(label_center, y_loading_top + (tonase_row_h / 2) - 1.2 * mm, "Tonase:")
+        c.drawCentredString(label_center, table_bottom + (loading_row_h / 2) - 1.2 * mm, "Pemuatan:")
 
-            label_center = table_left + (table_label_w / 2)
-            c.setFont("Helvetica-Bold", 7.0)
-            c.drawCentredString(label_center, y_tonase_top + colly_row_h - 1.2 * mm, "Colly:")
-            c.drawCentredString(label_center, y_loading_top + (tonase_row_h / 2) - 1.2 * mm, "Tonase:")
-            c.drawCentredString(label_center, table_bottom + (loading_row_h / 2) - 1.2 * mm, "Pemuatan:")
+        number_center = x_label + table_number_w / 2
+        unit_center = x_number + unit_w / 2
+        c.setFont("Helvetica-Bold", 10)
+        c.drawCentredString(number_center, table_top - 4.9 * mm, secondary_number)
+        c.drawCentredString(number_center, y_colly_second_top - 4.9 * mm, loose_number)
+        c.setFont("Helvetica-Bold", 7.5)
+        c.drawCentredString(unit_center, table_top - 4.8 * mm, secondary_unit)
+        c.drawCentredString(unit_center, y_colly_second_top - 4.8 * mm, primary_unit)
+        c.setFont("Helvetica-Bold", 10)
+        c.drawCentredString(number_center, y_tonase_top - 5.0 * mm, _num(weight_value))
+        c.setFont("Helvetica-Bold", 7.5)
+        c.drawCentredString(unit_center, y_tonase_top - 4.8 * mm, measure)
 
-            number_center = x_label + table_number_w / 2
-            unit_center = x_number + unit_w / 2
-            c.setFont("Helvetica-Bold", 10)
-            c.drawCentredString(number_center, table_top - 4.9 * mm, secondary_number)
-            c.drawCentredString(number_center, y_colly_second_top - 4.9 * mm, loose_number)
-            c.setFont("Helvetica-Bold", 7.5)
-            c.drawCentredString(unit_center, table_top - 4.8 * mm, secondary_unit)
-            c.drawCentredString(unit_center, y_colly_second_top - 4.8 * mm, primary_unit)
-            c.setFont("Helvetica-Bold", 10)
-            c.drawCentredString(number_center, y_tonase_top - 5.0 * mm, _num(weight_value))
-            c.setFont("Helvetica-Bold", 7.5)
-            c.drawCentredString(unit_center, y_tonase_top - 4.8 * mm, measure)
+        loading_center = x_label + (table_number_w + unit_w) / 2
+        loading_font = 8.5
+        while loading_font > 6.5 and stringWidth(str(loading_location), "Helvetica-Bold", loading_font) > ((table_number_w + unit_w) - 3 * mm):
+            loading_font -= 0.5
+        c.setFont("Helvetica-Bold", loading_font)
+        c.drawCentredString(loading_center, table_bottom + 3.0 * mm, str(loading_location))
 
-            loading_center = x_label + (table_number_w + unit_w) / 2
-            loading_font = 8.5
-            while loading_font > 7.0 and stringWidth(loading_location, "Helvetica-Bold", loading_font) > ((table_number_w + unit_w) - 3 * mm):
-                loading_font -= 0.5
-            c.setFont("Helvetica-Bold", loading_font)
-            c.drawCentredString(loading_center, table_bottom + 3.0 * mm, loading_location)
-            y = table_bottom - 5.0 * mm
+        y = table_bottom - 5.0 * mm
 
     c.setFont("Helvetica-Bold", 7.0)
     c.drawCentredString(mid, y, "TOTAL PEMUATAN")
     y -= 3.8 * mm
     c.setFont("Helvetica", 6.0)
-    c.drawCentredString(mid, y, f"{len(grouped)} Dokumen | {sum(len(rows) for rows in grouped.values())} Produk")
+    c.drawCentredString(mid, y, f"{len(load.get('documents') or [load.get('ref', '')])} Dokumen | {len(grouped)} Produk")
     y -= 3.6 * mm
     physical_text = "Fisik: " + " + ".join(f"{_num(value)} {unit}" for unit, value in weight_totals.items())
     for line in _wrap_text(physical_text, "Helvetica", 6.0, content_width):
@@ -366,12 +371,6 @@ async def _render_sj(sj: dict):
     for page_index, page_rows in enumerate(pages, 1):
         _draw_sj_half(c, sj, page_rows, warehouse_head, 0, page_index, total_pages)
         _draw_sj_half(c, sj, page_rows, warehouse_head, half_w, page_index, total_pages)
-        c.setStrokeColor(colors.HexColor("#B8B8B8"))
-        c.setLineWidth(0.25)
-        c.setDash(1.2, 2.2)
-        c.line(half_w, 3 * mm, half_w, page_h - 3 * mm)
-        c.setDash()
-        c.setStrokeColor(colors.black)
         c.showPage()
     c.save()
     filename = str(sj.get("no") or sj.get("ref") or "bazar").replace("/", "-")
