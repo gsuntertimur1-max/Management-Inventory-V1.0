@@ -3,18 +3,21 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from backend.server import db, get_current_user, new_id, normalize_channel, now_iso
 from backend.role_four_config import has_role_permission, role_destination
 from backend.consignment_damaged import credit_consignment_damaged
+from backend.consignment_locations import normalize_consignment_stack_code
+from backend.operational_guards import idempotent_operation, lock_keys
 import backend.consignment as consignment_module
 
 
 router = APIRouter(prefix="/api/bazar/external-nds")
 BAZAR = "Gudang Bazar"
 EPS = 1e-9
+ACTIVITY_TYPES = {"BAZAR", "PAKET", "BAZAR_DAN_PAKET"}
 
 
 def _n(value) -> float:
@@ -66,9 +69,15 @@ class SettlementItemInput(BaseModel):
     qty: float = Field(gt=0)
 
 
+class ReturnItemInput(BaseModel):
+    productId: str
+    qty: float = Field(gt=0)
+    stackCode: str
+
+
 class ExternalNDReturn(BaseModel):
     returnDate: str
-    items: List[SettlementItemInput] = Field(min_length=1)
+    items: List[ReturnItemInput] = Field(min_length=1)
     note: str = ""
 
 
@@ -84,6 +93,10 @@ class ExternalNDSO(BaseModel):
     soNo: str
     soDate: str
     items: List[SettlementItemInput] = Field(min_length=1)
+    note: str = ""
+
+
+class ExternalNDCancel(BaseModel):
     note: str = ""
 
 
@@ -123,13 +136,23 @@ def summarize_external_nd(document: dict) -> dict:
         remaining_to_receive = max(totals["ordered"] - received, 0.0)
         physical_balance = max(totals["good"] - totals["returned"] - totals["realized"], 0.0)
         eligible_so = max(totals["realized"] - totals["settled"], 0.0)
-        summary.append({**item, **totals, "received": received, "remainingToReceive": remaining_to_receive, "physicalBalance": physical_balance, "eligibleSoQty": eligible_so, "unsettledQty": physical_balance + eligible_so})
+        summary.append({
+            **item,
+            **totals,
+            "received": received,
+            "remainingToReceive": remaining_to_receive,
+            "physicalBalance": physical_balance,
+            "eligibleSoQty": eligible_so,
+            "unsettledQty": physical_balance + eligible_so,
+        })
     if doc.get("cancelledAt"):
         status = "DIBATALKAN"
     elif summary and all(row["remainingToReceive"] <= EPS and row["unsettledQty"] <= EPS for row in summary):
         status = "SELESAI"
     elif doc.get("soDocuments"):
         status = "SO_TERBIT_SEBAGIAN"
+    elif doc.get("realizations"):
+        status = "DIREALISASIKAN_SEBAGIAN"
     elif doc.get("returns"):
         status = "ADA_RETUR"
     elif doc.get("receipts") and all(row["remainingToReceive"] <= EPS for row in summary):
@@ -150,16 +173,123 @@ async def _document(nd_id: str) -> dict:
     return document
 
 
-async def _record_history(event_type: str, document: dict, user: dict, items: list[dict], note: str = "", extra: dict | None = None) -> None:
+def _product_ids(document: dict) -> list[str]:
+    return sorted({
+        str(item.get("productId") or "").strip()
+        for item in document.get("items", [])
+        if str(item.get("productId") or "").strip()
+    })
+
+
+def _nd_locks(nd_id: str, product_ids: list[str], extra: list[str] | None = None) -> list[str]:
+    return lock_keys(
+        [f"external-nd:{nd_id}"],
+        (f"consignment:{BAZAR}:{product_id}" for product_id in product_ids),
+        extra or [],
+    )
+
+
+async def _record_history(
+    event_type: str,
+    document: dict,
+    user: dict,
+    items: list[dict],
+    note: str = "",
+    extra: dict | None = None,
+) -> None:
     row = {
-        "id": new_id(), "time": now_iso(), "destination": BAZAR, "eventType": event_type,
-        "referenceId": document["id"], "referenceNo": document.get("ndNo", ""),
-        "operator": user.get("name", ""), "items": items, "note": str(note or "").strip(),
+        "id": new_id(),
+        "time": now_iso(),
+        "destination": BAZAR,
+        "eventType": event_type,
+        "referenceId": document["id"],
+        "referenceNo": document.get("ndNo", ""),
+        "operator": user.get("name", ""),
+        "items": items,
+        "note": str(note or "").strip(),
         "originWarehouse": document.get("originWarehouse", ""),
     }
     if extra:
         row.update(extra)
     await db.consignment_operation_history.insert_one(row)
+
+
+def _validate_activity_allowed(document: dict, activity_type: str) -> str:
+    activity_type = str(activity_type or "").strip().upper()
+    if activity_type not in {"BAZAR", "PAKET"}:
+        raise HTTPException(status_code=400, detail="Jenis realisasi harus BAZAR atau PAKET")
+    scope = str(document.get("activityType") or "BAZAR").strip().upper()
+    if scope == "BAZAR" and activity_type != "BAZAR":
+        raise HTTPException(status_code=409, detail="ND ini hanya diperuntukkan untuk Bazar")
+    if scope == "PAKET" and activity_type != "PAKET":
+        raise HTTPException(status_code=409, detail="ND ini hanya diperuntukkan untuk Paket")
+    if scope not in ACTIVITY_TYPES:
+        raise HTTPException(status_code=409, detail="Jenis kegiatan pada ND tidak dikenali")
+    return activity_type
+
+
+async def _reference_capacity(activity_type: str, reference_no: str) -> tuple[dict, dict[str, float]]:
+    reference_no = str(reference_no or "").strip().upper()
+    if not reference_no:
+        raise HTTPException(status_code=400, detail="Referensi kegiatan Bazar/Paket wajib dipilih")
+
+    capacity: dict[str, float] = defaultdict(float)
+    if activity_type == "BAZAR":
+        source = await db.bazar_trips.find_one({"tripNo": reference_no}, {"_id": 0})
+        if not source:
+            raise HTTPException(status_code=404, detail="Referensi perjalanan Bazar tidak ditemukan")
+        if source.get("status") != "SELESAI":
+            raise HTTPException(status_code=409, detail="Perjalanan Bazar harus selesai sebelum dapat direalisasikan ke ND")
+        for item in source.get("resultItems", []):
+            capacity[str(item.get("productId") or "")] += _n(item.get("soldQty"))
+    else:
+        source = await db.bazar_package_loads.find_one({"loadNo": reference_no}, {"_id": 0})
+        if not source:
+            raise HTTPException(status_code=404, detail="Referensi pemuatan Paket tidak ditemukan")
+        if source.get("status") != "SELESAI":
+            raise HTTPException(status_code=409, detail="Pemuatan Paket harus selesai sebelum dapat direalisasikan ke ND")
+        for loaded in source.get("resultItems", []):
+            delivered = _n(loaded.get("deliveredQty"))
+            for component in loaded.get("components", []):
+                product_id = str(component.get("productId") or "")
+                if product_id:
+                    capacity[product_id] += delivered * _n(component.get("qty"))
+    return source, dict(capacity)
+
+
+async def _reference_used_qty(activity_type: str, reference_no: str, product_id: str) -> float:
+    used = 0.0
+    rows = await db.bazar_external_nd.find(
+        {
+            "realizations": {
+                "$elemMatch": {
+                    "activityType": activity_type,
+                    "referenceNo": reference_no,
+                }
+            }
+        },
+        {"_id": 0, "realizations": 1},
+    ).to_list(5000)
+    for document in rows:
+        for entry in document.get("realizations", []):
+            if entry.get("activityType") != activity_type or entry.get("referenceNo") != reference_no:
+                continue
+            for item in entry.get("items", []):
+                if item.get("productId") == product_id:
+                    used += _n(item.get("qty"))
+    return used
+
+
+async def _rollback_damaged_credit(event_key: str, item: dict, qty: float) -> None:
+    movement = await db.consignment_damaged_movements.find_one({"eventKey": event_key}, {"_id": 0})
+    if not movement:
+        return
+    channel = normalize_channel(item.get("channel"), "KOM")
+    await db.consignment_damaged_movements.delete_one({"eventKey": event_key})
+    await db.consignment_damaged_balances.update_one(
+        {"destination": BAZAR, "productId": item.get("productId", ""), "channel": channel},
+        {"$inc": {"qty": -qty}, "$set": {"updatedAt": now_iso()}},
+    )
 
 
 @router.get("")
@@ -170,172 +300,563 @@ async def list_external_nds(user: dict = Depends(get_current_user)):
 
 
 @router.post("")
-async def create_external_nd(body: ExternalNDCreate, user: dict = Depends(get_current_user)):
+async def create_external_nd(body: ExternalNDCreate, request: Request, user: dict = Depends(get_current_user)):
     _ensure_access(user, write=True)
     nd_no = body.ndNo.strip().upper()
     origin = body.originWarehouse.strip()
+    activity_type = body.activityType.strip().upper() or "BAZAR"
     if not nd_no or not body.ndDate or not origin:
         raise HTTPException(status_code=400, detail="Nomor ND, tanggal ND, dan gudang asal wajib diisi")
-    if await db.bazar_external_nd.find_one({"ndNo": nd_no, "cancelledAt": {"$exists": False}}):
-        raise HTTPException(status_code=409, detail="Nomor ND sudah terdaftar")
+    if activity_type not in ACTIVITY_TYPES:
+        raise HTTPException(status_code=400, detail="Jenis kegiatan ND harus BAZAR, PAKET, atau BAZAR_DAN_PAKET")
+
     grouped = defaultdict(float)
     for item in body.items:
         grouped[item.productId] += float(item.qty)
-    items = [{**(await _identity(product_id)), "orderedQty": qty} for product_id, qty in grouped.items()]
-    now = now_iso()
-    document = {
-        "id": new_id(), "ndNo": nd_no, "ndDate": body.ndDate, "originWarehouse": origin,
-        "activityType": body.activityType.strip().upper() or "BAZAR", "items": items,
-        "receipts": [], "returns": [], "realizations": [], "soDocuments": [], "note": body.note.strip(),
-        "createdAt": now, "createdBy": user.get("name", ""),
-    }
-    await db.bazar_external_nd.insert_one(dict(document))
-    await _record_history("BAZAR_ND_EKSTERNAL_DIBUAT", document, user, items, body.note)
-    return summarize_external_nd(document)
+    product_ids = sorted(grouped)
+
+    async def action():
+        if await db.bazar_external_nd.find_one({"ndNo": nd_no}, {"_id": 0, "id": 1}):
+            raise HTTPException(status_code=409, detail="Nomor ND sudah terdaftar")
+        items = [{**(await _identity(product_id)), "orderedQty": qty} for product_id, qty in grouped.items()]
+        now = now_iso()
+        document = {
+            "id": new_id(),
+            "ndNo": nd_no,
+            "ndDate": body.ndDate,
+            "originWarehouse": origin,
+            "activityType": activity_type,
+            "items": items,
+            "receipts": [],
+            "returns": [],
+            "realizations": [],
+            "soDocuments": [],
+            "note": body.note.strip(),
+            "createdAt": now,
+            "createdBy": user.get("name", ""),
+        }
+        await db.bazar_external_nd.insert_one(dict(document))
+        await _record_history("BAZAR_ND_EKSTERNAL_DIBUAT", document, user, items, body.note)
+        return summarize_external_nd(document)
+
+    return await idempotent_operation(
+        request,
+        user,
+        f"external-nd-create:{nd_no}",
+        lock_keys([f"external-nd-no:{nd_no}"], (f"consignment:{BAZAR}:{pid}" for pid in product_ids)),
+        action,
+    )
 
 
 @router.post("/{nd_id}/receipts")
-async def receive_external_nd(nd_id: str, body: ExternalNDReceipt, user: dict = Depends(get_current_user)):
+async def receive_external_nd(
+    nd_id: str,
+    body: ExternalNDReceipt,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
     _ensure_access(user, write=True)
-    document = await _document(nd_id)
-    if document.get("cancelledAt"):
-        raise HTTPException(status_code=409, detail="ND sudah dibatalkan")
-    input_map = {row.productId: row for row in body.items}
-    receipt_items = []
-    for ordered in document.get("items", []):
-        entered = input_map.pop(ordered["productId"], None)
-        if not entered:
-            continue
-        good, damaged = float(entered.goodQty), float(entered.damagedQty)
-        if good + damaged <= EPS:
-            continue
-        totals = _item_totals(document, ordered["productId"])
-        outstanding = max(totals["ordered"] - totals["good"] - totals["damaged"], 0.0)
-        if good + damaged > outstanding + EPS:
-            raise HTTPException(status_code=409, detail=f"Penerimaan {ordered.get('name', '')} melebihi sisa ND {outstanding:g}")
-        stack_code = str(entered.stackCode or "BZR/A01").strip().upper()
-        receipt_items.append({**ordered, "goodQty": good, "damagedQty": damaged, "stackCode": stack_code})
-    if input_map:
-        raise HTTPException(status_code=400, detail="Penerimaan memuat produk yang tidak tercantum pada ND")
-    if not receipt_items:
-        raise HTTPException(status_code=400, detail="Isi minimal satu jumlah penerimaan")
-    receipt_id, now = new_id(), now_iso()
-    receipt = {"id": receipt_id, "receiptDate": body.receiptDate, "vehicleNo": body.vehicleNo.strip().upper(), "items": receipt_items, "note": body.note.strip(), "createdAt": now, "createdBy": user.get("name", "")}
-    for item in receipt_items:
-        if _n(item.get("goodQty")) > EPS:
-            event_key = f"bazar-external-nd-receipt:{receipt_id}:{item['productId']}"
-            movement = {
-                "id": new_id(), "eventKey": event_key, "time": now, "destination": BAZAR,
-                "movementType": "ND_EKSTERNAL_DITERIMA", "referenceId": nd_id, "referenceNo": document.get("ndNo", ""),
-                "sourceType": "GUDANG_EKSTERNAL", "originWarehouse": document.get("originWarehouse", ""),
-                "productId": item["productId"], "sku": item.get("sku", ""), "name": item.get("name", ""),
-                "unit": item.get("unit", ""), "channel": item.get("channel", "KOM"), "delta": _n(item.get("goodQty")),
-                "stackCode": item.get("stackCode", ""), "operator": user.get("name", ""),
-            }
-            await db.consignment_movements.update_one({"eventKey": event_key}, {"$setOnInsert": movement}, upsert=True)
-        if _n(item.get("damagedQty")) > EPS:
-            await credit_consignment_damaged(
-                BAZAR, item, _n(item.get("damagedQty")), f"bazar-external-nd-damaged:{receipt_id}:{item['productId']}",
-                "ND_EKSTERNAL_RUSAK_DITERIMA", nd_id, document.get("ndNo", ""), user.get("name", ""), body.note,
+    initial = await _document(nd_id)
+
+    async def action():
+        document = await _document(nd_id)
+        if document.get("cancelledAt"):
+            raise HTTPException(status_code=409, detail="ND sudah dibatalkan")
+
+        requested_by_product = defaultdict(float)
+        receipt_items = []
+        for entered in body.items:
+            source = next((row for row in document.get("items", []) if row.get("productId") == entered.productId), None)
+            if not source:
+                raise HTTPException(status_code=400, detail="Penerimaan memuat produk yang tidak tercantum pada ND")
+            good, damaged = float(entered.goodQty), float(entered.damagedQty)
+            if good + damaged <= EPS:
+                continue
+            stack_code = ""
+            if good > EPS:
+                stack_code = normalize_consignment_stack_code(BAZAR, entered.stackCode or "18/A01-BAZAR")
+            requested_by_product[entered.productId] += good + damaged
+            receipt_items.append({
+                **source,
+                "goodQty": good,
+                "damagedQty": damaged,
+                "stackCode": stack_code,
+            })
+
+        if not receipt_items:
+            raise HTTPException(status_code=400, detail="Isi minimal satu jumlah penerimaan")
+
+        for product_id, requested in requested_by_product.items():
+            totals = _item_totals(document, product_id)
+            outstanding = max(totals["ordered"] - totals["good"] - totals["damaged"], 0.0)
+            if requested > outstanding + EPS:
+                source = next(row for row in document.get("items", []) if row.get("productId") == product_id)
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Penerimaan {source.get('name', '')} melebihi sisa ND {outstanding:g}",
+                )
+
+        receipt_id, now = new_id(), now_iso()
+        receipt = {
+            "id": receipt_id,
+            "receiptDate": body.receiptDate,
+            "vehicleNo": body.vehicleNo.strip().upper(),
+            "items": receipt_items,
+            "note": body.note.strip(),
+            "createdAt": now,
+            "createdBy": user.get("name", ""),
+        }
+        good_events: list[tuple[str, dict]] = []
+        damaged_events: list[tuple[str, dict, float]] = []
+        receipt_saved = False
+        try:
+            for index, item in enumerate(receipt_items):
+                good_qty = _n(item.get("goodQty"))
+                damaged_qty = _n(item.get("damagedQty"))
+                if good_qty > EPS:
+                    event_key = f"bazar-external-nd-receipt:{receipt_id}:{index}:{item['productId']}"
+                    movement = {
+                        "id": new_id(),
+                        "eventKey": event_key,
+                        "time": now,
+                        "destination": BAZAR,
+                        "movementType": "ND_EKSTERNAL_DITERIMA",
+                        "referenceId": nd_id,
+                        "referenceNo": document.get("ndNo", ""),
+                        "sourceType": "GUDANG_EKSTERNAL",
+                        "originWarehouse": document.get("originWarehouse", ""),
+                        "productId": item["productId"],
+                        "sku": item.get("sku", ""),
+                        "name": item.get("name", ""),
+                        "unit": item.get("unit", ""),
+                        "channel": item.get("channel", "KOM"),
+                        "delta": good_qty,
+                        "stackCode": item.get("stackCode", ""),
+                        "operator": user.get("name", ""),
+                    }
+                    await db.consignment_movements.insert_one(dict(movement))
+                    good_events.append((event_key, item))
+                    await consignment_module.sync_consignment_layout_balance(
+                        BAZAR,
+                        item["productId"],
+                        operator=user.get("name", ""),
+                        preferred_stack=item.get("stackCode", ""),
+                        operation_key=event_key,
+                        note=f"Penerimaan ND eksternal {document.get('ndNo', '')} ditempatkan ke lokasi fisik.",
+                    )
+                if damaged_qty > EPS:
+                    damaged_key = f"bazar-external-nd-damaged:{receipt_id}:{index}:{item['productId']}"
+                    await credit_consignment_damaged(
+                        BAZAR,
+                        item,
+                        damaged_qty,
+                        damaged_key,
+                        "ND_EKSTERNAL_RUSAK_DITERIMA",
+                        nd_id,
+                        document.get("ndNo", ""),
+                        user.get("name", ""),
+                        body.note,
+                    )
+                    damaged_events.append((damaged_key, item, damaged_qty))
+
+            result = await db.bazar_external_nd.update_one(
+                {"id": nd_id, "cancelledAt": {"$exists": False}, "receipts.id": {"$ne": receipt_id}},
+                {"$push": {"receipts": receipt}, "$set": {"updatedAt": now, "updatedBy": user.get("name", "")}},
             )
-    await db.bazar_external_nd.update_one({"id": nd_id}, {"$push": {"receipts": receipt}, "$set": {"updatedAt": now, "updatedBy": user.get("name", "")}})
-    await _record_history("BAZAR_ND_EKSTERNAL_DITERIMA", document, user, receipt_items, body.note, {"vehicleNo": receipt["vehicleNo"]})
-    return summarize_external_nd(await _document(nd_id))
+            if result.matched_count == 0:
+                raise HTTPException(status_code=409, detail="ND berubah saat penerimaan. Muat ulang lalu coba kembali.")
+            receipt_saved = True
+            await _record_history(
+                "BAZAR_ND_EKSTERNAL_DITERIMA",
+                document,
+                user,
+                receipt_items,
+                body.note,
+                {"vehicleNo": receipt["vehicleNo"], "operationId": receipt_id},
+            )
+            return summarize_external_nd(await _document(nd_id))
+        except Exception:
+            if receipt_saved:
+                await db.bazar_external_nd.update_one({"id": nd_id}, {"$pull": {"receipts": {"id": receipt_id}}})
+            await db.consignment_operation_history.delete_many({"operationId": receipt_id})
+            for damaged_key, item, qty in reversed(damaged_events):
+                await _rollback_damaged_credit(damaged_key, item, qty)
+            for event_key, item in reversed(good_events):
+                await db.consignment_movements.delete_one({"eventKey": event_key})
+                try:
+                    await consignment_module.sync_consignment_layout_balance(
+                        BAZAR,
+                        item["productId"],
+                        operator="Sistem (rollback ND eksternal)",
+                        preferred_stack=item.get("stackCode", ""),
+                        operation_key=f"{event_key}:rollback",
+                        note="Rollback penerimaan ND eksternal yang tidak selesai.",
+                    )
+                except Exception:
+                    pass
+            raise
+
+    return await idempotent_operation(
+        request,
+        user,
+        f"external-nd-receipt:{nd_id}",
+        _nd_locks(nd_id, _product_ids(initial)),
+        action,
+    )
 
 
 @router.post("/{nd_id}/returns")
-async def return_external_nd(nd_id: str, body: ExternalNDReturn, user: dict = Depends(get_current_user)):
+async def return_external_nd(
+    nd_id: str,
+    body: ExternalNDReturn,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
     _ensure_access(user, write=True)
-    document = await _document(nd_id)
-    grouped = defaultdict(float)
-    for row in body.items:
-        grouped[row.productId] += float(row.qty)
-    items = []
-    for product_id, qty in grouped.items():
-        source = next((row for row in document.get("items", []) if row.get("productId") == product_id), None)
-        if not source:
-            raise HTTPException(status_code=400, detail="Produk retur tidak tercantum pada ND")
-        totals = _item_totals(document, product_id)
-        returnable = max(totals["good"] - totals["returned"] - totals["realized"], 0.0)
-        if qty > returnable + EPS:
-            raise HTTPException(status_code=409, detail=f"Saldo belum SO {source.get('name', '')} hanya {returnable:g}")
-        items.append({**source, "qty": qty})
-    return_id, now = new_id(), now_iso()
-    entry = {"id": return_id, "returnDate": body.returnDate, "items": items, "note": body.note.strip(), "createdAt": now, "createdBy": user.get("name", "")}
-    for item in items:
-        event_key = f"bazar-external-nd-return:{return_id}:{item['productId']}"
-        await db.consignment_movements.update_one({"eventKey": event_key}, {"$setOnInsert": {
-            "id": new_id(), "eventKey": event_key, "time": now, "destination": BAZAR,
-            "movementType": "RETUR_KE_GUDANG_ASAL", "referenceId": nd_id, "referenceNo": document.get("ndNo", ""),
-            "originWarehouse": document.get("originWarehouse", ""), "productId": item["productId"],
-            "sku": item.get("sku", ""), "name": item.get("name", ""), "unit": item.get("unit", ""),
-            "channel": item.get("channel", "KOM"), "delta": -_n(item.get("qty")), "operator": user.get("name", ""),
-        }}, upsert=True)
-        await consignment_module.decrease_consignment_layouts(BAZAR, item["productId"], _n(item.get("qty")), user.get("name", ""), operation_key=event_key)
-    await db.bazar_external_nd.update_one({"id": nd_id}, {"$push": {"returns": entry}, "$set": {"updatedAt": now, "updatedBy": user.get("name", "")}})
-    await _record_history("BAZAR_RETUR_KE_GUDANG_ASAL", document, user, items, body.note, {"returnDate": body.returnDate})
-    return summarize_external_nd(await _document(nd_id))
+    initial = await _document(nd_id)
+
+    async def action():
+        document = await _document(nd_id)
+        if document.get("cancelledAt"):
+            raise HTTPException(status_code=409, detail="ND sudah dibatalkan")
+
+        grouped = defaultdict(float)
+        prepared = []
+        for row in body.items:
+            source = next((item for item in document.get("items", []) if item.get("productId") == row.productId), None)
+            if not source:
+                raise HTTPException(status_code=400, detail="Produk retur tidak tercantum pada ND")
+            stack_code = normalize_consignment_stack_code(BAZAR, row.stackCode)
+            grouped[row.productId] += float(row.qty)
+            prepared.append({**source, "qty": float(row.qty), "stackCode": stack_code})
+
+        for product_id, qty in grouped.items():
+            totals = _item_totals(document, product_id)
+            returnable = max(totals["good"] - totals["returned"] - totals["realized"], 0.0)
+            if qty > returnable + EPS:
+                source = next(row for row in document.get("items", []) if row.get("productId") == product_id)
+                raise HTTPException(status_code=409, detail=f"Saldo belum SO {source.get('name', '')} hanya {returnable:g}")
+
+        return_id, now = new_id(), now_iso()
+        entry = {
+            "id": return_id,
+            "returnDate": body.returnDate,
+            "items": prepared,
+            "note": body.note.strip(),
+            "createdAt": now,
+            "createdBy": user.get("name", ""),
+        }
+        events: list[tuple[str, dict]] = []
+        saved = False
+        try:
+            for index, item in enumerate(prepared):
+                event_key = f"bazar-external-nd-return:{return_id}:{index}:{item['productId']}"
+                movement = {
+                    "id": new_id(),
+                    "eventKey": event_key,
+                    "time": now,
+                    "destination": BAZAR,
+                    "movementType": "RETUR_KE_GUDANG_ASAL",
+                    "referenceId": nd_id,
+                    "referenceNo": document.get("ndNo", ""),
+                    "originWarehouse": document.get("originWarehouse", ""),
+                    "productId": item["productId"],
+                    "sku": item.get("sku", ""),
+                    "name": item.get("name", ""),
+                    "unit": item.get("unit", ""),
+                    "channel": item.get("channel", "KOM"),
+                    "delta": -_n(item.get("qty")),
+                    "stackCode": item.get("stackCode", ""),
+                    "operator": user.get("name", ""),
+                }
+                await db.consignment_movements.insert_one(dict(movement))
+                events.append((event_key, item))
+                try:
+                    await consignment_module.decrease_consignment_layouts(
+                        BAZAR,
+                        item["productId"],
+                        _n(item.get("qty")),
+                        user.get("name", ""),
+                        item.get("stackCode", ""),
+                        strict_preferred=True,
+                        operation_key=event_key,
+                    )
+                except Exception:
+                    await db.consignment_movements.delete_one({"eventKey": event_key})
+                    events.pop()
+                    raise
+
+            result = await db.bazar_external_nd.update_one(
+                {"id": nd_id, "cancelledAt": {"$exists": False}, "returns.id": {"$ne": return_id}},
+                {"$push": {"returns": entry}, "$set": {"updatedAt": now, "updatedBy": user.get("name", "")}},
+            )
+            if result.matched_count == 0:
+                raise HTTPException(status_code=409, detail="ND berubah saat retur. Muat ulang lalu coba kembali.")
+            saved = True
+            await _record_history(
+                "BAZAR_RETUR_KE_GUDANG_ASAL",
+                document,
+                user,
+                prepared,
+                body.note,
+                {"returnDate": body.returnDate, "operationId": return_id},
+            )
+            return summarize_external_nd(await _document(nd_id))
+        except Exception:
+            if saved:
+                await db.bazar_external_nd.update_one({"id": nd_id}, {"$pull": {"returns": {"id": return_id}}})
+            await db.consignment_operation_history.delete_many({"operationId": return_id})
+            for event_key, item in reversed(events):
+                await db.consignment_movements.delete_one({"eventKey": event_key})
+                try:
+                    await consignment_module.sync_consignment_layout_balance(
+                        BAZAR,
+                        item["productId"],
+                        operator="Sistem (rollback retur ND)",
+                        preferred_stack=item.get("stackCode", ""),
+                        operation_key=f"{event_key}:rollback",
+                        note="Rollback retur ke gudang asal yang tidak selesai.",
+                    )
+                except Exception:
+                    pass
+            raise
+
+    return await idempotent_operation(
+        request,
+        user,
+        f"external-nd-return:{nd_id}",
+        _nd_locks(nd_id, _product_ids(initial)),
+        action,
+    )
 
 
 @router.post("/{nd_id}/realizations")
-async def realize_external_nd(nd_id: str, body: ExternalNDRealization, user: dict = Depends(get_current_user)):
+async def realize_external_nd(
+    nd_id: str,
+    body: ExternalNDRealization,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
     _ensure_access(user, write=True)
-    document = await _document(nd_id)
-    grouped = defaultdict(float)
-    for row in body.items:
-        grouped[row.productId] += float(row.qty)
-    items = []
-    for product_id, qty in grouped.items():
-        source = next((row for row in document.get("items", []) if row.get("productId") == product_id), None)
-        if not source:
-            raise HTTPException(status_code=400, detail="Produk realisasi tidak tercantum pada ND")
-        totals = _item_totals(document, product_id)
-        realizable = max(totals["good"] - totals["returned"] - totals["realized"], 0.0)
-        if qty > realizable + EPS:
-            raise HTTPException(status_code=409, detail=f"Saldo fisik belum direalisasi {source.get('name', '')} hanya {realizable:g}")
-        items.append({**source, "qty": qty})
-    realization_id, now = new_id(), now_iso()
-    entry = {
-        "id": realization_id, "realizationDate": body.realizationDate,
-        "activityType": body.activityType.strip().upper() or "BAZAR", "referenceNo": body.referenceNo.strip().upper(),
-        "items": items, "note": body.note.strip(), "createdAt": now, "createdBy": user.get("name", ""),
-    }
-    # Penjualan sudah mengurangi stok melalui penutupan Bazar/Paket. Catatan ini hanya mengikat realisasi ke ND.
-    await db.bazar_external_nd.update_one({"id": nd_id}, {"$push": {"realizations": entry}, "$set": {"updatedAt": now, "updatedBy": user.get("name", "")}})
-    await _record_history("BAZAR_ND_DIREALISASIKAN", document, user, items, body.note, {"activityType": entry["activityType"], "activityReferenceNo": entry["referenceNo"]})
-    return summarize_external_nd(await _document(nd_id))
+    initial = await _document(nd_id)
+    activity_type = _validate_activity_allowed(initial, body.activityType)
+    reference_no = body.referenceNo.strip().upper()
+    if not reference_no:
+        raise HTTPException(status_code=400, detail="Referensi Bazar/Paket wajib dipilih")
+
+    async def action():
+        document = await _document(nd_id)
+        if document.get("cancelledAt"):
+            raise HTTPException(status_code=409, detail="ND sudah dibatalkan")
+        current_activity = _validate_activity_allowed(document, activity_type)
+        source_operation, capacity = await _reference_capacity(current_activity, reference_no)
+
+        grouped = defaultdict(float)
+        for row in body.items:
+            grouped[row.productId] += float(row.qty)
+
+        items = []
+        for product_id, qty in grouped.items():
+            source = next((row for row in document.get("items", []) if row.get("productId") == product_id), None)
+            if not source:
+                raise HTTPException(status_code=400, detail="Produk realisasi tidak tercantum pada ND")
+            totals = _item_totals(document, product_id)
+            realizable_nd = max(totals["good"] - totals["returned"] - totals["realized"], 0.0)
+            if qty > realizable_nd + EPS:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Saldo ND yang belum direalisasi {source.get('name', '')} hanya {realizable_nd:g}",
+                )
+            operation_qty = _n(capacity.get(product_id))
+            used = await _reference_used_qty(current_activity, reference_no, product_id)
+            available_reference = max(operation_qty - used, 0.0)
+            if qty > available_reference + EPS:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Realisasi {source.get('name', '')} pada {reference_no} tersedia hanya {available_reference:g}",
+                )
+            items.append({**source, "qty": qty})
+
+        realization_id, now = new_id(), now_iso()
+        entry = {
+            "id": realization_id,
+            "realizationDate": body.realizationDate,
+            "activityType": current_activity,
+            "referenceId": source_operation.get("id", ""),
+            "referenceNo": reference_no,
+            "items": items,
+            "note": body.note.strip(),
+            "createdAt": now,
+            "createdBy": user.get("name", ""),
+        }
+        result = await db.bazar_external_nd.update_one(
+            {"id": nd_id, "cancelledAt": {"$exists": False}, "realizations.id": {"$ne": realization_id}},
+            {"$push": {"realizations": entry}, "$set": {"updatedAt": now, "updatedBy": user.get("name", "")}},
+        )
+        if result.matched_count == 0:
+            raise HTTPException(status_code=409, detail="ND berubah saat realisasi. Muat ulang lalu coba kembali.")
+        await _record_history(
+            "BAZAR_ND_DIREALISASIKAN",
+            document,
+            user,
+            items,
+            body.note,
+            {
+                "activityType": current_activity,
+                "activityReferenceId": source_operation.get("id", ""),
+                "activityReferenceNo": reference_no,
+                "operationId": realization_id,
+            },
+        )
+        return summarize_external_nd(await _document(nd_id))
+
+    return await idempotent_operation(
+        request,
+        user,
+        f"external-nd-realize:{nd_id}:{activity_type}:{reference_no}",
+        _nd_locks(
+            nd_id,
+            _product_ids(initial),
+            [f"external-nd-reference:{activity_type}:{reference_no}"],
+        ),
+        action,
+    )
 
 
 @router.post("/{nd_id}/so-documents")
-async def settle_external_nd_with_so(nd_id: str, body: ExternalNDSO, user: dict = Depends(get_current_user)):
+async def settle_external_nd_with_so(
+    nd_id: str,
+    body: ExternalNDSO,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
     _ensure_access(user, write=True)
-    document = await _document(nd_id)
+    initial = await _document(nd_id)
     so_no = body.soNo.strip().upper()
     if not so_no or not body.soDate:
         raise HTTPException(status_code=400, detail="Nomor dan tanggal SO wajib diisi")
-    if any(str(row.get("soNo", "")).upper() == so_no for row in document.get("soDocuments", [])):
-        raise HTTPException(status_code=409, detail="Nomor SO sudah dicatat pada ND ini")
-    grouped = defaultdict(float)
-    for row in body.items:
-        grouped[row.productId] += float(row.qty)
-    items = []
-    for product_id, qty in grouped.items():
-        source = next((row for row in document.get("items", []) if row.get("productId") == product_id), None)
-        if not source:
-            raise HTTPException(status_code=400, detail="Produk SO tidak tercantum pada ND")
-        totals = _item_totals(document, product_id)
-        eligible = max(totals["realized"] - totals["settled"], 0.0)
-        if qty > eligible + EPS:
-            raise HTTPException(status_code=409, detail=f"Realisasi yang belum memiliki SO untuk {source.get('name', '')} hanya {eligible:g}")
-        items.append({**source, "qty": qty})
-    so_id, now = new_id(), now_iso()
-    entry = {"id": so_id, "soNo": so_no, "soDate": body.soDate, "items": items, "note": body.note.strip(), "createdAt": now, "createdBy": user.get("name", "")}
-    # SO diterbitkan setelah realisasi. Ia menyelesaikan dokumen ND dan tidak membuat mutasi stok kedua.
-    await db.bazar_external_nd.update_one({"id": nd_id}, {"$push": {"soDocuments": entry}, "$set": {"updatedAt": now, "updatedBy": user.get("name", "")}})
-    await _record_history("BAZAR_SO_TERBIT", document, user, items, body.note, {"soNo": so_no, "soDate": body.soDate})
-    return summarize_external_nd(await _document(nd_id))
+
+    async def action():
+        document = await _document(nd_id)
+        if document.get("cancelledAt"):
+            raise HTTPException(status_code=409, detail="ND sudah dibatalkan")
+        duplicate_external = await db.bazar_external_nd.find_one(
+            {"soDocuments.soNo": so_no},
+            {"_id": 0, "id": 1, "ndNo": 1},
+        )
+        if duplicate_external:
+            raise HTTPException(status_code=409, detail=f"Nomor SO sudah digunakan pada ND {duplicate_external.get('ndNo', '')}")
+        duplicate_main = await db.outbound_loads.find_one(
+            {"$or": [{"ref": so_no}, {"documents": so_no}, {"document_links.no": so_no}]},
+            {"_id": 0, "id": 1},
+        )
+        if duplicate_main:
+            raise HTTPException(status_code=409, detail="Nomor SO sudah digunakan pada dokumen Gudang Utama")
+
+        grouped = defaultdict(float)
+        for row in body.items:
+            grouped[row.productId] += float(row.qty)
+
+        items = []
+        for product_id, qty in grouped.items():
+            source = next((row for row in document.get("items", []) if row.get("productId") == product_id), None)
+            if not source:
+                raise HTTPException(status_code=400, detail="Produk SO tidak tercantum pada ND")
+            totals = _item_totals(document, product_id)
+            eligible = max(totals["realized"] - totals["settled"], 0.0)
+            if qty > eligible + EPS:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Realisasi yang belum memiliki SO untuk {source.get('name', '')} hanya {eligible:g}",
+                )
+            items.append({**source, "qty": qty})
+
+        so_id, now = new_id(), now_iso()
+        entry = {
+            "id": so_id,
+            "soNo": so_no,
+            "soDate": body.soDate,
+            "items": items,
+            "note": body.note.strip(),
+            "createdAt": now,
+            "createdBy": user.get("name", ""),
+        }
+        result = await db.bazar_external_nd.update_one(
+            {"id": nd_id, "cancelledAt": {"$exists": False}, "soDocuments.soNo": {"$ne": so_no}},
+            {"$push": {"soDocuments": entry}, "$set": {"updatedAt": now, "updatedBy": user.get("name", "")}},
+        )
+        if result.matched_count == 0:
+            raise HTTPException(status_code=409, detail="SO sudah tercatat atau ND berubah. Muat ulang lalu coba kembali.")
+        await _record_history(
+            "BAZAR_SO_TERBIT",
+            document,
+            user,
+            items,
+            body.note,
+            {"soNo": so_no, "soDate": body.soDate, "operationId": so_id},
+        )
+        return summarize_external_nd(await _document(nd_id))
+
+    return await idempotent_operation(
+        request,
+        user,
+        f"external-nd-so:{nd_id}:{so_no}",
+        _nd_locks(nd_id, _product_ids(initial), [f"document:{so_no}"]),
+        action,
+    )
+
+
+@router.post("/{nd_id}/cancel")
+async def cancel_external_nd(
+    nd_id: str,
+    body: ExternalNDCancel,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    _ensure_access(user, write=True)
+    initial = await _document(nd_id)
+
+    async def action():
+        document = await _document(nd_id)
+        if document.get("cancelledAt"):
+            return summarize_external_nd(document)
+        if document.get("receipts") or document.get("returns") or document.get("realizations") or document.get("soDocuments"):
+            raise HTTPException(
+                status_code=409,
+                detail="ND yang sudah memiliki penerimaan/realisasi/retur/SO tidak dapat dibatalkan langsung",
+            )
+        now = now_iso()
+        await db.bazar_external_nd.update_one(
+            {"id": nd_id, "cancelledAt": {"$exists": False}},
+            {"$set": {
+                "cancelledAt": now,
+                "cancelledBy": user.get("name", ""),
+                "cancelNote": body.note.strip(),
+                "updatedAt": now,
+                "updatedBy": user.get("name", ""),
+            }},
+        )
+        await _record_history(
+            "BAZAR_ND_EKSTERNAL_DIBATALKAN",
+            document,
+            user,
+            [],
+            body.note,
+            {"operationId": f"cancel:{nd_id}"},
+        )
+        return summarize_external_nd(await _document(nd_id))
+
+    return await idempotent_operation(
+        request,
+        user,
+        f"external-nd-cancel:{nd_id}",
+        _nd_locks(nd_id, _product_ids(initial)),
+        action,
+    )
 
 
 async def ensure_bazar_external_nd_indexes() -> None:
     await db.bazar_external_nd.create_index("ndNo", unique=True, name="bazar_external_nd_no_unique")
     await db.bazar_external_nd.create_index([("status", 1), ("createdAt", -1)], name="bazar_external_nd_status")
+    await db.bazar_external_nd.create_index("realizations.referenceNo", name="bazar_external_nd_realization_reference")
+    await db.bazar_external_nd.create_index("soDocuments.soNo", name="bazar_external_nd_so_reference")
