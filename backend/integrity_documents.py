@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends
 
 from backend.server import db, require_master_write
 from backend.integrity_postcommit import integrity_control as base_integrity_control
+from backend.integrity_consignment import analyze_consignment_integrity
 
 router = APIRouter(prefix="/api")
 EPS = 1e-9
@@ -218,9 +219,39 @@ async def integrity_control(user: dict = Depends(require_master_write)):
             "message": f"Ada {warnings} peringatan relasi dokumen/antrian pengeluaran.",
         })
 
+    consignment = await analyze_consignment_integrity()
+    consignment_summary = dict(consignment.get("summary") or {})
+    consignment_errors = int(consignment_summary.get("consignmentIntegrityErrors", 0) or 0)
+    consignment_warnings = int(consignment_summary.get("consignmentIntegrityWarnings", 0) or 0)
+
+    if consignment_errors:
+        system_issues.append({
+            "severity": "ERROR",
+            "code": "CONSIGNMENT_INTEGRITY",
+            "message": f"Ada {consignment_errors} masalah integritas pada Bazar/E-commerce/Paket/ND.",
+        })
+    if consignment_warnings:
+        system_issues.append({
+            "severity": "WARNING",
+            "code": "CONSIGNMENT_INTEGRITY_WARNING",
+            "message": f"Ada {consignment_warnings} kondisi konsinyasi yang masih membutuhkan perhatian.",
+        })
+
     data["systemIssues"] = system_issues
     data["outboundDocumentIntegrityIssues"] = document_issues[:1000]
+    for key in (
+        "consignmentStockIntegrity",
+        "consignmentReservationIssues",
+        "packageIntegrityIssues",
+        "ecomOrderIntegrityIssues",
+        "consignmentDamagedIntegrityIssues",
+        "consignmentOpnamePending",
+        "externalNDIntegrityIssues",
+    ):
+        data[key] = consignment.get(key, [])[:1000]
+
     summary = dict(data.get("summary") or {})
+    summary.update(consignment_summary)
     summary["outboundDocumentIntegrityIssues"] = len(document_issues)
     summary["outboundDocumentIntegrityErrors"] = errors
     summary["outboundDocumentIntegrityWarnings"] = warnings
