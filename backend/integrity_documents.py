@@ -8,6 +8,7 @@ from backend.server import db, require_master_write
 from backend.integrity_postcommit import integrity_control as base_integrity_control
 from backend.integrity_consignment import analyze_consignment_integrity
 from backend.so_monitoring import build_so_monitoring, fulfillment_integrity_issues
+from backend.cost_integrity import analyze_handling_cost_integrity
 
 router = APIRouter(prefix="/api")
 EPS = 1e-9
@@ -236,6 +237,23 @@ async def integrity_control(user: dict = Depends(require_master_write)):
             "message": f"Ada {so_warnings} peringatan pada monitoring SO bertahap.",
         })
 
+    handling_cost = await analyze_handling_cost_integrity()
+    handling_cost_summary = dict(handling_cost.get("summary") or {})
+    cost_errors = int(handling_cost_summary.get("handlingCostIntegrityErrors", 0) or 0)
+    cost_warnings = int(handling_cost_summary.get("handlingCostIntegrityWarnings", 0) or 0)
+    if cost_errors:
+        system_issues.append({
+            "severity": "ERROR",
+            "code": "HANDLING_COST_INTEGRITY",
+            "message": f"Ada {cost_errors} masalah integritas pada biaya muat/bongkar atau pembayaran.",
+        })
+    if cost_warnings:
+        system_issues.append({
+            "severity": "WARNING",
+            "code": "HANDLING_COST_INTEGRITY_WARNING",
+            "message": f"Ada {cost_warnings} peringatan pada biaya muat/bongkar.",
+        })
+
     consignment = await analyze_consignment_integrity()
     consignment_summary = dict(consignment.get("summary") or {})
     consignment_errors = int(consignment_summary.get("consignmentIntegrityErrors", 0) or 0)
@@ -257,6 +275,7 @@ async def integrity_control(user: dict = Depends(require_master_write)):
     data["systemIssues"] = system_issues
     data["outboundDocumentIntegrityIssues"] = document_issues[:1000]
     data["soFulfillmentIntegrityIssues"] = so_issues[:1000]
+    data["handlingCostIntegrityIssues"] = handling_cost.get("handlingCostIntegrityIssues", [])[:1000]
     for key in (
         "consignmentStockIntegrity",
         "consignmentReservationIssues",
@@ -270,6 +289,7 @@ async def integrity_control(user: dict = Depends(require_master_write)):
 
     summary = dict(data.get("summary") or {})
     summary.update(consignment_summary)
+    summary.update(handling_cost_summary)
     summary["outboundDocumentIntegrityIssues"] = len(document_issues)
     summary["outboundDocumentIntegrityErrors"] = errors
     summary["outboundDocumentIntegrityWarnings"] = warnings
