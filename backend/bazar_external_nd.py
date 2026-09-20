@@ -1013,21 +1013,32 @@ async def settle_external_nd_with_so(
             "createdAt": now,
             "createdBy": user.get("name", ""),
         }
-        result = await db.bazar_external_nd.update_one(
-            {"id": nd_id, "cancelledAt": {"$exists": False}, "soDocuments.soNo": {"$ne": so_no}},
-            {"$push": {"soDocuments": entry}, "$set": {"updatedAt": now, "updatedBy": user.get("name", "")}},
-        )
-        if result.matched_count == 0:
-            raise HTTPException(status_code=409, detail="SO sudah tercatat atau ND berubah. Muat ulang lalu coba kembali.")
-        await _record_history(
-            "BAZAR_SO_TERBIT",
-            document,
-            user,
-            items,
-            body.note,
-            {"soNo": so_no, "soDate": body.soDate, "operationId": so_id},
-        )
-        return await _summarized_document(nd_id)
+        saved = False
+        try:
+            result = await db.bazar_external_nd.update_one(
+                {"id": nd_id, "cancelledAt": {"$exists": False}, "soDocuments.soNo": {"$ne": so_no}},
+                {"$push": {"soDocuments": entry}, "$set": {"updatedAt": now, "updatedBy": user.get("name", "")}},
+            )
+            if result.matched_count == 0:
+                raise HTTPException(status_code=409, detail="SO sudah tercatat atau ND berubah. Muat ulang lalu coba kembali.")
+            saved = True
+            await _record_history(
+                "BAZAR_SO_TERBIT",
+                document,
+                user,
+                items,
+                body.note,
+                {"soNo": so_no, "soDate": body.soDate, "operationId": so_id},
+            )
+            return await _summarized_document(nd_id)
+        except Exception:
+            if saved:
+                await db.bazar_external_nd.update_one(
+                    {"id": nd_id},
+                    {"$pull": {"soDocuments": {"id": so_id}}, "$set": {"updatedAt": now_iso(), "updatedBy": "Sistem (rollback SO ND)"}},
+                )
+            await db.consignment_operation_history.delete_many({"operationId": so_id})
+            raise
 
     return await idempotent_operation(
         request,
