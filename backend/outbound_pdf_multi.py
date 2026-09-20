@@ -32,15 +32,33 @@ def _pdf_response(buffer: io.BytesIO, filename: str) -> StreamingResponse:
 
 
 def _group_items(load: dict) -> OrderedDict:
+    """Bon Muat menggabungkan komoditi yang sama lintas SO.
+
+    Surat Jalan tetap mempertahankan item per dokumen. Di Bon Muat, satu produk
+    cukup muncul sekali tetapi seluruh dokumen dan tumpukan sumber tetap dicetak
+    agar petugas dapat menelusuri asal pemuatannya.
+    """
     grouped = OrderedDict()
     for item in load.get("items", []):
         doc = str(item.get("documentNo") or load.get("ref") or "-").strip()
-        by_doc = grouped.setdefault(doc, OrderedDict())
         stack = str(item.get("stackCode") or item.get("location") or "-").strip()
-        key = f"{item.get('productId') or item.get('sku', '')}|{stack}|{item.get('channel', '')}"
-        row = by_doc.setdefault(key, {**item, "stack": stack, "qty": 0.0, "berat": 0.0})
+        key = f"{item.get('productId') or item.get('sku', '')}|{item.get('channel', '')}"
+        row = grouped.setdefault(key, {
+            **item,
+            "qty": 0.0,
+            "berat": 0.0,
+            "documents": [],
+            "stacks": [],
+        })
         row["qty"] += float(item.get("qty", 0) or 0)
         row["berat"] += float(item.get("berat", 0) or 0)
+        if doc and doc not in row["documents"]:
+            row["documents"].append(doc)
+        if stack and stack not in row["stacks"]:
+            row["stacks"].append(stack)
+    for row in grouped.values():
+        row["documentLabel"] = ", ".join(row.get("documents") or ["-"])
+        row["stackLabel"] = ", ".join(row.get("stacks") or ["-"])
     return grouped
 
 
@@ -108,13 +126,17 @@ async def export_bon_muat_multi_pdf(load_id: str, user: dict = Depends(get_curre
     # Hitung tinggi kertas dinamis. Font tidak dikecilkan saat SO/produk bertambah.
     # Tambahkan ruang ekstra untuk jarak logo ke judul dan typography rincian yang diperbesar.
     content_height_mm = 116.0
-    for document_no, rows in grouped.items():
-        document_lines = wrap_text(f"Dokumen: {document_no}", "Helvetica-Bold", 8.5, content_width)
-        content_height_mm += (len(document_lines) * 4.0) + 2.0
-        for item in rows.values():
-            product_lines = wrap_text(str(item.get("name", "")), "Helvetica-Bold", 8.5, content_width)
-            stack_lines = wrap_text(f"Tumpukan: {item.get('stack', '-')}", "Helvetica-Bold", 8.0, content_width)
-            content_height_mm += (len(product_lines) * 4.2) + (len(stack_lines) * 4.0) + (table_h / mm) + 6.0
+    for item in grouped.values():
+        product_lines = wrap_text(str(item.get("name", "")), "Helvetica-Bold", 8.5, content_width)
+        document_lines = wrap_text(f"Dokumen: {item.get('documentLabel', '-')}", "Helvetica-Bold", 7.5, content_width)
+        stack_lines = wrap_text(f"Tumpukan: {item.get('stackLabel', '-')}", "Helvetica-Bold", 8.0, content_width)
+        content_height_mm += (
+            (len(product_lines) * 4.2)
+            + (len(document_lines) * 3.7)
+            + (len(stack_lines) * 4.0)
+            + (table_h / mm)
+            + 7.0
+        )
 
     fields_preview = [
         ("Tanggal", _date(load.get("started_at") or load.get("created_at"), True)),
@@ -197,117 +219,116 @@ async def export_bon_muat_multi_pdf(load_id: str, user: dict = Depends(get_curre
     y -= 5.0 * mm
 
     c.setFont("Helvetica-Bold", 7.0)
-    c.drawString(left, y, "RINCIAN PEMUATAN PER DOKUMEN")
+    c.drawString(left, y, "RINCIAN PEMUATAN")
     y -= 5.0 * mm
 
     grand_qty = 0.0
     weight_totals = OrderedDict()
 
-    for document_no, rows in grouped.items():
-        # Thermal-friendly: tanpa blok warna. "Dokumen: ..." diperbesar 2 pt dan wrap bila perlu.
+    for item in grouped.values():
+        qty = float(item.get("qty", 0) or 0)
+        grand_qty += qty
+        measure = _measure_unit(item)
+        weight_value = float(item.get("berat", 0) or 0)
+        weight_totals[measure] = weight_totals.get(measure, 0.0) + weight_value
+
         c.setFillColor(colors.black)
         c.setFont("Helvetica-Bold", 8.5)
-        for line in wrap_text(f"Dokumen: {document_no}", "Helvetica-Bold", 8.5, content_width):
+        for line in wrap_text(str(item.get("name", "")), "Helvetica-Bold", 8.5, content_width):
+            c.drawString(left, y, line)
+            y -= 4.2 * mm
+
+        c.setFont("Helvetica", 7.5)
+        for line in wrap_text(f"Dokumen: {item.get('documentLabel', '-')}", "Helvetica", 7.5, content_width):
+            c.drawString(left, y, line)
+            y -= 3.7 * mm
+
+        c.setFont("Helvetica-Bold", 8.0)
+        for line in wrap_text(f"Tumpukan: {item.get('stackLabel', '-')}", "Helvetica-Bold", 8.0, content_width):
             c.drawString(left, y, line)
             y -= 4.0 * mm
-        y -= 1.2 * mm
+        y -= 1.0 * mm
 
-        for item in rows.values():
-            qty = float(item.get("qty", 0) or 0)
-            grand_qty += qty
-            measure = _measure_unit(item)
-            weight_value = float(item.get("berat", 0) or 0)
-            weight_totals[measure] = weight_totals.get(measure, 0.0) + weight_value
+        secondary_qty = float(item.get("secondaryQty", 0) or 0)
+        secondary_name = str(item.get("secondary") or "").strip()
+        primary_unit = str(item.get("unit") or "pcs").strip()
+        full_secondary = int(qty // secondary_qty) if secondary_qty > 0 else 0
+        loose_primary = qty - (full_secondary * secondary_qty) if secondary_qty > 0 else qty
 
-            # Nama komoditi/merk diperbesar 2 pt dan tetap wrap ke bawah.
-            c.setFont("Helvetica-Bold", 8.5)
-            for line in wrap_text(str(item.get("name", "")), "Helvetica-Bold", 8.5, content_width):
-                c.drawString(left, y, line)
-                y -= 4.2 * mm
+        secondary_number = _num(full_secondary) if secondary_qty > 0 else "-"
+        secondary_unit = secondary_name if secondary_qty > 0 and secondary_name else "-"
+        loose_number = _num(loose_primary)
 
-            # Hapus pengulangan "SO: ... |"; cukup tampilkan lokasi tumpukan, +2 pt.
-            c.setFont("Helvetica-Bold", 8.0)
-            for line in wrap_text(f"Tumpukan: {item.get('stack', '-')}", "Helvetica-Bold", 8.0, content_width):
-                c.drawString(left, y, line)
-                y -= 4.0 * mm
-            y -= 1.0 * mm
+        units = []
+        for stack in item.get("stacks") or []:
+            unit = stack.split("/", 1)[0] if "/" in stack else stack
+            label = f"Unit {unit}" if unit else ""
+            if label and label not in units:
+                units.append(label)
+        loading_location = " / ".join(units) or str(load.get("unit_loading") or "-")
 
-            secondary_qty = float(item.get("secondaryQty", 0) or 0)
-            secondary_name = str(item.get("secondary") or "").strip()
-            primary_unit = str(item.get("unit") or "pcs").strip()
-            full_secondary = int(qty // secondary_qty) if secondary_qty > 0 else 0
-            loose_primary = qty - (full_secondary * secondary_qty) if secondary_qty > 0 else qty
+        table_left = left
+        table_right = right
+        table_width = table_right - table_left
+        unit_w = table_width - table_label_w - table_number_w
 
-            secondary_number = _num(full_secondary) if secondary_qty > 0 else "-"
-            secondary_unit = secondary_name if secondary_qty > 0 and secondary_name else "-"
-            loose_number = _num(loose_primary)
-            loading_location = str(item.get("stack", "") or load.get("unit_loading") or "-")
-            if "/" in loading_location:
-                loading_location = f"Unit {loading_location.split('/', 1)[0]}"
+        table_top = y
+        table_bottom = table_top - table_h
+        x_label = table_left + table_label_w
+        x_number = x_label + table_number_w
 
-            table_left = left
-            table_right = right
-            table_width = table_right - table_left
-            unit_w = table_width - table_label_w - table_number_w
+        c.setLineWidth(0.7)
+        c.rect(table_left, table_bottom, table_width, table_h, fill=0, stroke=1)
+        c.line(x_label, table_bottom, x_label, table_top)
+        c.line(x_number, table_bottom + loading_row_h, x_number, table_top)
 
-            table_top = y
-            table_bottom = table_top - table_h
-            x_label = table_left + table_label_w
-            x_number = x_label + table_number_w
+        y_loading_top = table_bottom + loading_row_h
+        y_tonase_top = y_loading_top + tonase_row_h
+        y_colly_second_top = y_tonase_top + colly_row_h
 
-            c.setLineWidth(0.7)
-            c.rect(table_left, table_bottom, table_width, table_h, fill=0, stroke=1)
-            c.line(x_label, table_bottom, x_label, table_top)
-            c.line(x_number, table_bottom + loading_row_h, x_number, table_top)
+        c.line(table_left, y_loading_top, table_right, y_loading_top)
+        c.line(table_left, y_tonase_top, table_right, y_tonase_top)
+        c.line(x_label, y_colly_second_top, table_right, y_colly_second_top)
 
-            y_loading_top = table_bottom + loading_row_h
-            y_tonase_top = y_loading_top + tonase_row_h
-            y_colly_second_top = y_tonase_top + colly_row_h
+        label_center = table_left + (table_label_w / 2)
+        c.setFont("Helvetica-Bold", 7.0)
+        colly_center_y = y_tonase_top + colly_row_h
+        c.drawCentredString(label_center, colly_center_y - 1.2 * mm, "Colly:")
+        tonase_center_y = y_loading_top + (tonase_row_h / 2)
+        c.drawCentredString(label_center, tonase_center_y - 1.2 * mm, "Tonase:")
+        loading_center_y = table_bottom + (loading_row_h / 2)
+        c.drawCentredString(label_center, loading_center_y - 1.2 * mm, "Pemuatan:")
 
-            c.line(table_left, y_loading_top, table_right, y_loading_top)
-            c.line(table_left, y_tonase_top, table_right, y_tonase_top)
-            c.line(x_label, y_colly_second_top, table_right, y_colly_second_top)
+        number_center = x_label + table_number_w / 2
+        unit_center = x_number + unit_w / 2
 
-            # Colly / Tonase / Pemuatan rata tengah horizontal dan vertikal.
-            label_center = table_left + (table_label_w / 2)
-            c.setFont("Helvetica-Bold", 7.0)
-            colly_center_y = y_tonase_top + colly_row_h
-            c.drawCentredString(label_center, colly_center_y - 1.2 * mm, "Colly:")
-            tonase_center_y = y_loading_top + (tonase_row_h / 2)
-            c.drawCentredString(label_center, tonase_center_y - 1.2 * mm, "Tonase:")
-            loading_center_y = table_bottom + (loading_row_h / 2)
-            c.drawCentredString(label_center, loading_center_y - 1.2 * mm, "Pemuatan:")
+        c.setFont("Helvetica-Bold", 10)
+        c.drawCentredString(number_center, table_top - 4.9 * mm, secondary_number)
+        c.drawCentredString(number_center, y_colly_second_top - 4.9 * mm, loose_number)
 
-            number_center = x_label + table_number_w / 2
-            unit_center = x_number + unit_w / 2
+        c.setFont("Helvetica-Bold", 7.5)
+        c.drawCentredString(unit_center, table_top - 4.8 * mm, secondary_unit)
+        c.drawCentredString(unit_center, y_colly_second_top - 4.8 * mm, primary_unit)
 
-            c.setFont("Helvetica-Bold", 10)
-            c.drawCentredString(number_center, table_top - 4.9 * mm, secondary_number)
-            c.drawCentredString(number_center, y_colly_second_top - 4.9 * mm, loose_number)
+        c.setFont("Helvetica-Bold", 10)
+        c.drawCentredString(number_center, y_tonase_top - 5.0 * mm, _num(weight_value))
+        c.setFont("Helvetica-Bold", 7.5)
+        c.drawCentredString(unit_center, y_tonase_top - 4.8 * mm, measure)
 
-            c.setFont("Helvetica-Bold", 7.5)
-            c.drawCentredString(unit_center, table_top - 4.8 * mm, secondary_unit)
-            c.drawCentredString(unit_center, y_colly_second_top - 4.8 * mm, primary_unit)
+        loading_center = x_label + (table_number_w + unit_w) / 2
+        loading_font = 8.5
+        while loading_font > 7.0 and stringWidth(loading_location, "Helvetica-Bold", loading_font) > ((table_number_w + unit_w) - 3 * mm):
+            loading_font -= 0.5
+        c.setFont("Helvetica-Bold", loading_font)
+        c.drawCentredString(loading_center, table_bottom + 3.0 * mm, loading_location)
 
-            c.setFont("Helvetica-Bold", 10)
-            c.drawCentredString(number_center, y_tonase_top - 5.0 * mm, _num(weight_value))
-            c.setFont("Helvetica-Bold", 7.5)
-            c.drawCentredString(unit_center, y_tonase_top - 4.8 * mm, measure)
-
-            loading_center = x_label + (table_number_w + unit_w) / 2
-            loading_font = 8.5
-            while loading_font > 7.0 and stringWidth(loading_location, "Helvetica-Bold", loading_font) > ((table_number_w + unit_w) - 3 * mm):
-                loading_font -= 0.5
-            c.setFont("Helvetica-Bold", loading_font)
-            c.drawCentredString(loading_center, table_bottom + 3.0 * mm, loading_location)
-
-            y = table_bottom - 5.0 * mm
+        y = table_bottom - 5.0 * mm
 
     c.setFont("Helvetica-Bold", 7.0)
     c.drawCentredString(mid, y, "TOTAL PEMUATAN")
     y -= 3.8 * mm
     c.setFont("Helvetica", 6.0)
-    c.drawCentredString(mid, y, f"{len(grouped)} Dokumen | {sum(len(rows) for rows in grouped.values())} Produk")
+    c.drawCentredString(mid, y, f"{len(load.get('documents') or [load.get('ref', '')])} Dokumen | {len(grouped)} Produk")
     y -= 3.6 * mm
 
     physical_text = "Fisik: " + " + ".join(f"{_num(value)} {unit}" for unit, value in weight_totals.items())
@@ -449,7 +470,7 @@ def _draw_sj_half(
     y = header_y - 8 * mm
 
     c.setFont("Helvetica-Bold", 14)
-    c.drawCentredString(center, y, "SURAT JALAN MANUAL")
+    c.drawCentredString(center, y, "SURAT JALAN")
     y -= 2.8 * mm
     c.setFillColor(colors.HexColor("#BDBDBD"))
     c.rect(left, y - 2.4 * mm, width, 3.1 * mm, fill=1, stroke=0)
@@ -643,14 +664,6 @@ async def export_surat_jalan_multi_pdf(sj_id: str, user: dict = Depends(get_curr
     for page_index, page_rows in enumerate(pages, 1):
         _draw_sj_half(c, sj, page_rows, warehouse_head, 0, page_index, total_pages)
         _draw_sj_half(c, sj, page_rows, warehouse_head, half_w, page_index, total_pages)
-
-        # Garis bantu potong tanpa tulisan.
-        c.setStrokeColor(colors.HexColor("#B8B8B8"))
-        c.setLineWidth(0.25)
-        c.setDash(1.2, 2.2)
-        c.line(half_w, 3 * mm, half_w, page_h - 3 * mm)
-        c.setDash()
-        c.setStrokeColor(colors.black)
 
         c.showPage()
 
