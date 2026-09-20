@@ -22,6 +22,7 @@ from backend.server import (
     normalize_channel,
     channel_balance,
     get_operational_location,
+    has_role_permission,
 )
 from backend.stack_allocations import valid_stack_codes, allocate_stock_to_stack, decrease_stack_allocation, reconcile_product_allocations
 from backend.fefo_selection import get_fefo_pick_guide, selection_requires_reason
@@ -490,7 +491,20 @@ def loading_units_from_items(items: List[dict]) -> tuple[str, str]:
 
 @router.get("/outbound-loads")
 async def list_outbound_loads(user: dict = Depends(get_current_user)):
-    return await db.outbound_loads.find({}, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    rows = await db.outbound_loads.find({}, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    if has_role_permission(user.get("role"), "costView"):
+        return rows
+    cleaned = []
+    for row in rows:
+        copy = dict(row)
+        for field in ("loading_cost", "loading_fee_payments", "loading_fee_payment_total", "loading_fee_payment_status"):
+            copy.pop(field, None)
+        copy["items"] = [
+            {key: value for key, value in item.items() if key not in {"loadingFee", "loadingCost"}}
+            for item in row.get("items", [])
+        ]
+        cleaned.append(copy)
+    return cleaned
 
 
 @router.post("/outbound-loads")
