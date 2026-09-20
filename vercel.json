@@ -1,27 +1,16 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "services": {
-    "frontend": {
-      "root": "frontend/"
-    },
-    "backend": {
+    "app": {
       "root": ".",
-      "framework": "fastapi",
-      "entrypoint": "app:app"
+      "runtime": "container",
+      "entrypoint": "Dockerfile.vercel"
     }
   },
   "rewrites": [
     {
-      "source": "/api",
-      "destination": { "service": "backend" }
-    },
-    {
-      "source": "/api/(.*)",
-      "destination": { "service": "backend" }
-    },
-    {
       "source": "/(.*)",
-      "destination": { "service": "frontend" }
+      "destination": { "service": "app" }
     }
   ]
 }
