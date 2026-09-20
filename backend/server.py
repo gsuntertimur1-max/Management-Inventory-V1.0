@@ -393,7 +393,7 @@ async def create_unique_index_safely(collection, keys, **kwargs):
 
 async def initialize_app():
     await db.users.create_index("username", unique=True)
-    await db.user_sessions.create_index("session_token", unique=True)
+    await db.user_sessions.create_index("session_token")
     await db.user_sessions.create_index("expires_at", expireAfterSeconds=0, name="user_session_ttl")
     await db.revoked_access_tokens.create_index("expiresAt", expireAfterSeconds=0, name="revoked_access_token_ttl")
     await db.login_attempts.create_index("expiresAt", expireAfterSeconds=0, name="login_attempt_ttl")
