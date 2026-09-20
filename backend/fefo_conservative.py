@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from contextlib import asynccontextmanager
 
 from backend.server import db, new_id, now_iso
 from backend.operational_guards import operation_guard, product_lock_keys
@@ -135,8 +136,23 @@ def _physical_key(row: dict) -> tuple[str, str]:
     )
 
 
-async def consume_stack_lots_conservative(load: dict) -> dict:
-    """Retry-safe FEFO accounting that preserves identified lots in mixed legacy stacks."""
+@asynccontextmanager
+async def _product_guard(product_ids: list[str], lock_products: bool):
+    """Acquire FEFO product locks unless the caller already owns them."""
+    if not lock_products:
+        yield
+        return
+    async with _product_guard(product_ids, lock_products):
+        yield
+
+
+async def consume_stack_lots_conservative(load: dict, *, lock_products: bool = True) -> dict:
+    """Retry-safe FEFO accounting that preserves identified lots in mixed legacy stacks.
+
+    lock_products=False is only for callers that already hold the same product locks.
+    This avoids self-deadlock/409 when FEFO runs as a post-commit stage inside the
+    guarded outbound completion or repair flow.
+    """
     if str(load.get("kondisi") or "BAIK").upper() != "BAIK":
         return {"tracked": 0.0, "untracked": 0.0, "legacyProtected": 0.0, "policy": "NOT_APPLICABLE"}
 
