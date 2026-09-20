@@ -11,12 +11,12 @@ const badgeClass = (severity) => severity === 'ERROR'
     : 'bg-[#14532d]/25 text-[#86efac] border-[#14532d]';
 
 
-const IssuePanel = ({ title, subtitle, rows = [] }) => {
+const IssuePanel = ({ title, subtitle, rows = [], category = 'Kontrol Konsinyasi' }) => {
   if (!rows.length) return null;
   return (
     <div className="card-surface p-5">
       <div className="mb-4">
-        <div className="label-mono text-[10px] text-[#fbbf24]">Kontrol Konsinyasi</div>
+        <div className="label-mono text-[10px] text-[#fbbf24]">{category}</div>
         <h2 className="font-display text-xl font-bold mt-1">{title}</h2>
         {subtitle && <p className="text-xs text-[#8b93a1] mt-1">{subtitle}</p>}
       </div>
@@ -101,6 +101,14 @@ const KontrolIntegritas = () => {
         <div className={`card-surface p-4 border ${Number(summary.overReservedStacks || 0) > 0 ? 'border-[#7f1d1d]' : 'border-[#14532d]'}`}><div className={`label-mono text-[9px] ${Number(summary.overReservedStacks || 0) > 0 ? 'text-[#fca5a5]' : 'text-[#86efac]'}`}>Over-reserved</div><div className={`font-mono text-2xl font-bold mt-1 ${Number(summary.overReservedStacks || 0) > 0 ? 'text-[#ef4444]' : 'text-[#4ade80]'}`}>{summary.overReservedStacks ?? '—'}</div></div>
         <div className="card-surface p-4"><div className="label-mono text-[9px]">Txn tanpa ID</div><div className="font-mono text-2xl font-bold mt-1">{summary.missingProductIdTransactions ?? '—'}</div></div>
       </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className={`card-surface p-4 border ${Number(summary.soMonitoringOutstanding || 0) > 0 ? 'border-[#78350f]' : 'border-[#14532d]'}`}><div className="label-mono text-[9px]">SO Outstanding</div><div className="font-mono text-2xl font-bold mt-1">{summary.soMonitoringOutstanding ?? '—'}</div><div className="text-[10px] text-[#8b93a1] mt-1">belum selesai / masih antre</div></div>
+        <div className={`card-surface p-4 border ${Number(summary.soFulfillmentIntegrityErrors || 0) > 0 ? 'border-[#7f1d1d]' : 'border-[#14532d]'}`}><div className="label-mono text-[9px]">Integritas SO</div><div className="font-mono text-2xl font-bold mt-1">{summary.soFulfillmentIntegrityIssues ?? '—'}</div><div className="text-[10px] text-[#8b93a1] mt-1">{summary.soFulfillmentIntegrityErrors || 0} error · {summary.soFulfillmentIntegrityWarnings || 0} warning</div></div>
+        <div className="card-surface p-4 border border-[#3f3f46]"><div className="label-mono text-[9px]">SO Arsip Legacy</div><div className="font-mono text-2xl font-bold mt-1">{summary.soMonitoringLegacy ?? '—'}</div><div className="text-[10px] text-[#8b93a1] mt-1">selesai sebelum master SO bertahap</div></div>
+      </div>
+
+      <IssuePanel category="Kontrol Dokumen SO" title="Integritas SO Bertahap" subtitle="Memeriksa kuantum induk, realisasi selesai, reservasi antrean, konsistensi penerima, dan Surat Jalan per pemuatan." rows={data?.soFulfillmentIntegrityIssues || []} />
 
       <div className="grid grid-cols-2 lg:grid-cols-7 gap-3">
         <div className={`card-surface p-4 border ${Number(summary.consignmentLayoutMismatches || 0) > 0 ? 'border-[#7f1d1d]' : 'border-[#14532d]'}`}><div className="label-mono text-[9px]">Lokasi Konsinyasi</div><div className="font-mono text-2xl font-bold mt-1">{summary.consignmentLayoutMismatches ?? '—'}</div><div className="text-[10px] text-[#8b93a1] mt-1">mismatch ledger/lokasi</div></div>
