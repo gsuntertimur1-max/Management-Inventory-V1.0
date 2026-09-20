@@ -12,7 +12,7 @@ import { consignmentAreaLabel, consignmentStackCodes } from '../lib/consignmentL
 
 const CONSIGNMENT_DESTINATIONS = ['Gudang E-commerce', 'Gudang Bazar'];
 const DAMAGED_AREA = 'AREA BARANG RUSAK';
-const emptyRow = () => ({ productId: '', inputMode: 'QTY', inputValue: 1, qty: 1, goodQty: 1, damagedQty: 0, normalQtyBefore1600: '', exp: '', stackCode: '', documentNo: '', channel: '', fefoExceptionReason: '' });
+const emptyRow = () => ({ productId: '', inputMode: 'QTY', inputValue: 1, qty: 1, goodQty: 1, damagedQty: 0, normalQtyBefore1600: '', exp: '', stackCode: '', documentNo: '', documentQty: '', channel: '', fefoExceptionReason: '' });
 
 const wibMinutesNow = () => {
   const parts = new Intl.DateTimeFormat('en-GB', {
@@ -64,6 +64,7 @@ const CatatStok = ({ panel = '' }) => {
   const [supplierClaimForm, setSupplierClaimForm] = useState(null);
   const [feeChargeMode, setFeeChargeMode] = useState('PENGAMBIL');
   const [fefoGuides, setFefoGuides] = useState({});
+  const [soBalances, setSoBalances] = useState({});
 
   useEffect(() => {
     if (activePanel === 'damage' && !damageForm) setDamageForm({ productId: '', stackCode: '', qty: '', channel: 'KOM', cause: '', note: '', referenceNo: '' });
@@ -162,6 +163,7 @@ const CatatStok = ({ panel = '' }) => {
     setDocumentType('SO');
     setTransferScope('');
     setDocumentRefs(['']);
+    setSoBalances({});
     setDispatchPurpose('LAINNYA');
     setConsignmentDestination('');
     setConsignmentZone('');
@@ -226,6 +228,57 @@ const CatatStok = ({ panel = '' }) => {
   const totalNilai = chosen.reduce((a, row) => a + (row.product.cost || 0) * Number(row.qty || 0), 0);
   const outboundDocumentRefs = documentRefs.map((item) => item.trim()).filter(Boolean);
   const isMultiDocumentOutbound = type === 'KELUAR' && outboundDocumentRefs.length > 1;
+  const outboundRefsKey = documentRefs.map((item) => item.trim()).join('|');
+  const sourceDocumentForRow = (row) => String(row.documentNo || outboundDocumentRefs[0] || '').trim().toUpperCase();
+  const soMasterItemFor = (row) => {
+    if (documentType !== 'SO' || !row?.productId) return null;
+    const balance = soBalances[sourceDocumentForRow(row)];
+    return (balance?.items || []).find((item) => item.productId === row.productId) || null;
+  };
+  const soTotalFor = (row) => Number(soMasterItemFor(row)?.orderedQty ?? row.documentQty ?? 0);
+  const setSoDocumentTotal = (index, value) => {
+    setRows((prev) => {
+      const target = prev[index];
+      const targetDoc = String(target.documentNo || outboundDocumentRefs[0] || '').trim().toUpperCase();
+      return prev.map((row, rowIndex) => {
+        const rowDoc = String(row.documentNo || outboundDocumentRefs[0] || '').trim().toUpperCase();
+        if (rowIndex === index || (target.productId && row.productId === target.productId && rowDoc === targetDoc)) {
+          return { ...row, documentQty: value };
+        }
+        return row;
+      });
+    });
+  };
+
+  useEffect(() => {
+    if (type !== 'KELUAR' || documentType !== 'SO') {
+      setSoBalances({});
+      return undefined;
+    }
+    const refs = documentRefs.map((item) => item.trim()).filter((item) => item.toUpperCase().startsWith('SO/'));
+    if (!refs.length) {
+      setSoBalances({});
+      return undefined;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      Promise.all(refs.map(async (doc) => {
+        try {
+          const { data } = await api.get('/outbound-document-balance', { params: { documentNo: doc } });
+          return [doc.trim().toUpperCase(), data];
+        } catch {
+          return [doc.trim().toUpperCase(), null];
+        }
+      })).then((entries) => {
+        if (!cancelled) setSoBalances(Object.fromEntries(entries.filter(([, data]) => data)));
+      });
+    }, 350);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [type, documentType, outboundRefsKey]);
+
   const productOptions = type === 'KELUAR' && kondisi === 'RUSAK'
     ? products.filter((item) => Number(item.damaged || 0) > 0)
     : products;
@@ -360,6 +413,28 @@ const CatatStok = ({ panel = '' }) => {
         return;
       }
     }
+    if (type === 'KELUAR' && documentType === 'SO') {
+      const grouped = {};
+      for (const row of chosen) {
+        const doc = sourceDocumentForRow(row);
+        const key = `${doc}|${row.productId}`;
+        grouped[key] = grouped[key] || { doc, productId: row.productId, name: row.product.name, unit: row.product.unit, qty: 0, row };
+        grouped[key].qty += Number(row.qty || 0);
+      }
+      for (const group of Object.values(grouped)) {
+        const balance = soBalances[group.doc];
+        const masterItem = (balance?.items || []).find((item) => item.productId === group.productId);
+        const total = Number(masterItem?.orderedQty ?? soTotalFor(group.row) ?? 0);
+        if (total <= 0) {
+          toast.error(`Isi Kuantum SO total untuk ${group.name} pada ${group.doc}`);
+          return;
+        }
+        if (masterItem && group.qty > Number(masterItem.remainingQty || 0) + 1e-9) {
+          toast.error(`Sisa ${group.doc} untuk ${group.name} hanya ${formatNum(masterItem.remainingQty || 0)} ${group.unit}`);
+          return;
+        }
+      }
+    }
     if (type === 'KELUAR' && kondisi === 'BAIK' && chosen.some((row) => !row.stackCode)) {
       toast.error('Pilih tumpukan asal pada setiap barang agar lokasi pemuatan dan kontrol FEFO tercatat');
       return;
@@ -429,7 +504,7 @@ const CatatStok = ({ panel = '' }) => {
         navigate('/riwayat');
       } else {
         const load = await createOutboundLoad({
-          items: chosen.map((row) => ({ productId: row.productId, qty: Number(row.qty), documentNo: row.documentNo || documentRefs[0], stackCode: kondisi === 'RUSAK' ? '' : (row.stackCode || ''), channel: row.channel || row.product.channel || 'KOM', fefoExceptionReason: kondisi === 'BAIK' ? String(row.fefoExceptionReason || '').trim() : '' })),
+          items: chosen.map((row) => ({ productId: row.productId, qty: Number(row.qty), documentNo: row.documentNo || documentRefs[0], documentQty: documentType === 'SO' ? soTotalFor(row) : 0, stackCode: kondisi === 'RUSAK' ? '' : (row.stackCode || ''), channel: row.channel || row.product.channel || 'KOM', fefoExceptionReason: kondisi === 'BAIK' ? String(row.fefoExceptionReason || '').trim() : '' })),
           party: party.trim(),
           ref: documentRefs[0],
           polisi,
@@ -506,7 +581,7 @@ const CatatStok = ({ panel = '' }) => {
             <div className="mb-5 p-4 rounded-xl border border-[#5a3b15] bg-[#1a1208]">
               <div className="flex gap-3"><Truck size={18} className="text-[#f59e0b] shrink-0 mt-0.5" /><div><div className="text-sm font-semibold text-[#fbbf24]">Tahap Persiapan Pemuatan</div><p className="text-xs text-[#a99675] mt-1">ND dan Memo adalah jalur dokumen yang terpisah. Keduanya dapat digunakan untuk Bazar, E-commerce, peminjaman, atau keperluan lain.</p></div></div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4"><div><label className="text-xs text-[#a99675] block mb-1">Jenis Dokumen</label><select value={documentType} onChange={(e) => { const next = e.target.value; setDocumentType(next); if (next !== 'TM') setTransferScope(''); if (!['MEMO', 'ND'].includes(next)) { setConsignmentDestination(''); setConsignmentZone(''); setDispatchPurpose('LAINNYA'); } }} className="w-full bg-[#0b0f17] border border-[#59431f] rounded-lg px-3 py-2.5 text-sm"><option value="SO">SO — Penjualan</option><option value="TM">TM — Transfer Move</option><option value="CT">CT — Konsinyasi</option><option value="ND">ND — Nota Dinas</option><option value="MEMO">Memo — Pengeluaran Memo</option></select></div>{documentType === 'TM' && <div><label className="text-xs text-[#a99675] block mb-1">Cakupan Transfer</label><select value={transferScope} onChange={(e) => setTransferScope(e.target.value)} className="w-full bg-[#0b0f17] border border-[#59431f] rounded-lg px-3 py-2.5 text-sm"><option value="">Pilih cakupan...</option><option value="LOKAL">Antar Gudang Lokal</option><option value="REGIONAL">Regional</option><option value="NASIONAL">Nasional</option></select></div>}</div>
-              <div className="mt-3"><div className="flex items-center justify-between mb-1"><label className="text-xs text-[#a99675]">Nomor Dokumen (satu kendaraan dapat membawa beberapa dokumen)</label><button type="button" onClick={() => setDocumentRefs((prev) => [...prev, ''])} className="text-xs text-[#60a5fa]">+ Tambah dokumen</button></div>{documentRefs.map((doc, index) => <div key={index} className="flex gap-2 mt-2"><input value={doc} onChange={(e) => { const next = [...documentRefs]; next[index] = e.target.value; setDocumentRefs(next); }} placeholder={documentType === 'SO' ? 'SO/xxxx/mm/09001' : `${documentType}/...`} className="flex-1 bg-[#0b0f17] border border-[#59431f] rounded-lg px-3 py-2.5 text-sm" />{documentRefs.length > 1 && <button type="button" onClick={() => { const removed = doc.trim(); setDocumentRefs((prev) => prev.filter((_, i) => i !== index)); if (removed) setRows((prev) => prev.map((row) => row.documentNo === removed ? { ...row, documentNo: '' } : row)); }} className="px-3 rounded-lg border border-[#59431f] text-[#f59e0b]">×</button>}</div>)}<p className="text-[11px] text-[#a99675] mt-2">Bila ada lebih dari satu nomor dokumen, pilih dokumen sumber pada setiap baris komoditas. Setiap dokumen harus memiliki minimal satu komoditas.</p></div>
+              <div className="mt-3"><div className="flex items-center justify-between mb-1"><label className="text-xs text-[#a99675]">Nomor Dokumen (satu kendaraan dapat membawa beberapa dokumen)</label><button type="button" onClick={() => setDocumentRefs((prev) => [...prev, ''])} className="text-xs text-[#60a5fa]">+ Tambah dokumen</button></div>{documentRefs.map((doc, index) => <div key={index} className="flex gap-2 mt-2"><input value={doc} onChange={(e) => { const next = [...documentRefs]; next[index] = e.target.value; setDocumentRefs(next); }} placeholder={documentType === 'SO' ? 'SO/xxxx/mm/09001' : `${documentType}/...`} className="flex-1 bg-[#0b0f17] border border-[#59431f] rounded-lg px-3 py-2.5 text-sm" />{documentRefs.length > 1 && <button type="button" onClick={() => { const removed = doc.trim(); setDocumentRefs((prev) => prev.filter((_, i) => i !== index)); if (removed) setRows((prev) => prev.map((row) => row.documentNo === removed ? { ...row, documentNo: '' } : row)); }} className="px-3 rounded-lg border border-[#59431f] text-[#f59e0b]">×</button>}</div>)}<p className="text-[11px] text-[#a99675] mt-2">Bila ada lebih dari satu nomor dokumen, pilih dokumen sumber pada setiap baris komoditas. Setiap dokumen harus memiliki minimal satu komoditas.</p>{documentType === 'SO' && outboundDocumentRefs.map((doc) => { const balance = soBalances[doc.toUpperCase()]; if (!balance?.exists) return null; return <div key={doc} className="mt-2 rounded-lg border border-[#1f3657] bg-[#0d1728] px-3 py-2 text-[11px] text-[#93c5fd]"><b>{balance.documentNo}</b> · Status {String(balance.status || '').replaceAll('_', ' ')}{(balance.items || []).map((item) => <div key={item.productId} className="mt-1 text-[#8fb8ef]">{item.name}: Total {formatNum(item.orderedQty)} · Selesai {formatNum(item.completedQty)} · Reservasi {formatNum(item.reservedQty)} · <b>Sisa {formatNum(item.remainingQty)} {item.unit}</b></div>)}</div>; })}</div>
           {['MEMO', 'ND'].includes(documentType) && <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-lg border border-[#1f3657] bg-[#0d1728] p-3"><div><label className="text-xs text-[#93c5fd] block mb-1">Keperluan {documentType}</label><select value={dispatchPurpose} onChange={(e) => { const purpose = e.target.value; const destination = purpose === 'BAZAR' ? 'Gudang Bazar' : purpose === 'ECOMMERCE' ? 'Gudang E-commerce' : ''; setDispatchPurpose(purpose); setConsignmentDestination(destination); setConsignmentZone(''); if (destination) setParty(destination); }} className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm"><option value="BAZAR">Gudang Bazar</option><option value="ECOMMERCE">Gudang E-commerce</option><option value="PEMINJAMAN">Peminjaman</option><option value="LAINNYA">Keperluan lain</option></select></div><div><label className="text-xs text-[#93c5fd] block mb-1">Tumpukan tujuan Unit 18</label><select value={consignmentZone} onChange={(e) => setConsignmentZone(e.target.value)} disabled={!consignmentDestination} className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm disabled:opacity-50"><option value="">{consignmentDestination ? 'Pilih tumpukan tujuan...' : 'Tidak diperlukan'}</option>{consignmentZoneOptions.map((zone) => <option key={zone} value={zone}>{zone}</option>)}</select>{consignmentDestination && <div className="text-[10px] text-[#8fb8ef] mt-1">Area: {consignmentAreaLabel(consignmentDestination)}</div>}</div><p className="sm:col-span-2 text-[11px] text-[#8fb8ef]">{documentType} berdiri sendiri. Bila tujuannya Bazar/E-commerce, saldo tetap terpisah dari gudang induk dan kode tujuan fisik Unit 18 ikut tersimpan pada dokumen pengeluaran.</p></div>}
             </div>
           )}
@@ -553,7 +628,7 @@ const CatatStok = ({ panel = '' }) => {
                       placeholder="Ketik nama / SKU produk..."
                       onChange={(productId) => {
                         const chosenProduct = products.find((item) => item.id === productId);
-                        setTransactionInput(index, { productId, inputMode: 'QTY', inputValue: 1, stackCode: '', channel: chosenProduct?.channel || 'KOM', fefoExceptionReason: '' });
+                        setTransactionInput(index, { productId, inputMode: 'QTY', inputValue: 1, stackCode: '', documentQty: '', channel: chosenProduct?.channel || 'KOM', fefoExceptionReason: '' });
                       }}
                       getDescription={(item) => kondisi === 'RUSAK' && type === 'KELUAR'
                         ? `Rusak ${formatNum(item.damaged || 0)} ${item.unit}`
@@ -574,11 +649,12 @@ const CatatStok = ({ panel = '' }) => {
                     <label className="text-[10px] text-[#6b7688] mb-1 block">{row.inputMode === 'WEIGHT' ? 'Berat (kg)' : `Jumlah (${product?.unit || 'unit'})`}</label>
                     <input type="number" min="0.01" step="any" value={row.inputValue} onChange={(e) => setTransactionInput(index, { inputValue: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" />
                     {product && Number(row.qty || 0) > 0 && <div className="text-[9px] text-[#60a5fa] mt-1">{formatNum(row.qty)} {product.unit} · {formatNum(totalWeight(row.qty, product))} kg{packagingText(row.qty, product, formatNum) ? ` · ${packagingText(row.qty, product, formatNum)}` : ''}</div>}
+                    {documentType === 'SO' && product && (() => { const master = soMasterItemFor(row); const doc = sourceDocumentForRow(row); const legacy = soBalances[doc]?.legacyUsage?.[row.productId]; return <div className="mt-2 pt-2 border-t border-[#1f2937]"><label className="text-[9px] text-[#fbbf24] mb-1 block">Kuantum SO total ({product.unit})</label><input type="number" min="0.01" step="any" disabled={Boolean(master)} value={master ? master.orderedQty : (row.documentQty || '')} onChange={(e) => setSoDocumentTotal(index, e.target.value)} placeholder="Total pada SO, bukan jumlah muat" className="w-full bg-[#160f05] border border-[#78350f] rounded px-2 py-1.5 text-[10px] text-[#fde68a] disabled:opacity-70" />{master ? <div className="mt-1 text-[9px] text-[#86efac]">Selesai {formatNum(master.completedQty)} · Reservasi {formatNum(master.reservedQty)} · Sisa {formatNum(master.remainingQty)} {product.unit}</div> : legacy && Number(legacy.completedQty || 0) + Number(legacy.reservedQty || 0) > 0 ? <div className="mt-1 text-[9px] text-[#fbbf24]">SO lama: sudah tercatat {formatNum(Number(legacy.completedQty || 0) + Number(legacy.reservedQty || 0))} {product.unit}. Isi total SO asli untuk melanjutkan.</div> : <div className="mt-1 text-[9px] text-[#8b93a1]">Diisi sekali pada pengambilan pertama. Pengambilan berikutnya memakai sisa otomatis.</div>}</div>; })()}
                   </div>}
                   {type === 'MASUK' && (
                     <div><label className="text-[10px] text-[#6b7688] mb-1 flex items-center gap-1"><CalendarDays size={11} /> Kedaluwarsa / Lokasi</label><input type="date" value={row.exp || ''} onChange={(e) => setRow(index, { exp: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm" /><select value={row.stackCode || product?.location || ''} onChange={(e) => setRow(index, { stackCode: e.target.value })} className="w-full mt-1 bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2 text-xs"><option value="">Pilih lokasi...</option>{STACKS.map((code) => <option key={code}>{code}</option>)}</select></div>
                   )}
-                  {type === 'KELUAR' && <><div><label className="text-[10px] text-[#6b7688] mb-1 block">Dokumen sumber</label><select value={isMultiDocumentOutbound ? row.documentNo : (row.documentNo || outboundDocumentRefs[0] || '')} disabled={!isMultiDocumentOutbound && outboundDocumentRefs.length === 1} onChange={(e) => setRow(index, { documentNo: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2.5 text-xs disabled:opacity-70"><option value="">{isMultiDocumentOutbound ? 'Pilih dokumen...' : 'Isi nomor dokumen dulu'}</option>{outboundDocumentRefs.map((doc) => <option key={doc}>{doc}</option>)}</select></div><div><label className="text-[10px] text-[#6b7688] mb-1 block">{kondisi === 'RUSAK' ? 'Lokasi sumber' : 'Tumpukan asal · stok tersedia'}</label>{kondisi === 'RUSAK' ? <div className="w-full rounded-lg border border-[#7f1d1d] bg-[#2a0f14] px-3 py-2.5 text-xs text-[#fecaca]"><div className="font-semibold">{DAMAGED_AREA}</div><div className="text-[9px] text-[#fca5a5] mt-1">Tidak memakai tumpukan stok Baik · antrean otomatis seri R-xxx</div></div> : <><select value={row.stackCode || ''} onChange={(e) => { const stackCode = e.target.value; const guide = fefoGuideFor(row.productId); setRow(index, { stackCode, fefoExceptionReason: guide?.recommendedStacks?.includes(stackCode) ? '' : row.fefoExceptionReason }); }} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2.5 text-xs"><option value="">Pilih tumpukan asal (wajib)</option>{availableStacks.map((allocation) => { const secondaryQty = Number(allocation.secondaryQty || 0); const qty = Number(allocation.primaryQty || 0); const availableQty = Number(allocation.availableQty ?? qty); const reservedQty = Number(allocation.reservedQty || 0); const secondary = secondaryQty > 0 ? Math.floor(availableQty / secondaryQty) : 0; const remainder = secondaryQty > 0 ? availableQty - (secondary * secondaryQty) : 0; const packaging = secondaryQty > 0 ? ` · ${formatNum(secondary)} ${allocation.secondary || 'sekunder'}${remainder > 0 ? ` + ${formatNum(remainder)} ${allocation.unit || 'pcs'}` : ''}` : ''; const guide = fefoGuideFor(row.productId); const meta = fefoStackMeta(row.productId, allocation.stackCode); const recommended = guide?.recommendedStacks?.includes(allocation.stackCode); const expiry = meta?.nextLot?.exp ? ` · exp ${meta.nextLot.exp}` : (Number(meta?.untrackedQty || 0) > 0 ? ' · legacy' : ''); const reservation = reservedQty > 0 ? ` · reservasi ${formatNum(reservedQty)}` : ''; return <option key={allocation.id} value={allocation.stackCode}>{recommended ? '★ ' : ''}{allocation.stackCode} — tersedia {formatNum(availableQty)} {allocation.unit || 'pcs'}{reservation}{packaging}{expiry}</option>; })}</select>{row.productId && fefoGuideFor(row.productId) && <div className={`mt-1 rounded border px-2 py-1.5 text-[9px] ${fefoGuideFor(row.productId).mode === 'FEFO_TRACKED' ? 'border-[#14532d] text-[#86efac]' : 'border-[#78350f] text-[#fcd34d]'}`}><b>{fefoGuideFor(row.productId).mode}</b> · Prioritas: {(fefoGuideFor(row.productId).recommendedStacks || []).join(', ') || 'periksa integritas'}<br/>{fefoGuideFor(row.productId).reason}</div>}{isFefoException(row) && <div className="mt-1"><label className="text-[9px] text-[#fbbf24] block mb-1">Alasan memilih di luar prioritas FEFO *</label><input value={row.fefoExceptionReason || ''} onChange={(e) => setRow(index, { fefoExceptionReason: e.target.value })} placeholder="Contoh: akses tumpukan tertutup / dokumen mensyaratkan batch tertentu" className="w-full bg-[#160f05] border border-[#78350f] rounded px-2 py-1.5 text-[10px] text-[#fde68a]" /></div>}{row.productId && availableStacks.length === 0 && <p className="text-[9px] text-[#fbbf24] mt-1">Belum ada alokasi tumpukan untuk produk ini.</p>}</>}</div></>}
+                  {type === 'KELUAR' && <><div><label className="text-[10px] text-[#6b7688] mb-1 block">Dokumen sumber</label><select value={isMultiDocumentOutbound ? row.documentNo : (row.documentNo || outboundDocumentRefs[0] || '')} disabled={!isMultiDocumentOutbound && outboundDocumentRefs.length === 1} onChange={(e) => setRow(index, { documentNo: e.target.value, documentQty: '' })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2.5 text-xs disabled:opacity-70"><option value="">{isMultiDocumentOutbound ? 'Pilih dokumen...' : 'Isi nomor dokumen dulu'}</option>{outboundDocumentRefs.map((doc) => <option key={doc}>{doc}</option>)}</select></div><div><label className="text-[10px] text-[#6b7688] mb-1 block">{kondisi === 'RUSAK' ? 'Lokasi sumber' : 'Tumpukan asal · stok tersedia'}</label>{kondisi === 'RUSAK' ? <div className="w-full rounded-lg border border-[#7f1d1d] bg-[#2a0f14] px-3 py-2.5 text-xs text-[#fecaca]"><div className="font-semibold">{DAMAGED_AREA}</div><div className="text-[9px] text-[#fca5a5] mt-1">Tidak memakai tumpukan stok Baik · antrean otomatis seri R-xxx</div></div> : <><select value={row.stackCode || ''} onChange={(e) => { const stackCode = e.target.value; const guide = fefoGuideFor(row.productId); setRow(index, { stackCode, fefoExceptionReason: guide?.recommendedStacks?.includes(stackCode) ? '' : row.fefoExceptionReason }); }} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2.5 text-xs"><option value="">Pilih tumpukan asal (wajib)</option>{availableStacks.map((allocation) => { const secondaryQty = Number(allocation.secondaryQty || 0); const qty = Number(allocation.primaryQty || 0); const availableQty = Number(allocation.availableQty ?? qty); const reservedQty = Number(allocation.reservedQty || 0); const secondary = secondaryQty > 0 ? Math.floor(availableQty / secondaryQty) : 0; const remainder = secondaryQty > 0 ? availableQty - (secondary * secondaryQty) : 0; const packaging = secondaryQty > 0 ? ` · ${formatNum(secondary)} ${allocation.secondary || 'sekunder'}${remainder > 0 ? ` + ${formatNum(remainder)} ${allocation.unit || 'pcs'}` : ''}` : ''; const guide = fefoGuideFor(row.productId); const meta = fefoStackMeta(row.productId, allocation.stackCode); const recommended = guide?.recommendedStacks?.includes(allocation.stackCode); const expiry = meta?.nextLot?.exp ? ` · exp ${meta.nextLot.exp}` : (Number(meta?.untrackedQty || 0) > 0 ? ' · legacy' : ''); const reservation = reservedQty > 0 ? ` · reservasi ${formatNum(reservedQty)}` : ''; return <option key={allocation.id} value={allocation.stackCode}>{recommended ? '★ ' : ''}{allocation.stackCode} — tersedia {formatNum(availableQty)} {allocation.unit || 'pcs'}{reservation}{packaging}{expiry}</option>; })}</select>{row.productId && fefoGuideFor(row.productId) && <div className={`mt-1 rounded border px-2 py-1.5 text-[9px] ${fefoGuideFor(row.productId).mode === 'FEFO_TRACKED' ? 'border-[#14532d] text-[#86efac]' : 'border-[#78350f] text-[#fcd34d]'}`}><b>{fefoGuideFor(row.productId).mode}</b> · Prioritas: {(fefoGuideFor(row.productId).recommendedStacks || []).join(', ') || 'periksa integritas'}<br/>{fefoGuideFor(row.productId).reason}</div>}{isFefoException(row) && <div className="mt-1"><label className="text-[9px] text-[#fbbf24] block mb-1">Alasan memilih di luar prioritas FEFO *</label><input value={row.fefoExceptionReason || ''} onChange={(e) => setRow(index, { fefoExceptionReason: e.target.value })} placeholder="Contoh: akses tumpukan tertutup / dokumen mensyaratkan batch tertentu" className="w-full bg-[#160f05] border border-[#78350f] rounded px-2 py-1.5 text-[10px] text-[#fde68a]" /></div>}{row.productId && availableStacks.length === 0 && <p className="text-[9px] text-[#fbbf24] mt-1">Belum ada alokasi tumpukan untuk produk ini.</p>}</>}</div></>}
                   <button type="button" onClick={() => delRow(index)} disabled={rows.length === 1} className="w-10 h-[42px] rounded-lg border border-[#242f3d] flex items-center justify-center text-[#ef4444] disabled:opacity-30"><Trash2 size={15} /></button>
                 </div>
               );
