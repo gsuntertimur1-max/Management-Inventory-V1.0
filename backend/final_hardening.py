@@ -214,20 +214,27 @@ async def operational_report(
         t.get("operator", ""),
     ] for t in txns])
 
+    can_view_cost = has_role_permission(user.get("role"), "costView")
     load_rows = []
     for load in loads:
         for item in load.get("items") or []:
-            load_rows.append([
+            row = [
                 load.get("operational_date", ""), load.get("status", ""), load.get("bon_no", ""),
                 load.get("antrian", ""), item.get("documentNo") or load.get("ref", ""),
                 item.get("sku", ""), item.get("name", ""), item.get("qty", 0), item.get("unit", ""),
                 item.get("stackCode", ""), load.get("party", ""), load.get("polisi", ""),
-                load.get("surat_jalan_no", ""), _n((item.get("loadingFee") or {}).get("total")),
-            ])
-    _append_sheet(wb, "Pengeluaran", [
+                load.get("surat_jalan_no", ""),
+            ]
+            if can_view_cost:
+                row.append(_n((item.get("loadingFee") or {}).get("total")))
+            load_rows.append(row)
+    outbound_headers = [
         "Tanggal", "Status", "Bon Muat", "Antrian", "Dokumen", "SKU", "Produk",
-        "Qty", "Satuan", "Tumpukan", "Penerima", "Nopol", "Surat Jalan", "Biaya Muat",
-    ], load_rows)
+        "Qty", "Satuan", "Tumpukan", "Penerima", "Nopol", "Surat Jalan",
+    ]
+    if can_view_cost:
+        outbound_headers.append("Biaya Muat")
+    _append_sheet(wb, "Pengeluaran", outbound_headers, load_rows)
 
     _append_sheet(wb, "Stock Opname", [
         "Waktu", "Nomor", "Gudang", "Status", "Petugas", "Disetujui Oleh",
