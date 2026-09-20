@@ -20,6 +20,8 @@ const OpnameKonsinyasi = () => {
   const { consignmentStock, refreshConsignmentFlow, user } = useData();
   const scopedDestination = roleDestination(user?.role);
   const [destination, setDestination] = useState(scopedDestination || 'Gudang Bazar');
+  const [stockKind, setStockKind] = useState('BAIK');
+  const [damagedStock, setDamagedStock] = useState([]);
   const [opnames, setOpnames] = useState([]);
   const [actual, setActual] = useState({});
   const [lineNotes, setLineNotes] = useState({});
@@ -35,30 +37,66 @@ const OpnameKonsinyasi = () => {
 
   const liveRows = useMemo(() => {
     const grouped = new Map();
-    (consignmentStock || []).filter((item) => item.destination === destination).forEach((item) => {
-      const key = rowKey(item);
-      const current = grouped.get(key) || {
-        productId: item.productId,
-        channel: item.channel || 'KOM',
-        sku: item.sku || '',
-        name: item.name || '',
-        unit: item.unit || '',
-        systemQty: 0,
-      };
-      current.systemQty += Number(item.qty || 0);
-      grouped.set(key, current);
-    });
+    const goodRows = (consignmentStock || []).filter((item) => item.destination === destination);
+    if (stockKind === 'BAIK') {
+      goodRows.forEach((item) => {
+        const key = rowKey(item);
+        const current = grouped.get(key) || {
+          productId: item.productId,
+          channel: item.channel || 'KOM',
+          sku: item.sku || '',
+          name: item.name || '',
+          unit: item.unit || '',
+          systemQty: 0,
+        };
+        current.systemQty += Number(item.qty || 0);
+        grouped.set(key, current);
+      });
+    } else {
+      goodRows.forEach((item) => {
+        const key = rowKey(item);
+        if (!grouped.has(key)) {
+          grouped.set(key, {
+            productId: item.productId,
+            channel: item.channel || 'KOM',
+            sku: item.sku || '',
+            name: item.name || '',
+            unit: item.unit || '',
+            systemQty: 0,
+          });
+        }
+      });
+      (damagedStock || []).filter((item) => item.destination === destination).forEach((item) => {
+        const key = rowKey(item);
+        const current = grouped.get(key) || {
+          productId: item.productId,
+          channel: item.channel || 'KOM',
+          sku: item.sku || '',
+          name: item.name || '',
+          unit: item.unit || '',
+          systemQty: 0,
+        };
+        current.systemQty += Number(item.qty || 0);
+        grouped.set(key, current);
+      });
+    }
     return Array.from(grouped.values()).sort((a, b) => String(a.name).localeCompare(String(b.name), 'id'));
-  }, [consignmentStock, destination]);
+  }, [consignmentStock, damagedStock, destination, stockKind]);
 
   const loadOpnames = useCallback(async () => {
-    const { data } = await api.get('/consignment-opnames', { params: { destination } });
+    const path = stockKind === 'RUSAK' ? '/consignment-damaged-opnames' : '/consignment-opnames';
+    const { data } = await api.get(path, { params: { destination } });
     setOpnames(data || []);
+  }, [destination, stockKind]);
+
+  const loadDamagedStock = useCallback(async () => {
+    const { data } = await api.get('/consignment-damaged-stock', { params: { destination } });
+    setDamagedStock(data || []);
   }, [destination]);
 
   useEffect(() => {
-    loadOpnames().catch(() => {});
-  }, [loadOpnames]);
+    Promise.all([loadOpnames(), loadDamagedStock()]).catch(() => {});
+  }, [loadOpnames, loadDamagedStock]);
 
   const active = useMemo(
     () => opnames.find((row) => ['DRAFT', 'SUBMITTED'].includes(row.status)),
@@ -90,8 +128,9 @@ const OpnameKonsinyasi = () => {
     if (!liveRows.length) return toast.error('Belum ada saldo Bazar/E-commerce yang dapat diopname');
     setSaving(true);
     try {
-      await api.post('/consignment-opnames', { destination, items: payloadItems(), note });
-      toast.success('Draft stock opname tersimpan');
+      const path = stockKind === 'RUSAK' ? '/consignment-damaged-opnames' : '/consignment-opnames';
+      await api.post(path, { destination, items: payloadItems(), note });
+      toast.success(stockKind === 'RUSAK' ? 'Draft opname Area Barang Rusak tersimpan' : 'Draft stock opname tersimpan');
       await loadOpnames();
     } catch (error) {
       toast.error(apiError(error));
@@ -102,7 +141,8 @@ const OpnameKonsinyasi = () => {
 
   const saveDraft = async () => {
     if (!active || active.status !== 'DRAFT') return;
-    await api.put(`/consignment-opnames/${active.id}`, { items: payloadItems(), note });
+    const base = stockKind === 'RUSAK' ? '/consignment-damaged-opnames' : '/consignment-opnames';
+    await api.put(`${base}/${active.id}`, { items: payloadItems(), note });
     await loadOpnames();
   };
 
@@ -110,7 +150,7 @@ const OpnameKonsinyasi = () => {
     setSaving(true);
     try {
       await saveDraft();
-      toast.success('Draft opname diperbarui');
+      toast.success(stockKind === 'RUSAK' ? 'Draft opname barang rusak diperbarui' : 'Draft opname diperbarui');
     } catch (error) {
       toast.error(apiError(error));
     } finally {
@@ -122,9 +162,10 @@ const OpnameKonsinyasi = () => {
     if (!active || active.status !== 'DRAFT') return;
     setSaving(true);
     try {
-      await api.put(`/consignment-opnames/${active.id}`, { items: payloadItems(), note });
-      await api.post(`/consignment-opnames/${active.id}/submit`, { note });
-      toast.success('Stock opname diajukan untuk persetujuan Kepala Gudang');
+      const base = stockKind === 'RUSAK' ? '/consignment-damaged-opnames' : '/consignment-opnames';
+      await api.put(`${base}/${active.id}`, { items: payloadItems(), note });
+      await api.post(`${base}/${active.id}/submit`, { note });
+      toast.success(stockKind === 'RUSAK' ? 'Opname barang rusak diajukan untuk persetujuan Kepala Gudang' : 'Stock opname diajukan untuk persetujuan Kepala Gudang');
       await loadOpnames();
     } catch (error) {
       toast.error(apiError(error));
@@ -138,9 +179,12 @@ const OpnameKonsinyasi = () => {
     const approvalNote = window.prompt('Catatan persetujuan (opsional):', '') ?? '';
     setSaving(true);
     try {
-      await api.post(`/consignment-opnames/${active.id}/approve`, { note: approvalNote });
-      toast.success('Opname disetujui · saldo dan lokasi Bazar/E-commerce telah disesuaikan');
-      await Promise.all([loadOpnames(), refreshConsignmentFlow()]);
+      const base = stockKind === 'RUSAK' ? '/consignment-damaged-opnames' : '/consignment-opnames';
+      await api.post(`${base}/${active.id}/approve`, { note: approvalNote });
+      toast.success(stockKind === 'RUSAK'
+        ? 'Opname barang rusak disetujui · hanya saldo Area Barang Rusak yang disesuaikan'
+        : 'Opname disetujui · saldo dan lokasi Bazar/E-commerce telah disesuaikan');
+      await Promise.all([loadOpnames(), loadDamagedStock(), refreshConsignmentFlow()]);
     } catch (error) {
       toast.error(apiError(error));
     } finally {
@@ -154,8 +198,9 @@ const OpnameKonsinyasi = () => {
     if (!rejectionNote.trim()) return;
     setSaving(true);
     try {
-      await api.post(`/consignment-opnames/${active.id}/reject`, { note: rejectionNote.trim() });
-      toast.success('Stock opname ditolak tanpa mengubah saldo');
+      const base = stockKind === 'RUSAK' ? '/consignment-damaged-opnames' : '/consignment-opnames';
+      await api.post(`${base}/${active.id}/reject`, { note: rejectionNote.trim() });
+      toast.success(stockKind === 'RUSAK' ? 'Opname barang rusak ditolak tanpa mengubah saldo' : 'Stock opname ditolak tanpa mengubah saldo');
       await loadOpnames();
     } catch (error) {
       toast.error(apiError(error));
@@ -171,22 +216,31 @@ const OpnameKonsinyasi = () => {
     <div>
       <div className="label-mono mb-2">Kontrol Konsinyasi Unit 18</div>
       <h1 className="font-display text-4xl font-bold">Stock Opname Bazar / E-commerce</h1>
-      <p className="text-sm text-[#8b93a1] mt-2">Selisih hanya mengubah saldo setelah disetujui Superadmin/Kepala Gudang. Adjustment otomatis disinkronkan ke lokasi/perkalian konsinyasi.</p>
+      <p className="text-sm text-[#8b93a1] mt-2">Stok Baik dan Area Barang Rusak memiliki opname terpisah. Selisih hanya mengubah saldo setelah disetujui Superadmin/Kepala Gudang.</p>
     </div>
 
     <div className="card-surface p-5">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
-        <div className="flex gap-2">
-          {['Gudang Bazar', 'Gudang E-commerce']
-            .filter((location) => !scopedDestination || location === scopedDestination)
-            .map((location) => <button
-              key={location}
-              disabled={Boolean(active)}
-              onClick={() => setDestination(location)}
-              className={`px-4 py-2.5 rounded-lg text-sm font-semibold disabled:opacity-50 ${destination === location ? 'bg-[#2563eb] text-white' : 'bg-[#101722] text-[#8b93a1]'}`}
-            >{location === 'Gudang Bazar' ? 'Bazar' : 'E-commerce'}</button>)}
+        <div className="space-y-2">
+          <div className="flex gap-2">
+            {['Gudang Bazar', 'Gudang E-commerce']
+              .filter((location) => !scopedDestination || location === scopedDestination)
+              .map((location) => <button
+                key={location}
+                disabled={Boolean(active)}
+                onClick={() => setDestination(location)}
+                className={`px-4 py-2.5 rounded-lg text-sm font-semibold disabled:opacity-50 ${destination === location ? 'bg-[#2563eb] text-white' : 'bg-[#101722] text-[#8b93a1]'}`}
+              >{location === 'Gudang Bazar' ? 'Bazar' : 'E-commerce'}</button>)}
+          </div>
+          <div className="flex gap-2">
+            {[['BAIK', 'Stok Baik'], ['RUSAK', 'Barang Rusak']].map(([kind, label]) => <button
+              key={kind}
+              onClick={() => setStockKind(kind)}
+              className={`px-3 py-2 rounded-lg text-xs font-semibold border ${stockKind === kind ? (kind === 'RUSAK' ? 'border-[#f59e0b] bg-[#78350f]/30 text-[#fcd34d]' : 'border-[#2563eb] bg-[#1d4ed8]/20 text-[#93c5fd]') : 'border-[#243044] text-[#8b93a1]'}`}
+            >{label}</button>)}
+          </div>
         </div>
-        <button onClick={() => Promise.all([loadOpnames(), refreshConsignmentFlow()])} className="text-xs inline-flex items-center gap-1 text-[#93c5fd]"><RefreshCcw size={13}/> Refresh</button>
+        <button onClick={() => Promise.all([loadOpnames(), loadDamagedStock(), refreshConsignmentFlow()])} className="text-xs inline-flex items-center gap-1 text-[#93c5fd]"><RefreshCcw size={13}/> Refresh</button>
       </div>
 
       {active && <div className="rounded-xl border border-[#243044] bg-[#0b0f17] px-4 py-3 mb-4 flex flex-wrap items-center justify-between gap-2">
@@ -197,7 +251,8 @@ const OpnameKonsinyasi = () => {
         <span className={`text-xs px-2.5 py-1 rounded-full ${statusMeta[active.status]?.[1] || ''}`}>{statusMeta[active.status]?.[0] || active.status}</span>
       </div>}
 
-      {!displayedRows.length ? <p className="text-sm text-[#8b93a1]">Tidak ada saldo aktif untuk diopname.</p> : <div className="overflow-x-auto">
+      {stockKind === 'RUSAK' && <div className="rounded-lg border border-[#78350f] bg-[#451a03]/15 px-3 py-2 mb-4 text-xs text-[#fcd34d]">Area Barang Rusak terpisah dari stok Baik. Approval pada mode ini hanya membuat movement OPNAME_RUSAK_ADJUSTMENT dan tidak mengubah lokasi/perkalian stok Baik.</div>}
+      {!displayedRows.length ? <p className="text-sm text-[#8b93a1]">Tidak ada produk aktif untuk diopname.</p> : <div className="overflow-x-auto">
         <table className="w-full text-sm tbl">
           <thead><tr className="text-left border-b border-[#1a222e]">
             <th className="py-2.5 pr-4">SKU</th><th className="py-2.5 pr-4">Komoditi</th><th className="py-2.5 pr-4">Saluran</th>
@@ -230,7 +285,7 @@ const OpnameKonsinyasi = () => {
           <button disabled={saving} onClick={submit} className="btn-primary px-4 py-2.5 rounded-lg inline-flex items-center gap-2"><Send size={16}/> Ajukan Persetujuan</button>
         </>}
         {active?.status === 'SUBMITTED' && canApprove && <>
-          <button disabled={saving} onClick={approve} className="px-4 py-2.5 rounded-lg border border-[#22c55e]/50 text-[#86efac] inline-flex items-center gap-2"><CheckCircle2 size={16}/> Setujui & Adjustment</button>
+          <button disabled={saving} onClick={approve} className="px-4 py-2.5 rounded-lg border border-[#22c55e]/50 text-[#86efac] inline-flex items-center gap-2"><CheckCircle2 size={16}/> {stockKind === 'RUSAK' ? 'Setujui Adjustment Rusak' : 'Setujui & Adjustment'}</button>
           <button disabled={saving} onClick={reject} className="px-4 py-2.5 rounded-lg border border-[#ef4444]/50 text-[#fca5a5] inline-flex items-center gap-2"><XCircle size={16}/> Tolak</button>
         </>}
         {active?.status === 'SUBMITTED' && !canApprove && <div className="text-xs text-[#fbbf24] py-2">Menunggu persetujuan Superadmin/Kepala Gudang. Saldo belum berubah.</div>}
@@ -238,11 +293,11 @@ const OpnameKonsinyasi = () => {
     </div>
 
     <div className="card-surface p-5">
-      <div className="flex items-center gap-2 mb-4"><ClipboardCheck size={18} className="text-[#60a5fa]"/><h2 className="font-display text-xl font-bold">Riwayat Opname {destination === 'Gudang Bazar' ? 'Bazar' : 'E-commerce'}</h2></div>
+      <div className="flex items-center gap-2 mb-4"><ClipboardCheck size={18} className="text-[#60a5fa]"/><h2 className="font-display text-xl font-bold">Riwayat Opname {stockKind === 'RUSAK' ? 'Barang Rusak ' : ''}{destination === 'Gudang Bazar' ? 'Bazar' : 'E-commerce'}</h2></div>
       {history.length === 0 ? <p className="text-sm text-[#8b93a1]">Belum ada opname yang selesai diproses.</p> : <div className="space-y-3">{history.map((opname) => <div key={opname.id} className="rounded-lg bg-[#0b0f17] border border-[#1a222e] p-3 text-sm">
         <div className="flex flex-wrap justify-between gap-2"><div className="font-mono text-xs text-[#93c5fd]">{opname.no} · {new Date(opname.createdAt || opname.time).toLocaleString('id-ID')}</div><span className={`text-[10px] px-2 py-1 rounded-full ${statusMeta[opname.status]?.[1] || ''}`}>{statusMeta[opname.status]?.[0] || opname.status}</span></div>
         <div className="mt-2">{(opname.items || []).filter((item) => Number(item.difference) !== 0).map((item) => `${item.name}: ${Number(item.difference) > 0 ? '+' : ''}${formatNum(item.difference)} ${item.unit}`).join(' · ') || 'Tidak ada selisih'}</div>
-        {opname.status === 'APPROVED' && <div className="text-xs text-[#86efac] mt-1">Disetujui {opname.approvedBy || '—'} · saldo dan lokasi telah disesuaikan.</div>}
+        {opname.status === 'APPROVED' && <div className="text-xs text-[#86efac] mt-1">Disetujui {opname.approvedBy || '—'} · {stockKind === 'RUSAK' ? 'saldo Area Barang Rusak telah disesuaikan.' : 'saldo dan lokasi telah disesuaikan.'}</div>}
         {opname.status === 'REJECTED' && <div className="text-xs text-[#fca5a5] mt-1">Ditolak {opname.rejectedBy || '—'} · {opname.rejectionNote || 'tanpa catatan'}</div>}
         {opname.note && <div className="text-xs text-[#8b93a1] mt-1">{opname.note}</div>}
       </div>)}</div>}
