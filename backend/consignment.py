@@ -627,7 +627,19 @@ async def save_consignment_layout(body: ConsignmentLayoutInput, user: dict = Dep
         "operator": user.get("name", ""),
         "note": body.note.strip(),
     })
-    return result
+    # Keep any remaining balance located as well. Prefer another canonical stack so
+    # manually reducing one stack can be used to split stock across locations.
+    alternatives = [code for code in consignment_stack_codes(body.destination) if code != stack_code]
+    sync = await sync_consignment_layout_balance(
+        body.destination,
+        body.productId,
+        operator=user.get("name", ""),
+        preferred_stack=alternatives[0] if alternatives else stack_code,
+        operation_key=f"manual-layout-save:{result.get('id', '')}",
+        note="Menjaga total seluruh lokasi sama dengan saldo Bazar/E-commerce.",
+    )
+    latest = await db.consignment_layouts.find_one({"id": result.get("id", "")}, {"_id": 0})
+    return {**(latest or result), "balanceSync": sync}
 
 
 @router.delete("/consignment-layouts/{layout_id}")
@@ -667,7 +679,19 @@ async def delete_consignment_layout(layout_id: str, user: dict = Depends(get_cur
         "operator": user.get("name", ""),
         "note": "Perkalian tumpukan dihapus",
     })
-    return {"ok": True}
+    alternatives = [
+        code for code in consignment_stack_codes(existing.get("destination", ""))
+        if code != existing.get("stackCode", "")
+    ]
+    sync = await sync_consignment_layout_balance(
+        existing.get("destination", ""),
+        existing.get("productId", ""),
+        operator=user.get("name", ""),
+        preferred_stack=alternatives[0] if alternatives else "",
+        operation_key=f"manual-layout-delete:{layout_id}",
+        note="Saldo dari lokasi yang dihapus dipindahkan otomatis agar tidak menjadi stok tanpa lokasi.",
+    )
+    return {"ok": True, "balanceSync": sync}
 
 
 async def decrease_consignment_layouts(
