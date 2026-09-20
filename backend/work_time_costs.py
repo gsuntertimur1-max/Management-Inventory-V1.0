@@ -5,6 +5,17 @@ from datetime import datetime
 from fastapi import HTTPException
 
 
+def normalize_unloading_group(value: str) -> str:
+    text = str(value or "").strip().upper()
+    if not text or "RTR" in text:
+        return ""
+    if "MANDOR 2" in text or "GRUP 2" in text or "MP1" in text or "21-24" in text:
+        return "MANDOR 2 - MP1/GBB 21-24"
+    if "MANDOR 1" in text or "GRUP 1" in text or "17-20" in text:
+        return "MANDOR 1 - GBB 17-20"
+    return ""
+
+
 def holiday_from_settings(when: datetime, holidays: list[dict] | None = None) -> bool:
     if when.weekday() >= 5:
         return True
