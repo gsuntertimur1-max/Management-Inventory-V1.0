@@ -1114,7 +1114,20 @@ def channel_balance(product: dict, channel: str, field: str = "stock") -> float:
 # ---------- products ----------
 @api_router.get("/products")
 async def list_products(user: dict = Depends(get_current_user)):
-    return await db.products.find({}, {"_id": 0}).sort("name", 1).to_list(2000)
+    rows = await db.products.find({}, {"_id": 0}).sort("name", 1).to_list(2000)
+    if has_role_permission(user.get("role"), "costView"):
+        return rows
+    restricted = {
+        "cost", "loadingFeeLabor", "loadingFeeDaily", "loadingFeeWarehouse",
+        "loadingOvertimeLabor", "loadingOvertimeDaily", "loadingOvertimeWarehouse",
+        "loadingHolidayLabor", "loadingHolidayDaily", "loadingHolidayWarehouse",
+        "loadingHolidayOvertimeLabor", "loadingHolidayOvertimeDaily", "loadingHolidayOvertimeWarehouse",
+        "unloadingFeeLabor", "unloadingFeeDaily", "unloadingFeeWarehouse",
+        "unloadingOvertimeLabor", "unloadingOvertimeDaily", "unloadingOvertimeWarehouse",
+        "unloadingHolidayLabor", "unloadingHolidayDaily", "unloadingHolidayWarehouse",
+        "unloadingHolidayOvertimeLabor", "unloadingHolidayOvertimeDaily", "unloadingHolidayOvertimeWarehouse",
+    }
+    return [{key: value for key, value in row.items() if key not in restricted} for row in rows]
 
 
 @api_router.post("/products")
@@ -1188,7 +1201,11 @@ async def delete_supplier(supplier_id: str, user: dict = Depends(require_master_
 # ---------- transactions & surat jalan ----------
 @api_router.get("/transactions")
 async def list_transactions(user: dict = Depends(get_current_user)):
-    return await db.transactions.find({}, {"_id": 0}).sort("time", -1).to_list(2000)
+    rows = await db.transactions.find({}, {"_id": 0}).sort("time", -1).to_list(2000)
+    if has_role_permission(user.get("role"), "costView"):
+        return rows
+    restricted = {"unloading_cost", "loading_cost", "loading_fee", "cost", "unit_cost", "total_cost"}
+    return [{key: value for key, value in row.items() if key not in restricted} for row in rows]
 
 
 @api_router.post("/transactions")
@@ -1299,7 +1316,16 @@ async def update_sj_status(sj_id: str, body: SJStatusBody, user: dict = Depends(
 # ---------- purchase orders ----------
 @api_router.get("/purchase-orders")
 async def list_pos(user: dict = Depends(get_current_user)):
-    return await db.purchase_orders.find({}, {"_id": 0}).sort("date", -1).to_list(1000)
+    rows = await db.purchase_orders.find({}, {"_id": 0}).sort("date", -1).to_list(1000)
+    if has_role_permission(user.get("role"), "costView"):
+        return rows
+    cleaned = []
+    for row in rows:
+        copy = dict(row)
+        copy.pop("total", None)
+        copy["items"] = [{key: value for key, value in item.items() if key != "cost"} for item in row.get("items", [])]
+        cleaned.append(copy)
+    return cleaned
 
 
 @api_router.post("/purchase-orders")
