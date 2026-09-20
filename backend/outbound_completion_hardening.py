@@ -55,7 +55,7 @@ async def _resolve_issue(load_id: str, stage: str) -> None:
         logger.exception("Gagal menutup post-commit issue %s untuk load %s", stage, load_id)
 
 
-async def _enrich_completed_outbound(load_id: str, load: dict, surat_jalan: dict | None = None) -> dict:
+async def _enrich_completed_outbound(load_id: str, load: dict, surat_jalan: dict | None = None, *, products_locked: bool = False) -> dict:
     warnings = []
     result: dict = {}
 
@@ -89,7 +89,7 @@ async def _enrich_completed_outbound(load_id: str, load: dict, surat_jalan: dict
         warnings.append("Lokasi detail Surat Jalan belum tersinkron dan masuk antrean perbaikan integritas.")
 
     try:
-        fefo = await consume_stack_lots_conservative(load)
+        fefo = await consume_stack_lots_conservative(load, lock_products=not products_locked)
         result["fefo"] = fefo
         await db.outbound_loads.update_one(
             {"id": load_id},
@@ -129,7 +129,7 @@ async def hardened_complete_outbound(load_id: str, request: Request, user: dict 
         # Core stock/document mutation remains authoritative and rollback-capable.
         result = await complete_outbound_load(load_id, user)
         load = result.get("load") or await db.outbound_loads.find_one({"id": load_id}, {"_id": 0}) or {}
-        enrichment = await _enrich_completed_outbound(load_id, load, result.get("suratJalan"))
+        enrichment = await _enrich_completed_outbound(load_id, load, result.get("suratJalan"), products_locked=True)
         result.update(enrichment)
         if result.get("load") and enrichment.get("fefo"):
             fefo = enrichment["fefo"]
@@ -159,7 +159,7 @@ async def repair_completed_outbound(load_id: str, user: dict = Depends(require_a
 
     async with operation_guard(product_lock_keys(product_ids) + [f"outbound-repair:{load_id}"]):
         current = await db.outbound_loads.find_one({"id": load_id}, {"_id": 0}) or load
-        enrichment = await _enrich_completed_outbound(load_id, current)
+        enrichment = await _enrich_completed_outbound(load_id, current, products_locked=True)
         open_issues = await db.operational_postcommit_issues.find(
             {"loadId": load_id, "operation": "OUTBOUND_COMPLETE", "status": "OPEN"},
             {"_id": 0},
