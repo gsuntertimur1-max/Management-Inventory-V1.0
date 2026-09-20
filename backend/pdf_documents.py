@@ -60,6 +60,8 @@ def _date(value, with_time=False) -> str:
 
 
 def _arrangement(item: dict) -> str:
+    if item.get("arrangementAdjusted"):
+        return "Perlu dihitung ulang setelah pengeluaran"
     blocks = item.get("arrangements") or [{"hamparan": item.get("length", 0), "kaki": item.get("width", 0), "height": item.get("height", 0)}]
     parts = [f"{x.get('hamparan', 0)} X {x.get('kaki', 0)} X {x.get('height', 0)} = {_num(float(x.get('hamparan', 0) or 0) * float(x.get('kaki', 0) or 0) * float(x.get('height', 0) or 0))}" for x in blocks]
     if item.get("extraSecondary"):
