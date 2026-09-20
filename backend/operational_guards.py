@@ -26,6 +26,7 @@ from backend.outbound_flow import (
     DocumentCancelInput,
     OutboundCreateInput,
     OutboundEditInput,
+    LoadingCompletionInput,
     SalesReturnInput,
     cancel_outbound_load,
     complete_outbound_load,
@@ -342,11 +343,16 @@ async def guarded_cancel_outbound(load_id: str, body: DocumentCancelInput, reque
 
 
 @router.post("/outbound-loads/{load_id}/complete")
-async def guarded_complete_outbound(load_id: str, request: Request, user: dict = Depends(require_write)):
+async def guarded_complete_outbound(
+    load_id: str,
+    request: Request,
+    body: LoadingCompletionInput | None = None,
+    user: dict = Depends(require_write),
+):
     _, product_ids = await _load_product_ids(load_id)
 
     async def action():
-        result = await complete_outbound_load(load_id, user)
+        result = await complete_outbound_load(load_id, body, user)
         load = result.get("load") or await db.outbound_loads.find_one({"id": load_id}, {"_id": 0}) or {}
         await _tag_load_transaction_product_ids(load_id, load)
         sj = surat_jalan_with_exact_locations(load, result.get("suratJalan"))
