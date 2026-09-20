@@ -106,10 +106,7 @@ async def analyze_consignment_integrity() -> dict:
             if product_id:
                 bazar_trip_reserved[product_id] += _n(item.get("loadedQty"))
 
-    package_batches = await db.bazar_package_batches.find(
-        {"remainingQty": {"$gt": EPS}},
-        {"_id": 0},
-    ).to_list(10000)
+    package_batches = await db.bazar_package_batches.find({}, {"_id": 0}).to_list(10000)
     template_ids = sorted({str(row.get("templateId") or "") for row in package_batches if row.get("templateId")})
     templates = await db.bazar_package_templates.find(
         {"id": {"$in": template_ids}},
@@ -123,7 +120,17 @@ async def analyze_consignment_integrity() -> dict:
     for batch in package_batches:
         template_id = str(batch.get("templateId") or "")
         remaining = _n(batch.get("remainingQty"))
-        physical_packages[template_id] += remaining
+        if remaining < -EPS:
+            package_issues.append({
+                "severity": "ERROR",
+                "code": "PACKAGE_BATCH_NEGATIVE",
+                "reference": batch.get("batchNo", ""),
+                "templateId": template_id,
+                "remainingQty": remaining,
+                "issue": "Sisa Batch Paket Jadi bernilai negatif.",
+            })
+        if remaining > EPS:
+            physical_packages[template_id] += remaining
         template = template_map.get(template_id)
         if not template:
             package_issues.append({
@@ -133,10 +140,11 @@ async def analyze_consignment_integrity() -> dict:
                 "issue": "Batch Paket Jadi tidak memiliki master paket.",
             })
             continue
-        for component in template.get("components", []):
-            product_id = str(component.get("productId") or "")
-            if product_id:
-                package_component_hold[product_id] += remaining * _n(component.get("qty"))
+        if remaining > EPS:
+            for component in template.get("components", []):
+                product_id = str(component.get("productId") or "")
+                if product_id:
+                    package_component_hold[product_id] += remaining * _n(component.get("qty"))
 
     active_package_loads = await db.bazar_package_loads.find(
         {"status": "BERJALAN"},
