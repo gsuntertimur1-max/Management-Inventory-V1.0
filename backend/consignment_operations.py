@@ -411,6 +411,7 @@ class EcomReturnItem(BaseModel):
     productId: str
     goodQty: float = Field(default=0, ge=0)
     damagedQty: float = Field(default=0, ge=0)
+    stackCode: str = ""
 
 
 class EcomReturnBody(BaseModel):
@@ -484,6 +485,15 @@ async def update_ecom_status(order_id: str, body: EcomStatusBody, user: dict = D
     now = now_iso()
     if body.status == "SHIPPED":
         for item in order.get("items", []):
+            # Repair any legacy/missing location before reducing it. After this,
+            # a shipment cannot silently succeed without a physical E-commerce location.
+            await consignment_module.sync_consignment_layout_balance(
+                ECOM,
+                item.get("productId", ""),
+                operator=user.get("name", ""),
+                operation_key=f"ecom-pre-ship:{order_id}:{item.get('productId', '')}",
+                note="Validasi lokasi fisik sebelum pesanan E-commerce dikirim.",
+            )
             event_key = f"ecom-ship:{order_id}:{item['productId']}"
             movement = {
                 "id": new_id(), "eventKey": event_key, "time": now, "destination": ECOM,
@@ -540,15 +550,35 @@ async def receive_ecom_return(order_id: str, body: EcomReturnBody, user: dict = 
         if prior[item.productId] + total > shipped[item.productId] + EPS:
             raise HTTPException(status_code=400, detail="Jumlah retur melebihi jumlah yang dikirim")
         identity = next(row for row in order["items"] if row["productId"] == item.productId)
+        return_stack = ""
+        if float(item.goodQty) > EPS:
+            requested_stack = str(item.stackCode or "").strip()
+            if not requested_stack:
+                raise HTTPException(status_code=400, detail=f"Pilih lokasi retur baik untuk {identity.get('name', '')}")
+            return_stack = consignment_module.normalize_consignment_stack_code(ECOM, requested_stack)
         move = {
             "id": new_id(), "eventKey": f"ecom-return:{return_id}:{item.productId}", "time": now, "destination": ECOM,
             "movementType": "ECOM_RETUR", "referenceId": order_id, "referenceNo": order.get("orderNo", ""),
             "productId": item.productId, "sku": identity.get("sku", ""), "name": identity.get("name", ""),
             "unit": identity.get("unit", ""), "channel": identity.get("channel", "KOM"),
             "delta": float(item.goodQty), "goodQty": float(item.goodQty), "damagedQty": float(item.damagedQty),
+            "stackCode": return_stack,
             "returnId": return_id, "operator": user.get("name", ""),
         }
         await db.consignment_movements.insert_one(move)
+        if float(item.goodQty) > EPS:
+            try:
+                await consignment_module.sync_consignment_layout_balance(
+                    ECOM,
+                    item.productId,
+                    operator=user.get("name", ""),
+                    preferred_stack=return_stack,
+                    operation_key=f"ecom-return-good:{return_id}:{item.productId}",
+                    note="Retur baik E-commerce dikembalikan ke lokasi fisik yang dipilih.",
+                )
+            except Exception:
+                await db.consignment_movements.delete_one({"eventKey": move["eventKey"]})
+                raise
         if float(item.damagedQty) > EPS:
             await credit_consignment_damaged(
                 ECOM,
@@ -561,7 +591,12 @@ async def receive_ecom_return(order_id: str, body: EcomReturnBody, user: dict = 
                 user.get("name", ""),
                 body.note,
             )
-        history_items.append({**identity, "goodQty": float(item.goodQty), "damagedQty": float(item.damagedQty)})
+        history_items.append({
+            **identity,
+            "goodQty": float(item.goodQty),
+            "damagedQty": float(item.damagedQty),
+            "stackCode": return_stack,
+        })
         prior[item.productId] += total
 
     if not history_items:
