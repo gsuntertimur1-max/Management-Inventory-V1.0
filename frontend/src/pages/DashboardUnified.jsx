@@ -55,7 +55,9 @@ const DashboardUnified = () => {
       if (item.destination === 'Gudang Bazar') addByUnit(bazar, item.unit, item.qty);
       if (item.destination === 'Gudang E-commerce') addByUnit(ecommerce, item.unit, item.qty);
     });
-    return { main, bazar, ecommerce, physical: mergeTotals(main, bazar, ecommerce) };
+    const mainDamaged = {};
+    (products || []).forEach((product) => addByUnit(mainDamaged, product.unit, product.damaged || 0));
+    return { main, bazar, ecommerce, physical: mergeTotals(main, bazar, ecommerce), mainDamaged };
   }, [products, consignmentStock]);
 
   const consignmentPosition = useMemo(() => {
@@ -69,6 +71,8 @@ const DashboardUnified = () => {
       ecommerceOutstanding: ecommerce.outstanding || {},
       externalOutstanding: external.outstanding || {},
       internalSoIssued: mergeTotals(bazar.soIssued || {}, ecommerce.soIssued || {}),
+      bazarDamaged: consignmentDashboard?.damagedPhysical?.['Gudang Bazar'] || {},
+      ecommerceDamaged: consignmentDashboard?.damagedPhysical?.['Gudang E-commerce'] || {},
       activity,
     };
   }, [consignmentDashboard]);
@@ -97,10 +101,23 @@ const DashboardUnified = () => {
     <section>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-2"><div className="label-mono">Posisi Persediaan Fisik</div><SyncStatus /></div>
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        <SummaryCard icon={Warehouse} label="Stok Gudang Utama" value={formatTotals(totals.main)} accent="#3b82f6" />
-        <SummaryCard icon={ShoppingBag} label="Stok Bazar" value={formatTotals(totals.bazar)} accent="#f59e0b" />
-        <SummaryCard icon={Boxes} label="Stok E-commerce" value={formatTotals(totals.ecommerce)} accent="#0ea5e9" />
-        <SummaryCard icon={Layers3} label="Total Stok Fisik" value={formatTotals(totals.physical)} accent="#22c55e" />
+        <SummaryCard icon={Warehouse} label="Stok Baik Gudang Utama" value={formatTotals(totals.main)} accent="#3b82f6" />
+        <SummaryCard icon={ShoppingBag} label="Stok Baik Bazar" value={formatTotals(totals.bazar)} accent="#f59e0b" />
+        <SummaryCard icon={Boxes} label="Stok Baik E-commerce" value={formatTotals(totals.ecommerce)} accent="#0ea5e9" />
+        <SummaryCard icon={Layers3} label="Total Stok Baik Fisik" value={formatTotals(totals.physical)} accent="#22c55e" />
+      </div>
+    </section>
+
+    <section>
+      <div className="mb-3">
+        <div className="label-mono">Stok Rusak Fisik</div>
+        <p className="text-xs text-[#8b93a1] mt-1">Barang rusak dipisahkan dari stok baik dan tetap tercatat sebagai fisik pada area rusak masing-masing.</p>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <SummaryCard icon={Warehouse} label="Rusak Gudang Utama" value={formatTotals(totals.mainDamaged)} accent="#ef4444" />
+        <SummaryCard icon={ShoppingBag} label="Rusak Bazar" value={formatTotals(consignmentPosition.bazarDamaged)} accent="#f97316" />
+        <SummaryCard icon={Boxes} label="Rusak E-commerce" value={formatTotals(consignmentPosition.ecommerceDamaged)} accent="#f43f5e" />
+        <SummaryCard icon={Layers3} label="Total Stok Rusak Fisik" value={formatTotals(mergeTotals(totals.mainDamaged, consignmentPosition.bazarDamaged, consignmentPosition.ecommerceDamaged))} accent="#dc2626" />
       </div>
     </section>
 
