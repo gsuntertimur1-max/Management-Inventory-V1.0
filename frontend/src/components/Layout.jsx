@@ -47,12 +47,14 @@ const NAV_GROUPS = [
   {
     label: 'Riwayat', icon: History, items: [
       { to: '/riwayat', label: 'Riwayat Gudang', icon: History, permission: 'mainInventory' },
+      { to: '/laporan-operasional', label: 'Laporan Operasional', icon: FileInput, permission: 'mainInventory' },
       { to: '/riwayat-bazar-ecom', label: 'Riwayat Bazar/E-commerce', icon: ShoppingBag, permission: 'consignmentHistory' },
     ],
   },
   {
     label: 'Administrasi', icon: ShieldCheck, items: [
       { to: '/kontrol-integritas', label: 'Kontrol Integritas', icon: Activity, permission: 'masterWrite' },
+      { to: '/import', label: 'Import Master XLSX', icon: FileInput, permission: 'masterWrite' },
       { to: '/pengguna', label: 'Pengguna', icon: Users, permission: 'users' },
       { to: '/pengaturan', label: 'Pengaturan', icon: Settings, permission: 'settings' },
       { to: '/pengaturan/marketplace', label: 'Integrasi Marketplace', icon: Link2, permission: 'settings' },
