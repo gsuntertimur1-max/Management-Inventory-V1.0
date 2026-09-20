@@ -449,7 +449,7 @@ async def integrity_control(user: dict = Depends(require_master_write)):
     ).to_list(30000)
     transactions = await db.transactions.find(
         {"type": "KELUAR"},
-        {"_id": 0, "id": 1, "load_id": 1, "product_id": 1, "stackCode": 1, "change": 1, "bon_no": 1, "antrian": 1},
+        {"_id": 0, "id": 1, "type": 1, "load_id": 1, "product_id": 1, "stackCode": 1, "change": 1, "bon_no": 1, "antrian": 1},
     ).to_list(100000)
     stack_allocations = await db.stack_allocations.find({}, {"_id": 0}).to_list(50000)
     settings = await db.settings.find_one({"_id": "app"}, {"_id": 0}) or {}
