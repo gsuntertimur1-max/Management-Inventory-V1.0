@@ -1,3 +1,4 @@
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -5,6 +6,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.server import app
+
+IS_VERCEL_RUNTIME = bool(os.environ.get("VERCEL") or os.environ.get("VERCEL_ENV"))
 import backend.role_four_config  # noqa: F401 - consolidates legacy roles into warehouse roles
 from backend.inventory_flow import router as inventory_flow_router
 from backend.master_products import router as master_products_router
@@ -141,19 +144,23 @@ _original_lifespan = app.router.lifespan_context
 @asynccontextmanager
 async def hardened_lifespan(application):
     async with _original_lifespan(application):
-        await ensure_performance_indexes()
-        await ensure_operational_guard_indexes()
-        await ensure_stack_lot_indexes()
-        await ensure_consignment_operation_indexes()
-        await ensure_consignment_damaged_indexes()
-        await reconcile_legacy_consignment_damaged()
-        await ensure_bazar_package_indexes()
-        await ensure_bazar_external_nd_indexes()
-        await ensure_marketplace_indexes()
-        await ensure_marketplace_oauth_indexes()
-        await ensure_cost_payment_indexes()
-        await ensure_consignment_document_indexes()
-        await ensure_consignment_location_codes()
+        # Railway keeps the full startup hardening. On Vercel these checks are
+        # intentionally skipped because a new container can be created per cold
+        # start and repeating index/migration work can exceed the startup timeout.
+        if not IS_VERCEL_RUNTIME:
+            await ensure_performance_indexes()
+            await ensure_operational_guard_indexes()
+            await ensure_stack_lot_indexes()
+            await ensure_consignment_operation_indexes()
+            await ensure_consignment_damaged_indexes()
+            await reconcile_legacy_consignment_damaged()
+            await ensure_bazar_package_indexes()
+            await ensure_bazar_external_nd_indexes()
+            await ensure_marketplace_indexes()
+            await ensure_marketplace_oauth_indexes()
+            await ensure_cost_payment_indexes()
+            await ensure_consignment_document_indexes()
+            await ensure_consignment_location_codes()
         yield
 
 
