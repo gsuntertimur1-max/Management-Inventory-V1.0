@@ -51,7 +51,7 @@ const LaporanOperasional = () => {
     <div>
       <div className="label-mono mb-2">Riwayat & Laporan</div>
       <h1 className="font-display text-4xl font-bold">Laporan Operasional</h1>
-      <p className="text-sm text-[#8b93a1] mt-2">Satu workbook XLSX untuk transaksi, pengeluaran, stock opname, dan pergerakan Bazar/E-commerce pada periode yang dipilih.</p>
+      
     </div>
 
     <div className="card-surface p-6 max-w-3xl">

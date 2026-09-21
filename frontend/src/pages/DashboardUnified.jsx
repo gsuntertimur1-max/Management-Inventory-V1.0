@@ -29,12 +29,7 @@ const SummaryCard = ({ icon: Icon, label, value, accent }) => <div className="ca
 const DashboardUnified = () => {
   const { user, products, consignmentStock, monitoringStock, consignmentDashboard, consignmentLastSync, consignmentSyncing, refreshConsignmentFlow } = useData();
   const scopedDestination = roleDestination(user?.role);
-  const syncLabel = consignmentLastSync
-    ? consignmentLastSync.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    : 'belum sinkron';
-
-  const SyncStatus = () => <div className="flex flex-wrap items-center gap-2 text-xs text-[#8b93a1]">
-    <span>Auto-sync 15 detik · terakhir {syncLabel}</span>
+  const SyncStatus = () => <div className="flex flex-wrap items-center gap-2">
     <button
       type="button"
       onClick={() => refreshConsignmentFlow().catch(() => {})}
@@ -111,7 +106,7 @@ const DashboardUnified = () => {
     <section>
       <div className="mb-3">
         <div className="label-mono">Stok Rusak Fisik</div>
-        <p className="text-xs text-[#8b93a1] mt-1">Barang rusak dipisahkan dari stok baik dan tetap tercatat sebagai fisik pada area rusak masing-masing.</p>
+        
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <SummaryCard icon={Warehouse} label="Rusak Gudang Utama" value={formatTotals(totals.mainDamaged)} accent="#ef4444" />
@@ -124,7 +119,7 @@ const DashboardUnified = () => {
     <section>
       <div className="mb-3">
         <div className="label-mono">Posisi Administratif Konsinyasi</div>
-        <p className="text-xs text-[#8b93a1] mt-1">Saldo administratif dipisahkan dari fisik. SO hanya menyelesaikan tanggung jawab konsinyasi dan tidak mengurangi stok fisik Bazar/E-commerce untuk kedua kali.</p>
+        
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <SummaryCard icon={ShoppingBag} label="GST → Bazar Belum SO" value={formatTotals(consignmentPosition.bazarOutstanding)} accent="#f59e0b" />
@@ -138,7 +133,7 @@ const DashboardUnified = () => {
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div>
           <div className="label-mono">Aktivitas Bazar & E-commerce Hari Ini</div>
-          <div className="text-xs text-[#6b7688] mt-1">{consignmentDashboard?.date || ''} · aktivitas fisik dan SO administratif ditampilkan terpisah</div>
+          
         </div>
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">

@@ -222,7 +222,7 @@ const OpnameGudang = () => {
         <button onClick={() => load()} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-[#242f3d] text-sm"><RefreshCcw size={16} /> Muat Ulang</button>
       </div>
 
-      {canEdit && <div className="card-surface p-5 flex flex-wrap items-end gap-3"><div><label className="text-xs text-[#8b93a1] block mb-1">GBB / Warehouse</label><select value={warehouse} onChange={(e) => setWarehouse(e.target.value)} className="bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 min-w-[150px]">{warehouseCodes.map((code) => <option key={code}>{code}</option>)}</select></div><button disabled={saving} onClick={createOpname} className="btn-primary px-4 py-2.5 rounded-lg text-sm font-semibold inline-flex items-center gap-2"><ClipboardCheck size={16} /> Buat Snapshot Opname</button><p className="text-xs text-[#6b7688] flex-1">Satu GBB hanya boleh memiliki satu opname DRAFT/SUBMITTED aktif.</p></div>}
+      {canEdit && <div className="card-surface p-5 flex flex-wrap items-end gap-3"><div><label className="text-xs text-[#8b93a1] block mb-1">GBB / Warehouse</label><select value={warehouse} onChange={(e) => setWarehouse(e.target.value)} className="bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 min-w-[150px]">{warehouseCodes.map((code) => <option key={code}>{code}</option>)}</select></div><button disabled={saving} onClick={createOpname} className="btn-primary px-4 py-2.5 rounded-lg text-sm font-semibold inline-flex items-center gap-2"><ClipboardCheck size={16} /> Buat Snapshot Opname</button></div>}
 
       <div className="grid grid-cols-1 xl:grid-cols-[310px_1fr] gap-5">
         <div className="card-surface p-3 max-h-[720px] overflow-y-auto">

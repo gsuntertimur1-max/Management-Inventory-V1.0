@@ -159,7 +159,7 @@ const PurchaseOrder = () => {
             <div className="flex items-center justify-between mb-5">
               <div>
                 <h2 className="font-display text-xl font-bold">Buat Purchase Order</h2>
-                <p className="text-xs text-[#6b7688] mt-1">Jumlah di PO adalah jumlah yang dipesan dan tidak menambah stok.</p>
+                
               </div>
               <button onClick={() => !saving && setModal(false)} disabled={saving} className="text-[#8b93a1] hover:text-white disabled:opacity-50"><X size={20} /></button>
             </div>
@@ -168,7 +168,7 @@ const PurchaseOrder = () => {
               <div>
                 <label className="text-xs font-medium mb-1 block text-[#8b93a1]">Nomor PO</label>
                 <input value={form.no || ''} onChange={(e) => setForm((prev) => ({ ...prev, no: e.target.value }))} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" placeholder="Tulis nomor PO manual (opsional)" />
-                <p className="mt-1 text-xs text-[#6b7688]">Kosongkan bila ingin nomor dibuat otomatis.</p>
+                
               </div>
               <div>
                 <label className="text-xs font-medium mb-1 block text-[#8b93a1]">Supplier</label>

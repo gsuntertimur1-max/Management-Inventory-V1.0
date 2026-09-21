@@ -108,7 +108,7 @@ const MutasiTumpukan = () => {
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <button disabled={saving || loading} onClick={submit} className="btn-primary inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold disabled:opacity-50"><ArrowRight size={16} />{saving ? 'Memindahkan...' : 'Proses Mutasi'}</button>
-        <div className="text-xs text-[#8b93a1] inline-flex items-center gap-1.5"><ShieldCheck size={14} />Reservasi outbound dilindungi; stok induk tidak bertambah/berkurang.</div>
+        
       </div>
     </div>
 

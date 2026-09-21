@@ -81,7 +81,7 @@ const MonitorSO = () => {
       <div>
         <div className="label-mono mb-2">Operasional · Dokumen Pengeluaran</div>
         <h1 className="font-display text-3xl sm:text-4xl font-bold">Monitoring SO Bertahap</h1>
-        <p className="text-sm text-[#8b93a1] mt-2 max-w-4xl">Satu nomor SO dapat memiliki beberapa pemuatan. Monitoring ini menggabungkan kuantum induk, realisasi selesai, reservasi antrean, sisa yang masih dapat dijadwalkan, serta seluruh Bon Muat dan Surat Jalan.</p>
+        
       </div>
       <button onClick={load} disabled={loading} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-[#243044] text-sm text-[#93c5fd] disabled:opacity-50"><RefreshCcw size={15} className={loading ? 'animate-spin' : ''}/> Periksa Ulang</button>
     </div>

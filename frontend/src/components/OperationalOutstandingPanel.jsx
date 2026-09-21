@@ -56,7 +56,7 @@ const OperationalOutstandingPanel = () => {
 
   return <section className="space-y-3">
     <div className="flex flex-wrap items-center justify-between gap-3">
-      <div><div className="label-mono">Outstanding Operasional</div><div className="text-xs text-[#8b93a1] mt-1">Yang perlu perhatian hari ini, tanpa mencampur stok fisik dengan reservasi.</div></div>
+      <div className="label-mono">Outstanding Operasional</div>
       <button type="button" onClick={load} disabled={loading} className="inline-flex items-center gap-1.5 rounded-lg border border-[#243044] px-3 py-2 text-xs text-[#93c5fd] disabled:opacity-50">
         <RefreshCcw size={13} className={loading ? 'animate-spin' : ''}/> Refresh
       </button>

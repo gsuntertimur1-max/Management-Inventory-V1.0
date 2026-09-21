@@ -265,7 +265,6 @@ const Pengaturan = () => {
                 placeholder="Nama kepala gudang"
                 className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb] disabled:opacity-60"
               />
-              <p className="text-[11px] text-[#6b7688] mt-1">Nama ini digunakan pada tanda tangan kartu tumpukan dan surat jalan.</p>
             </div>
             {isAdmin && (
               <button
@@ -281,7 +280,7 @@ const Pengaturan = () => {
 
         <div className="card-surface p-6 lg:col-span-2">
           <div className="flex flex-wrap items-start justify-between gap-3 mb-5">
-            <div><div className="flex items-center gap-2"><Warehouse size={18} className="text-[#60a5fa]" /><h2 className="font-display text-lg font-bold">Master Gudang & Tumpukan</h2></div><p className="text-xs text-[#6b7688] mt-1">GBB dapat memakai zona A/B/C, sedangkan MP memakai A/B. Tumpukan yang telah dipakai stok tidak dapat dihapus atau dikurangi.</p></div>
+            <div className="flex items-center gap-2"><Warehouse size={18} className="text-[#60a5fa]" /><h2 className="font-display text-lg font-bold">Master Gudang & Tumpukan</h2></div>
             {isAdmin && <div className="flex gap-2"><button onClick={() => addWarehouse('GBB')} className="px-3 py-2 rounded-lg border border-[#2563eb] text-xs text-[#60a5fa]"><Plus size={14} className="inline mr-1" />GBB</button><button onClick={() => addWarehouse('MP')} className="px-3 py-2 rounded-lg border border-[#2563eb] text-xs text-[#60a5fa]"><Plus size={14} className="inline mr-1" />MP</button></div>}
           </div>
           <div className="space-y-3">
@@ -298,7 +297,6 @@ const Pengaturan = () => {
           <div className="flex flex-wrap items-start justify-between gap-3 mb-5">
             <div>
               <div className="flex items-center gap-2"><MapPin size={18} className="text-[#f59e0b]" /><h2 className="font-display text-lg font-bold">Master Lokasi Operasional</h2></div>
-              <p className="text-xs text-[#6b7688] mt-1">Sumber resmi lokasi untuk penerimaan, pengeluaran, Grup Muat, dan Mandor Bongkar. Sistem tidak lagi menebak grup dari tulisan lokasi.</p>
             </div>
             {isAdmin && <button onClick={addLocation} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#2563eb] text-[#60a5fa]"><Plus size={14} /> Tambah Lokasi</button>}
           </div>
@@ -334,7 +332,6 @@ const Pengaturan = () => {
           <div className="flex items-center justify-between gap-3 mb-5">
             <div>
               <h2 className="font-display text-lg font-bold">Master Kategori Komoditas</h2>
-              <p className="text-xs text-[#6b7688] mt-1">Kategori aktif tersedia saat menambah produk. Kategori yang dipakai produk tidak dapat dihapus.</p>
             </div>
             {isAdmin && <button onClick={addCategory} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#2563eb] text-[#60a5fa]"><Plus size={14} /> Tambah</button>}
           </div>
@@ -393,7 +390,6 @@ const Pengaturan = () => {
               </div>
             ))}
           </div>
-          <p className="text-xs text-[#6b7688] mt-4">Preferensi tersimpan otomatis dan tetap berlaku setelah halaman dimuat ulang.</p>
         </div>
 
         <div className="card-surface p-6">
@@ -404,7 +400,6 @@ const Pengaturan = () => {
           <div className="flex items-center justify-between gap-4 p-3 rounded-lg bg-[#0b0f17] border border-[#151d28]">
             <div>
               <div className="text-sm font-medium">Mode terang</div>
-              <div className="text-xs text-[#6b7688]">{theme === 'light' ? 'Tampilan terang sedang digunakan' : 'Gunakan latar terang untuk kenyamanan membaca'}</div>
             </div>
             <Toggle
               on={theme === 'light'}
@@ -415,7 +410,6 @@ const Pengaturan = () => {
               }}
             />
           </div>
-          <p className="text-xs text-[#6b7688] mt-4">Pilihan ini disimpan di browser ini dan tidak mengubah tampilan pengguna lain.</p>
         </div>
 
 
@@ -424,12 +418,6 @@ const Pengaturan = () => {
             <Link2 size={18} className="text-[#60a5fa]" />
             <h2 className="font-display text-lg font-bold">Integrasi Marketplace</h2>
           </div>
-          <p className="text-sm text-[#8b93a1]">
-            Kelola akun Shopee, Tokopedia & Shop, TikTok Shop, mapping SKU, status koneksi, preview stok, serta log webhook dari halaman pengaturan khusus.
-          </p>
-          <p className="text-xs text-[#6b7688] mt-2">
-            App ID, secret, partner key, access token, dan webhook key tetap disimpan aman di Railway Variables dan tidak ditulis ke source code.
-          </p>
           <Link
             to="/pengaturan/marketplace"
             className="btn-primary inline-flex items-center gap-2 text-sm font-semibold px-4 py-2.5 rounded-lg mt-4"

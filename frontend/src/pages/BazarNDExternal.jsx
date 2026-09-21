@@ -215,7 +215,7 @@ const BazarNDExternal = () => {
 
     {action && <div className="fixed inset-0 z-[90] bg-black/75 flex items-center justify-center p-4"><div className="card-surface w-full max-w-3xl p-6 max-h-[90vh] overflow-y-auto">
       <h2 className="font-display text-xl font-bold">{action.type === 'receive' ? 'Penerimaan Fisik' : action.type === 'return' ? 'Retur ke Gudang Asal' : action.type === 'realize' ? 'Rekonsiliasi Realisasi' : 'Pencatatan SO Akhir'} · {action.document.ndNo}</h2>
-      <p className="text-xs text-[#8b93a1] mt-1 mb-2">Asal {action.document.originWarehouse}. {action.type === 'so' ? 'SO hanya menyelesaikan saldo administrasi; stok tidak dikurangi lagi.' : ''}</p>
+      <div className="text-xs text-[#8b93a1] mt-1 mb-2">Asal {action.document.originWarehouse}</div>
       {['return', 'realize'].includes(action.type) && <div className="mb-4 rounded-lg border border-[#2563eb]/30 bg-[#0d1726] px-3 py-2 text-xs text-[#bfdbfe]">Trace sumber dialokasikan otomatis FIFO dari lot penerimaan ND ini. Sistem tidak dapat mengambil saldo dari ND lain.</div>}
       {action.type === 'so' && <div className="mb-4 rounded-lg border border-[#22c55e]/30 bg-[#052e16]/20 px-3 py-2 text-xs text-[#bbf7d0]">SO akan ditautkan ke realisasi Bazar/Paket yang belum terselesaikan, termasuk lot sumber asalnya.</div>}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">

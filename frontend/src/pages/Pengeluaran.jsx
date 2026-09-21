@@ -379,7 +379,7 @@ const Pengeluaran = () => {
       </div>
 
       {consignmentSummary.length > 0 && <div className="card-surface p-5 border border-[#1f3657]">
-        <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3"><div><div className="label-mono text-[10px] text-[#93c5fd]">Persediaan di luar stok gudang utama</div><h2 className="font-display text-lg font-bold mt-1">Stok Konsinyasi Unit 18</h2></div><p className="text-xs text-[#6b7688]">Berasal dari Memo/ND dan berubah saat SO atau Retur ditautkan.</p></div>
+        <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3"><div><div className="label-mono text-[10px] text-[#93c5fd]">Persediaan di luar stok gudang utama</div><h2 className="font-display text-lg font-bold mt-1">Stok Konsinyasi Unit 18</h2></div></div>
         <div className="overflow-x-auto"><table className="w-full text-xs tbl"><thead><tr className="text-left border-b border-[#1a222e]"><th className="py-2 pr-4">Tujuan</th><th className="py-2 pr-4">Zona</th><th className="py-2 pr-4">Komoditas</th><th className="py-2 text-right">Sisa Konsinyasi</th></tr></thead><tbody>{consignmentSummary.map((item) => <tr key={`${item.destination}-${item.zone}-${item.name}`} className="border-b border-[#131a24]"><td className="py-2.5 pr-4">{item.destination}</td><td className="py-2.5 pr-4 font-mono text-[#93c5fd]">{item.zone}</td><td className="py-2.5 pr-4">{item.name}</td><td className="py-2.5 text-right font-mono font-semibold">{formatNum(item.qty)} {item.unit}</td></tr>)}</tbody></table></div>
       </div>}
 
@@ -387,7 +387,7 @@ const Pengeluaran = () => {
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <div className="relative min-w-[280px] flex-1"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6b7688]" /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cari SO / CT / TM / Memo / produk..." className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg pl-9 pr-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" /></div>
           <select value={filter} onChange={(e) => setFilter(e.target.value)} className="bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none"><option>Semua Status</option><option>Menunggu</option><option>Sedang Dimuat</option><option>Selesai</option></select>
-          <div className="text-xs text-[#6b7688]">Nomor antrean mengikuti unit pemuatan, misalnya 17-001, dan reset setiap hari.</div>
+          
         </div>
 
         <div className="overflow-x-auto">

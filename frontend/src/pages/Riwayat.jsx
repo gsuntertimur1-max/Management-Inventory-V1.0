@@ -341,7 +341,7 @@ const Riwayat = () => {
           <button onClick={() => { setType('KELUAR'); setLoadingOpen(true); }} className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-[#2563eb] text-[#93c5fd] hover:bg-[#2563eb]/10"><DollarSign size={15} /> Rekap Biaya Muat</button>
           <button onClick={exportCurrentMonth} disabled={exporting} className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-[#242f3d] hover:bg-[#141a24] disabled:opacity-60 disabled:cursor-wait"><Download size={15} /> {exporting ? 'Menyiapkan…' : 'Unduh Excel Bulan Ini'}</button>
         </div>
-        <p className="text-xs text-[#6b7688] mb-4">Transaksi yang dibatalkan tetap tampil sebagai audit trail dan tidak dihitung pada Masuk Aktif. Koreksi tidak pernah menghapus riwayat transaksi asli.</p>
+        
 
         <div className="overflow-x-auto">
           <table className="w-full text-sm tbl">

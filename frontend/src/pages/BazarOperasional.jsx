@@ -79,7 +79,7 @@ const ConsignmentTransferCard = ({ destination, layouts = [], onChanged }) => {
   return <div className="card-surface p-5">
     <div className="mb-4">
       <div className="font-semibold">Mutasi Tumpukan Bazar</div>
-      <div className="text-xs text-[#8b93a1] mt-1">Pindahkan stok antar 18/A01–18/A04 BAZAR. Total stok komoditi tidak berubah.</div>
+      
     </div>
     {products.length === 0 ? <div className="text-sm text-[#8b93a1]">Belum ada stok Bazar yang dapat dimutasi.</div> : <>
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2">

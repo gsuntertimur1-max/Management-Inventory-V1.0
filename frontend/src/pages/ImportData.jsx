@@ -50,7 +50,6 @@ const ImportData = () => {
         <Info size={18} className="shrink-0 mt-0.5" />
         <div>
           <div className="font-semibold">Stok tidak diisi melalui import master.</div>
-          <div className="text-xs text-[#7892b5] mt-1">SKU baru selalu mulai dari stok 0. Jumlah stok dan tanggal kedaluwarsa dicatat saat penerimaan di menu Catat Stok.</div>
         </div>
       </div>
 
