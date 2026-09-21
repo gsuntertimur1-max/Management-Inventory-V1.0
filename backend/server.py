@@ -28,6 +28,8 @@ from typing import List, Literal, Optional
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment
 
+IS_VERCEL_RUNTIME = bool(os.environ.get("VERCEL") or os.environ.get("VERCEL_ENV"))
+
 REQUIRED_ENV = ("MONGO_URL", "DB_NAME", "JWT_SECRET")
 missing_env = [name for name in REQUIRED_ENV if not os.environ.get(name)]
 if missing_env:
@@ -44,7 +46,11 @@ GOOGLE_SESSION_URL = os.environ.get("GOOGLE_SESSION_URL", "").strip()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await initialize_app()
+    # Vercel containers have a short startup window. All collections/indexes are
+    # already provisioned in the production database, so avoid repeating schema
+    # maintenance and seeding on every cold start.
+    if not IS_VERCEL_RUNTIME:
+        await initialize_app()
     yield
     client.close()
 
