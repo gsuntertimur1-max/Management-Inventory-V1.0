@@ -53,6 +53,7 @@ from backend.damaged_outbound import router as damaged_outbound_router
 from backend.cost_payments import router as cost_payments_router, ensure_cost_payment_indexes
 from backend.cost_payment_hardening import router as cost_payment_hardening_router
 from backend.consignment_documents import router as consignment_documents_router, ensure_consignment_document_indexes
+from backend.monitoring_pdf import router as monitoring_pdf_router
 import backend.opname_lot_atomic  # noqa: F401 - installs compensated lot reducer for opname engines
 
 # QC state is authoritative for explicit QC-linked receipts. PENDING/REJECTED must
@@ -109,6 +110,7 @@ app.include_router(bazar_external_nd_router)
 app.include_router(marketplace_integration_router)
 app.include_router(marketplace_oauth_router)
 app.include_router(consignment_router)
+app.include_router(monitoring_pdf_router)
 app.include_router(stack_allocations_router)
 # Dedicated internal mutation changes only physical location/subledger. It never changes product.stock.
 app.include_router(stock_transfer_router)
