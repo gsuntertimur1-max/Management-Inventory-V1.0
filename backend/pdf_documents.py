@@ -1,6 +1,7 @@
 import io
 from datetime import datetime
 from pathlib import Path
+from xml.sax.saxutils import escape
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -356,15 +357,17 @@ async def export_stack_card_pdf(stackCode: str, user: dict = Depends(get_current
     table.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), SOFT_HEADER), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("GRID", (0, 0), (-1, -1), .35, colors.HexColor("#777777")), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5)]))
     story += [table, Spacer(1, 10 * mm), Table([["", Paragraph(f"Jakarta, {_date(operational_now().isoformat())}<br/><br/>Kepala Gudang Sunter Timur I &amp; II<br/><br/><br/><b>{warehouse_head}</b>", ParagraphStyle("sign", parent=small, alignment=TA_CENTER, fontSize=8, leading=14))]], colWidths=[190 * mm, 65 * mm])]
     story += [PageBreak(), Paragraph("RIWAYAT PERUBAHAN SUSUNAN", title)]
-    hdata = [["WAKTU", "AKSI", "PRODUK", "PERHITUNGAN", "JUMLAH PRIMER", "PETUGAS"]]
+    hdata = [[Paragraph(escape(x), center) for x in ["WAKTU", "AKSI", "PRODUK", "PERHITUNGAN", "JUMLAH PRIMER", "PETUGAS"]]]
     for entry in history:
         snap = entry.get("allocation", {})
-        hdata.append([_date(entry.get("time"), True), entry.get("action", ""), snap.get("productName", ""), _arrangement(snap), _num(snap.get("primaryQty", 0)), entry.get("operator", "")])
+        values = [_date(entry.get("time"), True), entry.get("action", ""), snap.get("productName", ""), _arrangement(snap), _num(snap.get("primaryQty", 0)), entry.get("operator", "")]
+        hdata.append([Paragraph(escape(str(value or "")), small) for value in values])
     story.append(LongTable(hdata, colWidths=[32 * mm, 34 * mm, 70 * mm, 73 * mm, 30 * mm, 35 * mm], repeatRows=1, style=[("BACKGROUND", (0, 0), (-1, 0), SOFT_HEADER), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 7), ("GRID", (0, 0), (-1, -1), .35, colors.grey), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
     story += [Spacer(1, 7 * mm), Paragraph("RIWAYAT SPRAYING DAN FUMIGASI", title)]
-    tdata = [["JENIS", "LOKASI", "MULAI", "SELESAI / BUKA SUNGKUP", "KOMODITAS BERAS", "CATATAN", "PETUGAS"]]
+    tdata = [[Paragraph(escape(x), center) for x in ["JENIS", "LOKASI", "MULAI", "SELESAI / BUKA SUNGKUP", "KOMODITAS BERAS", "CATATAN", "PETUGAS"]]]
     for entry in treatments:
-        tdata.append([entry.get("type", ""), entry.get("stackCode") or f"{entry.get('warehouse')} - Semua Tumpukan", _date(entry.get("startDate")), _date(entry.get("endDate")), ", ".join(x.get("name", "") for x in entry.get("products", [])), entry.get("note", ""), entry.get("operator", "")])
+        values = [entry.get("type", ""), entry.get("stackCode") or f"{entry.get('warehouse')} - Semua Tumpukan", _date(entry.get("startDate")), _date(entry.get("endDate")), ", ".join(x.get("name", "") for x in entry.get("products", [])), entry.get("note", ""), entry.get("operator", "")]
+        tdata.append([Paragraph(escape(str(value or "")), small) for value in values])
     story.append(LongTable(tdata, colWidths=[30 * mm, 38 * mm, 26 * mm, 40 * mm, 57 * mm, 50 * mm, 33 * mm], repeatRows=1, style=[("BACKGROUND", (0, 0), (-1, 0), SOFT_HEADER), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 7), ("GRID", (0, 0), (-1, -1), .35, colors.grey), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
     doc.build(story, onFirstPage=_stack_page, onLaterPages=_stack_page)
     return _pdf_response(buffer, f"kartu_tumpukan_{code.replace('/', '-')}.pdf")

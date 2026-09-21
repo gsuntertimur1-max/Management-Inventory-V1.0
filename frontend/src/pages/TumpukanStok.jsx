@@ -61,7 +61,7 @@ const TumpukanStok = () => {
   const openTreatment = (type) => {
     const startDate = new Date().toISOString().slice(0, 10);
     const end = new Date(`${startDate}T00:00:00`); end.setDate(end.getDate() + (type === 'FUMIGASI_SULFUR' ? 3 : type === 'FUMIGASI' ? 10 : 0));
-    setTreatmentModal({ type, warehouse, stackCode: selected, startDate, endDate: type === 'SPRAYING' ? '' : end.toISOString().slice(0, 10), note: '' });
+    setTreatmentModal({ type, warehouse, stackCode: type === 'SPRAYING' ? '' : selected, startDate, endDate: type === 'SPRAYING' ? '' : end.toISOString().slice(0, 10), note: '' });
   };
   const saveTreatment = async () => { setBusy(true); try { await addStackTreatment(treatmentModal); toast.success('Catatan pengendalian hama disimpan'); setTreatmentModal(null); } catch (e) { toast.error(apiError(e)); } finally { setBusy(false); } };
   const openConsignmentLayout = (item) => {
@@ -111,7 +111,7 @@ const TumpukanStok = () => {
         <div className="mt-5 border-t border-[#202a38] pt-5">
           <div className="flex items-center gap-2 font-semibold"><ShieldCheck size={17} className="text-[#60a5fa]" />Pengendalian Hama</div>
           <div className="mt-3 grid grid-cols-2 gap-2 text-xs"><div className="rounded-lg bg-[#0b0f17] p-3"><div className="text-[#6b7688]">Spraying terakhir · {warehouse === 'MP1' ? 'MP1' : `GBB ${warehouse}`}</div><div className="mt-1 font-mono">{lastSpraying?.startDate || 'Belum tercatat'}</div></div><div className="rounded-lg bg-[#0b0f17] p-3"><div className="text-[#6b7688]">Fumigasi terakhir · {selected}</div><div className="mt-1 font-mono">{lastFumigation?.startDate || 'Belum tercatat'}</div></div></div>
-          <p className="mt-2 text-[11px] text-[#6b7688]">Spraying rutin 1 bulan. Fumigasi beras rutin 3 bulan (10 hari); sulfur 3 hari. Jadwal dapat dipercepat.</p>
+          <p className="mt-2 text-[11px] text-[#6b7688]">Spraying rutin 1 bulan untuk seluruh GBB/MP1. Fumigasi beras dicatat per tumpukan; rutin 3 bulan (10 hari), sulfur 3 hari.</p>
           {canWrite && <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => openTreatment('SPRAYING')} className="px-3 py-2 rounded-lg border border-[#294263] text-xs">Catat spraying</button><button type="button" onClick={() => openTreatment('FUMIGASI')} className="px-3 py-2 rounded-lg border border-[#294263] text-xs">Fumigasi beras</button><button type="button" onClick={() => openTreatment('FUMIGASI_SULFUR')} className="px-3 py-2 rounded-lg border border-[#59431f] text-xs text-[#fbbf24]">Fumigasi sulfur</button></div>}
         </div>
       </aside>
