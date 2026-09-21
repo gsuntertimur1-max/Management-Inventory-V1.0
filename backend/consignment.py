@@ -6,7 +6,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from pymongo import ReturnDocument
 
-from backend.server import build_xlsx, db, get_current_user, new_id, next_sequence, now_iso, operational_now, normalize_channel
+from backend.server import build_xlsx, client, db, get_current_user, new_id, next_sequence, now_iso, operational_now, normalize_channel
 from backend.role_four_config import has_role_permission, role_destination, require_operational_approval
 from backend.operational_guards import idempotent_operation, lock_keys
 
@@ -313,6 +313,15 @@ class ConsignmentLayoutInput(BaseModel):
     arrangements: List[Arrangement] = Field(default_factory=list, max_length=10)
     extraSecondary: int = Field(default=0, ge=0, le=1000000)
     extraPrimary: int = Field(default=0, ge=0, le=1000000)
+    note: str = ""
+
+
+class ConsignmentTransferInput(BaseModel):
+    destination: Literal["Gudang Bazar", "Gudang E-commerce"]
+    productId: str
+    sourceStackCode: str
+    destinationStackCode: str
+    qty: float = Field(gt=0)
     note: str = ""
 
 
@@ -980,6 +989,208 @@ async def reject_consignment_opname(
         user,
         f"consignment-opname-reject:{opname_id}",
         [f"consignment-opname:{opname_id}"],
+        action,
+    )
+
+
+@router.post("/consignment-transfers")
+async def transfer_consignment_stack(
+    body: ConsignmentTransferInput,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    destination = _ensure_destination_access(user, body.destination, write=True)
+    product_id = str(body.productId or "").strip()
+    if not product_id:
+        raise HTTPException(status_code=400, detail="Produk wajib dipilih")
+
+    source = normalize_consignment_stack_code(destination, body.sourceStackCode)
+    target = normalize_consignment_stack_code(destination, body.destinationStackCode)
+    if source == target:
+        raise HTTPException(status_code=400, detail="Tumpukan asal dan tujuan harus berbeda")
+
+    qty = float(body.qty)
+    operator = user.get("name") or user.get("username") or "Operator"
+
+    async def action():
+        mutation_id = new_id()
+        now = now_iso()
+        reference_no = f"MUT-{mutation_id[:8].upper()}"
+
+        async with await client.start_session() as session:
+            async with session.start_transaction():
+                source_layout = await db.consignment_layouts.find_one(
+                    {"destination": destination, "productId": product_id, "stackCode": source},
+                    {"_id": 0},
+                    session=session,
+                )
+                if not source_layout:
+                    raise HTTPException(status_code=404, detail=f"Stok tidak ditemukan pada {source}")
+
+                source_qty = _layout_primary_qty(source_layout)
+                if qty > source_qty + 1e-9:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Saldo {source} hanya {source_qty:g} {source_layout.get('unit', '')}",
+                    )
+
+                target_layout = await db.consignment_layouts.find_one(
+                    {"destination": destination, "productId": product_id, "stackCode": target},
+                    {"_id": 0},
+                    session=session,
+                )
+
+                source_after_qty = max(source_qty - qty, 0.0)
+                source_after = {
+                    **source_layout,
+                    "primaryQty": source_after_qty,
+                    "arrangementAdjusted": True,
+                    "updatedAt": now,
+                    "updatedBy": operator,
+                }
+                if source_after_qty <= 1e-9:
+                    await db.consignment_layouts.delete_one({"id": source_layout["id"]}, session=session)
+                else:
+                    await db.consignment_layouts.update_one(
+                        {"id": source_layout["id"]},
+                        {"$set": {
+                            "primaryQty": source_after_qty,
+                            "arrangementAdjusted": True,
+                            "updatedAt": now,
+                            "updatedBy": operator,
+                        }},
+                        session=session,
+                    )
+
+                if target_layout:
+                    target_before = dict(target_layout)
+                    target_qty = _layout_primary_qty(target_layout) + qty
+                    target_after = {
+                        **target_layout,
+                        "primaryQty": target_qty,
+                        "arrangementAdjusted": True,
+                        "updatedAt": now,
+                        "updatedBy": operator,
+                    }
+                    await db.consignment_layouts.update_one(
+                        {"id": target_layout["id"]},
+                        {"$set": {
+                            "primaryQty": target_qty,
+                            "arrangementAdjusted": True,
+                            "updatedAt": now,
+                            "updatedBy": operator,
+                        }},
+                        session=session,
+                    )
+                else:
+                    target_before = {}
+                    target_after = {
+                        **{
+                            k: v for k, v in source_layout.items()
+                            if k not in {
+                                "_id", "id", "stackCode", "arrangements", "extraSecondary",
+                                "extraPrimary", "secondaryCount", "primaryQty", "note",
+                                "createdAt", "updatedAt", "updatedBy", "appliedOperations",
+                            }
+                        },
+                        "id": new_id(),
+                        "destination": destination,
+                        "productId": product_id,
+                        "stackCode": target,
+                        "arrangements": [],
+                        "extraSecondary": 0,
+                        "extraPrimary": qty,
+                        "secondaryCount": 0,
+                        "primaryQty": qty,
+                        "arrangementAdjusted": True,
+                        "note": f"Mutasi dari {source}",
+                        "createdAt": now,
+                        "updatedAt": now,
+                        "updatedBy": operator,
+                        "appliedOperations": [],
+                    }
+                    await db.consignment_layouts.insert_one(dict(target_after), session=session)
+
+                await db.consignment_layout_history.insert_many([
+                    {
+                        "id": new_id(),
+                        "time": now,
+                        "destination": destination,
+                        "productId": product_id,
+                        "stackCode": source,
+                        "action": "MUTASI_KELUAR",
+                        "before": source_layout,
+                        "after": source_after,
+                        "operator": operator,
+                        "operationKey": mutation_id,
+                        "note": body.note.strip() or f"Mutasi {source} ke {target}",
+                    },
+                    {
+                        "id": new_id(),
+                        "time": now,
+                        "destination": destination,
+                        "productId": product_id,
+                        "stackCode": target,
+                        "action": "MUTASI_MASUK",
+                        "before": target_before,
+                        "after": target_after,
+                        "operator": operator,
+                        "operationKey": mutation_id,
+                        "note": body.note.strip() or f"Mutasi {source} ke {target}",
+                    },
+                ], session=session)
+
+                prefix = "BAZAR" if destination == "Gudang Bazar" else "ECOM"
+                item = {
+                    "productId": product_id,
+                    "sku": source_layout.get("sku", ""),
+                    "name": source_layout.get("productName", ""),
+                    "unit": source_layout.get("unit", ""),
+                    "qty": qty,
+                    "sourceStackCode": source,
+                    "destinationStackCode": target,
+                }
+                await db.consignment_operation_history.insert_one({
+                    "id": new_id(),
+                    "operationId": mutation_id,
+                    "time": now,
+                    "destination": destination,
+                    "eventType": f"{prefix}_MUTASI_TUMPUKAN",
+                    "referenceId": mutation_id,
+                    "referenceNo": reference_no,
+                    "operator": operator,
+                    "items": [item],
+                    "note": body.note.strip(),
+                }, session=session)
+
+        return {
+            "id": mutation_id,
+            "referenceNo": reference_no,
+            "time": now,
+            "destination": destination,
+            "productId": product_id,
+            "sku": source_layout.get("sku", ""),
+            "product": source_layout.get("productName", ""),
+            "unit": source_layout.get("unit", ""),
+            "qty": qty,
+            "sourceStackCode": source,
+            "destinationStackCode": target,
+            "sourceRemainingQty": source_after_qty,
+            "destinationQty": _layout_primary_qty(target_after),
+            "operator": operator,
+            "message": "Mutasi tumpukan berhasil. Total stok Bazar/E-commerce tidak berubah.",
+        }
+
+    keys = lock_keys([
+        f"consignment:{destination}:{product_id}",
+        f"consignment-stack:{destination}:{product_id}:{source}",
+        f"consignment-stack:{destination}:{product_id}:{target}",
+    ])
+    return await idempotent_operation(
+        request,
+        user,
+        f"consignment-transfer:{destination}:{product_id}",
+        keys,
         action,
     )
 
