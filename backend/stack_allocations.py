@@ -1,3 +1,4 @@
+import io
 import re
 from datetime import datetime
 from typing import List, Literal, Optional
@@ -5,6 +6,8 @@ from typing import List, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from openpyxl import load_workbook
+from openpyxl.styles import Alignment
 
 from backend.server import build_xlsx, db, get_current_user, new_id, now_iso, require_write
 
@@ -355,7 +358,19 @@ async def create_stack_treatment(body: StackTreatmentBody, user: dict = Depends(
     if await db.stack_treatments.find_one({"type": body.type, "warehouse": warehouse, "stackCode": stack_code, "startDate": normalized_start}, {"_id": 1}):
         raise HTTPException(status_code=409, detail="Catatan pengendalian hama pada tanggal dan lokasi tersebut sudah ada")
     doc = body.model_dump()
-    doc.update({"id": new_id(), "warehouse": warehouse, "stackCode": stack_code, "startDate": normalized_start, "endDate": normalized_end, "durationDays": (end - start).days if end else 0, "standardDurationDays": standard_days, "products": products, "createdAt": now_iso(), "operator": user.get("name", "")})
+    doc.update({
+        "id": new_id(),
+        "warehouse": warehouse,
+        "stackCode": stack_code,
+        "scope": "WAREHOUSE" if body.type == "SPRAYING" else "STACK",
+        "startDate": normalized_start,
+        "endDate": normalized_end,
+        "durationDays": (end - start).days if end else 0,
+        "standardDurationDays": standard_days,
+        "products": products,
+        "createdAt": now_iso(),
+        "operator": user.get("name", ""),
+    })
     await db.stack_treatments.insert_one(dict(doc))
     return doc
 
@@ -395,5 +410,28 @@ async def export_stack_card(stackCode: str, user: dict = Depends(get_current_use
     for entry in treatments:
         rows.append([entry.get("type", ""), entry.get("warehouse", ""), entry.get("stackCode", "") or "Semua", entry.get("startDate", ""), entry.get("endDate", ""), ", ".join(x.get("name", "") for x in entry.get("products", [])), entry.get("note", ""), entry.get("operator", "")])
     output = build_xlsx(headers, rows, "Kartu Tumpukan")
+    output.seek(0)
+    workbook = load_workbook(output)
+    sheet = workbook["Kartu Tumpukan"]
+    for column in ("C", "D", "F", "G"):
+        for cell in sheet[column]:
+            cell.alignment = Alignment(
+                horizontal=cell.alignment.horizontal,
+                vertical="top",
+                wrap_text=True,
+            )
+    sheet.column_dimensions["C"].width = 48
+    sheet.column_dimensions["D"].width = 34
+    sheet.column_dimensions["F"].width = 42
+    sheet.column_dimensions["G"].width = 42
+    for row_index in range(1, sheet.max_row + 1):
+        product_text = str(sheet.cell(row=row_index, column=3).value or "")
+        if len(product_text) > 45:
+            lines = max(2, (len(product_text) + 44) // 45)
+            sheet.row_dimensions[row_index].height = min(90, 15 * lines)
+    wrapped_output = io.BytesIO()
+    workbook.save(wrapped_output)
+    wrapped_output.seek(0)
+    output = wrapped_output
     return StreamingResponse(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                              headers={"Content-Disposition": f'attachment; filename="kartu_tumpukan_{code.replace("/", "-")}.xlsx"'})
