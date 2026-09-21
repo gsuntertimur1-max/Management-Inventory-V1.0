@@ -1,11 +1,14 @@
+import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.server import app
+from backend.server import app, db, initialize_app
 
 IS_VERCEL_RUNTIME = bool(os.environ.get("VERCEL") or os.environ.get("VERCEL_ENV"))
 import backend.role_four_config  # noqa: F401 - consolidates legacy roles into warehouse roles
@@ -139,6 +142,41 @@ app.include_router(fefo_selection_router)
 app.include_router(damaged_stock_area_router)
 
 _original_lifespan = app.router.lifespan_context
+_logger = logging.getLogger("pepeg.vercel.bootstrap")
+_background_tasks = set()
+
+
+async def _bootstrap_vercel_production_once():
+    marker = await db.settings.find_one({"_id": "app"}, {"productionSchemaReady": 1})
+    if marker and marker.get("productionSchemaReady"):
+        return
+    try:
+        await initialize_app()
+        await ensure_performance_indexes()
+        await ensure_operational_guard_indexes()
+        await ensure_stack_lot_indexes()
+        await ensure_consignment_operation_indexes()
+        await ensure_consignment_damaged_indexes()
+        await reconcile_legacy_consignment_damaged()
+        await ensure_bazar_package_indexes()
+        await ensure_bazar_external_nd_indexes()
+        await ensure_marketplace_indexes()
+        await ensure_marketplace_oauth_indexes()
+        await ensure_cost_payment_indexes()
+        await ensure_consignment_document_indexes()
+        await ensure_consignment_location_codes()
+        await db.settings.update_one(
+            {"_id": "app"},
+            {"$set": {
+                "productionSchemaReady": True,
+                "productionSchemaReadyAt": datetime.now(timezone.utc).isoformat(),
+                "maintenanceMode": False,
+                "maintenanceNote": "",
+            }},
+        )
+        _logger.info("Production database bootstrap completed")
+    except Exception:
+        _logger.exception("Production database bootstrap failed")
 
 
 @asynccontextmanager
@@ -161,6 +199,10 @@ async def hardened_lifespan(application):
             await ensure_cost_payment_indexes()
             await ensure_consignment_document_indexes()
             await ensure_consignment_location_codes()
+        elif os.environ.get("VERCEL_ENV") == "production":
+            task = asyncio.create_task(_bootstrap_vercel_production_once())
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
         yield
 
 
