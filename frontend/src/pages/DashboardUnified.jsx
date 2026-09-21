@@ -29,12 +29,7 @@ const SummaryCard = ({ icon: Icon, label, value, accent }) => <div className="ca
 const DashboardUnified = () => {
   const { user, products, consignmentStock, monitoringStock, consignmentDashboard, consignmentLastSync, consignmentSyncing, refreshConsignmentFlow } = useData();
   const scopedDestination = roleDestination(user?.role);
-  const syncLabel = consignmentLastSync
-    ? consignmentLastSync.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    : 'belum sinkron';
-
-  const SyncStatus = () => <div className="flex flex-wrap items-center gap-2 text-xs text-[#8b93a1]">
-    <span>Auto-sync 15 detik · terakhir {syncLabel}</span>
+  const SyncStatus = () => <div className="flex flex-wrap items-center gap-2">
     <button
       type="button"
       onClick={() => refreshConsignmentFlow().catch(() => {})}
