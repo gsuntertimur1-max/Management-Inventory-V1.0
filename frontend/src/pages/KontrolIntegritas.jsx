@@ -180,7 +180,7 @@ const KontrolIntegritas = () => {
 
       <div className="card-surface p-5">
         <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
-          <div><div className="label-mono text-[10px] text-[#93c5fd]">Bazar & E-commerce</div><h2 className="font-display text-xl font-bold mt-1">Ledger Konsinyasi | Lokasi Fisik</h2><p className="text-xs text-[#8b93a1] mt-1">Saldo ledger dan total lokasi Unit 18 harus sama. Pemeriksaan ini tidak melakukan adjustment otomatis.</p></div>
+          <div><div className="label-mono text-[10px] text-[#93c5fd]">Bazar & E-commerce</div><h2 className="font-display text-xl font-bold mt-1">Ledger Konsinyasi | Lokasi Fisik</h2></div>
           <div className={`border rounded-lg px-3 py-2 text-xs font-mono ${Number(summary.consignmentLayoutMismatches || 0) > 0 ? badgeClass('ERROR') : badgeClass('OK')}`}>{Number(summary.consignmentLayoutMismatches || 0) > 0 ? `${summary.consignmentLayoutMismatches} MISMATCH` : 'LOKASI SINKRON'}</div>
         </div>
         <div className="overflow-x-auto">
@@ -203,16 +203,16 @@ const KontrolIntegritas = () => {
         </div>
       </div>
 
-      <IssuePanel title="Reservasi Konsinyasi Berlebih" subtitle="Perjalanan Bazar, Paket Jadi, atau order E-commerce tidak boleh mengikat stok melebihi saldo fisik." rows={data?.consignmentReservationIssues || []} />
-      <IssuePanel title="Integritas Paket Bazar" subtitle="Memeriksa batch Paket Jadi dan reservasi pemuatan Paket." rows={data?.packageIntegrityIssues || []} />
-      <IssuePanel title="Integritas Order E-commerce" subtitle="Status RESERVED/PACKING/SHIPPED/CANCELLED dicocokkan dengan movement pengiriman." rows={data?.ecomOrderIntegrityIssues || []} />
-      <IssuePanel title="Area Barang Rusak Bazar/Ecom" subtitle="Saldo barang rusak harus sama dengan total movement barang rusak." rows={data?.consignmentDamagedIntegrityIssues || []} />
-      <IssuePanel title="Stock Opname Konsinyasi Aktif" subtitle="Draft atau opname menunggu persetujuan ditampilkan agar snapshot tidak tertinggal terlalu lama." rows={data?.consignmentOpnamePending || []} />
-      <IssuePanel title="Integritas ND Gudang Lain" subtitle="Memeriksa ordered, received, retur, realisasi, SO, dan kapasitas kegiatan Bazar/Paket." rows={data?.externalNDIntegrityIssues || []} />
+      <IssuePanel title="Reservasi Konsinyasi Berlebih" rows={data?.consignmentReservationIssues || []} />
+      <IssuePanel title="Integritas Paket Bazar" rows={data?.packageIntegrityIssues || []} />
+      <IssuePanel title="Integritas Order E-commerce" rows={data?.ecomOrderIntegrityIssues || []} />
+      <IssuePanel title="Area Barang Rusak Bazar/Ecom" rows={data?.consignmentDamagedIntegrityIssues || []} />
+      <IssuePanel title="Stock Opname Konsinyasi Aktif" rows={data?.consignmentOpnamePending || []} />
+      <IssuePanel title="Integritas ND Gudang Lain" rows={data?.externalNDIntegrityIssues || []} />
 
       <div className="card-surface p-5">
         <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
-          <div><div className="label-mono text-[10px] text-[#93c5fd]">Reservasi Stok Baik</div><h2 className="font-display text-xl font-bold mt-1">Fisik | Reservasi | Tersedia per Tumpukan</h2><p className="text-xs text-[#8b93a1] mt-1">Menghitung antrean Menunggu dan Sedang Dimuat. Tersedia negatif menandakan over-reserved.</p></div>
+          <div><div className="label-mono text-[10px] text-[#93c5fd]">Reservasi Stok Baik</div><h2 className="font-display text-xl font-bold mt-1">Fisik | Reservasi | Tersedia per Tumpukan</h2></div>
           <div className={`border rounded-lg px-3 py-2 text-xs font-mono ${Number(summary.overReservedStacks || 0) > 0 ? badgeClass('ERROR') : badgeClass('OK')}`}>{Number(summary.overReservedStacks || 0) > 0 ? `${summary.overReservedStacks} OVER-RESERVED` : 'RESERVASI AMAN'}</div>
         </div>
         <div className="overflow-x-auto">
