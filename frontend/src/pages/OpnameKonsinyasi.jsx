@@ -216,7 +216,7 @@ const OpnameKonsinyasi = () => {
     <div>
       <div className="label-mono mb-2">Kontrol Konsinyasi Unit 18</div>
       <h1 className="font-display text-4xl font-bold">Stock Opname Bazar / E-commerce</h1>
-      <p className="text-sm text-[#8b93a1] mt-2">Stok Baik dan Area Barang Rusak memiliki opname terpisah. Selisih hanya mengubah saldo setelah disetujui Superadmin/Kepala Gudang.</p>
+      
     </div>
 
     <div className="card-surface p-5">
