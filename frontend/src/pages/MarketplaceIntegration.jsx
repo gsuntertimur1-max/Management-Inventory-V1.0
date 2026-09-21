@@ -321,10 +321,6 @@ const MarketplaceIntegration = () => {
       </section>
     </div>}
 
-    <section className="card-surface p-5 text-xs text-[#94a3b8]">
-      <div className="font-semibold text-[#e2e8f0] mb-2">Status integrasi</div>
-      Setelah App ID/Secret dan Authorization Link resmi tersedia di Railway, tombol Hubungkan menjalankan OAuth/callback otomatis. Access/refresh token disimpan terenkripsi, dan untuk TikTok Shop/Tokopedia & Shop sistem mencoba mendaftarkan webhook order otomatis. Nilai secret/token tidak pernah ditampilkan ke browser.
-    </section>
   </div>;
 };
 
