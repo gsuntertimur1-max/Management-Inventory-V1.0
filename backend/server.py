@@ -37,7 +37,13 @@ if missing_env:
 
 mongo_url = os.environ["MONGO_URL"]
 client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ["DB_NAME"]]
+
+# Railway/dev and Vercel Preview continue using DB_NAME. Production Vercel
+# is isolated in its own database so testing cannot mutate live inventory.
+database_name = os.environ["DB_NAME"]
+if os.environ.get("VERCEL_ENV") == "production":
+    database_name = os.environ.get("PROD_DB_NAME", "management_inventory_prod")
+db = client[database_name]
 
 JWT_ALG = "HS256"
 JWT_SECRET = os.environ["JWT_SECRET"]
