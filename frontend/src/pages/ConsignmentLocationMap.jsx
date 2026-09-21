@@ -202,7 +202,7 @@ const ConsignmentLocationMap = ({ destination }) => {
         <div>
           <label className="text-xs text-[#8b93a1] block mb-1">Kode Tumpukan Fisik</label>
           <select disabled={Boolean(form.editingId)} className={inputCls + ' font-mono disabled:opacity-60'} value={form.stackCode} onChange={(e) => setForm({ ...form, stackCode: e.target.value })}>{stackCodeOptions.map((code) => <option key={code} value={code}>{code}</option>)}</select>
-          {form.editingId && <div className="text-[10px] text-[#8b93a1] mt-1">Kode tumpukan dikunci saat edit agar histori dan reservasi muatan tetap konsisten.</div>}
+          
         </div>
         <div>
           <label className="text-xs text-[#8b93a1] block mb-1">Komoditi</label>
