@@ -177,14 +177,14 @@ const DaftarProduk = () => {
               <div className="flex items-center justify-between mb-5">
                 <div>
                   <h2 className="font-display text-xl font-bold">{modal.mode === 'add' ? 'Tambah Master Produk' : 'Edit Master Produk'}</h2>
-                  <p className="text-xs text-[#6b7688] mt-1">Jumlah stok tidak diubah dari master produk.</p>
+                  
                 </div>
                 <button data-testid="product-modal-close-btn" onClick={() => setModal(null)} className="text-[#8b93a1] hover:text-white"><X size={20} /></button>
               </div>
 
               <div className="mb-5 flex gap-2 rounded-lg border border-[#1f3657] bg-[#0d1b2f] px-3 py-2.5 text-xs text-[#93c5fd]">
                 <Info size={15} className="shrink-0 mt-0.5" />
-                <span>Produk baru selalu dimulai dari stok 0. Stok hanya bertambah atau berkurang melalui menu Catat Stok.</span>
+                
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
