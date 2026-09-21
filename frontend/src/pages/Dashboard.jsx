@@ -28,12 +28,35 @@ const AlertSection = ({ title, count, colorClass, iconClass, open, onToggle, chi
   </div>
 );
 
+const DashboardDropdown = ({ title, meta, open, onToggle, children }) => (
+  <div className="card-surface overflow-hidden border border-[#1f3657]">
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={open}
+      className="w-full flex items-center justify-between gap-4 p-5 sm:p-6 text-left hover:bg-white/[0.02] transition-colors"
+    >
+      <div className="min-w-0">
+        <h2 className="font-display text-lg sm:text-xl font-bold">{title}</h2>
+        {meta && <div className="label-mono text-[10px] text-[#8b93a1] mt-1">{meta}</div>}
+      </div>
+      <ChevronDown size={19} className={`shrink-0 text-[#8b93a1] transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
+    </button>
+    {open && <div className="px-5 sm:px-6 pb-5 sm:pb-6 border-t border-[#1a222e] pt-4">{children}</div>}
+  </div>
+);
+
 const Dashboard = () => {
   const { products, transactions, outboundLoads, consignmentStock, monitoringStock, settings } = useData();
   const navigate = useNavigate();
   const [q, setQ] = useState('');
   const [lowAlertOpen, setLowAlertOpen] = useState(false);
   const [expiryAlertOpen, setExpiryAlertOpen] = useState(false);
+  const [pendingDocsOpen, setPendingDocsOpen] = useState(false);
+  const [monitoringOpen, setMonitoringOpen] = useState(false);
+  const [bazarCardOpen, setBazarCardOpen] = useState(false);
+  const [ecomCardOpen, setEcomCardOpen] = useState(false);
+  const [activityOpen, setActivityOpen] = useState(false);
 
   const totalUnits = products.reduce((a, p) => a + p.stock, 0);
   const totalDamaged = products.reduce((a, p) => a + (p.damaged || 0), 0);
@@ -145,19 +168,30 @@ const Dashboard = () => {
         </AlertSection>
       )}
 
-      <div className="card-surface p-6 border border-[#1f3657]">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-          <div><div className="label-mono text-[10px] text-[#93c5fd]">Dokumen masih terbuka</div><h2 className="font-display text-xl font-bold mt-1">CT / Memo / ND Belum Diselesaikan</h2></div>
+      <DashboardDropdown
+        title="CT / Memo / ND Belum Diselesaikan"
+        meta={`${pendingDocuments.length} dokumen masih terbuka`}
+        open={pendingDocsOpen}
+        onToggle={() => setPendingDocsOpen((value) => !value)}
+      >
+        <div className="flex justify-end mb-4">
           <button onClick={() => navigate('/pengeluaran')} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#2563eb] text-[#60a5fa]"><Link2 size={13} /> Buka Pengeluaran</button>
         </div>
-        {pendingDocuments.length === 0 ? <p className="text-sm text-[#8b93a1]">Tidak ada CT atau Memo terbuka. Semua dokumen sudah memiliki penyelesaian CR, SO, atau Retur.</p> : <div className="overflow-x-auto"><table className="w-full text-sm tbl"><thead><tr className="text-left border-b border-[#1a222e]"><th className="py-2.5 pr-4">Dokumen</th><th className="py-2.5 pr-4">Tujuan / Lokasi</th><th className="py-2.5 pr-4">Sisa Belum Diselesaikan</th><th className="py-2.5">Status</th></tr></thead><tbody>{pendingDocuments.map((load) => <tr key={load.id} className="border-b border-[#131a24]"><td className="py-3 pr-4"><div className="font-mono font-semibold text-[#93c5fd]">{load.document_type} · {load.ref}</div>{load.request_document && <div className="text-[11px] text-[#fbbf24] mt-1">Dasar: {load.request_document}</div>}<div className="text-[11px] text-[#6b7688] mt-1">Terbuka {documentAge(load.completed_at || load.created_at)}</div></td><td className="py-3 pr-4"><div>{load.consignment_destination || load.party || '—'}</div><div className="text-xs text-[#6b7688] mt-1">{load.consignment_zone || load.unit_loading || '—'}</div></td><td className="py-3 pr-4 text-xs">{load.pendingItems.map((item) => <div key={`${item.documentNo}-${item.productId}`}>{item.documentNo && <span className="text-[#6b7688]">{item.documentNo} · </span>}{item.name} · <span className="font-mono font-semibold">{formatNum(item.remaining)} {item.unit}</span></div>)}</td><td className="py-3 text-xs text-[#fbbf24]">{load.document_status || 'Menunggu CR/SO'}</td></tr>)}</tbody></table></div>}
-      </div>
+        {pendingDocuments.length === 0 ? <p className="text-sm text-[#8b93a1]">Tidak ada CT, Memo, atau ND terbuka. Semua dokumen sudah memiliki penyelesaian CR, SO, atau Retur.</p> : <div className="overflow-x-auto"><table className="w-full text-sm tbl"><thead><tr className="text-left border-b border-[#1a222e]"><th className="py-2.5 pr-4">Dokumen</th><th className="py-2.5 pr-4">Tujuan / Lokasi</th><th className="py-2.5 pr-4">Sisa Belum Diselesaikan</th><th className="py-2.5">Status</th></tr></thead><tbody>{pendingDocuments.map((load) => <tr key={load.id} className="border-b border-[#131a24]"><td className="py-3 pr-4"><div className="font-mono font-semibold text-[#93c5fd]">{load.document_type} · {load.ref}</div>{load.request_document && <div className="text-[11px] text-[#fbbf24] mt-1">Dasar: {load.request_document}</div>}<div className="text-[11px] text-[#6b7688] mt-1">Terbuka {documentAge(load.completed_at || load.created_at)}</div></td><td className="py-3 pr-4"><div>{load.consignment_destination || load.party || '—'}</div><div className="text-xs text-[#6b7688] mt-1">{load.consignment_zone || load.unit_loading || '—'}</div></td><td className="py-3 pr-4 text-xs">{load.pendingItems.map((item) => <div key={`${item.documentNo}-${item.productId}`}>{item.documentNo && <span className="text-[#6b7688]">{item.documentNo} · </span>}{item.name} · <span className="font-mono font-semibold">{formatNum(item.remaining)} {item.unit}</span></div>)}</td><td className="py-3 text-xs text-[#fbbf24]">{load.document_status || 'Menunggu CR/SO'}</td></tr>)}</tbody></table></div>}
+      </DashboardDropdown>
 
-      <div className="card-surface p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-4"><div><h2 className="font-display text-xl font-bold">Monitoring Stok Seluruh Lokasi</h2></div><button onClick={() => downloadApiFile('/export/monitoring-stock.xlsx', 'monitoring_stok.xlsx').catch((e) => toast.error(apiError(e)))} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#294263] text-xs text-[#93c5fd]"><Printer size={14} /> Unduh Monitoring</button></div>
-        <div className="relative mb-4 max-w-md">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6b7688]" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari produk, SKU, atau lokasi..." className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg pl-9 pr-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" />
+      <DashboardDropdown
+        title="Monitoring Stok Seluruh Lokasi"
+        meta={`${filtered.length} baris stok`}
+        open={monitoringOpen}
+        onToggle={() => setMonitoringOpen((value) => !value)}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div className="relative w-full max-w-md">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6b7688]" />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari produk, SKU, atau lokasi..." className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg pl-9 pr-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" />
+          </div>
+          <button onClick={() => downloadApiFile('/export/monitoring-stock.pdf', 'monitoring_stok_seluruh_lokasi.pdf').catch((e) => toast.error(apiError(e)))} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#294263] text-xs text-[#93c5fd]"><Printer size={14} /> Unduh PDF</button>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm tbl">
@@ -165,23 +199,29 @@ const Dashboard = () => {
             <tbody>{filtered.length === 0 ? <tr><td colSpan={7} className="py-8 text-center text-[#6b7688]">Belum ada produk terdaftar. Tambah produk atau import data SKU.</td></tr> : filtered.map((p) => <tr key={`${p.location}-${p.productId}-${p.channel}`} className="tbl-row border-b border-[#131a24]"><td className="py-3 pr-4"><span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${p.channel === 'PSO' ? 'bg-[#2563eb]/15 text-[#60a5fa]' : 'bg-[#a855f7]/15 text-[#c084fc]'}`}>{p.channel}</span></td><td className="py-3 pr-4 text-[#8b93a1]">{p.location}</td><td className="py-3 pr-4 font-mono text-xs text-[#93c5fd]">{p.sku || '—'}</td><td className="py-3 pr-4 font-medium">{p.name}</td><td className="py-3 pr-4 font-mono">{formatNum(p.qty)} {p.unit}</td><td className="py-3 pr-4 font-mono">{p.weight > 0 ? `${formatNum(p.totalWeight)} ${p.measureUnit || 'kg'}` : '—'}</td><td className="py-3 pr-4 font-mono">{formatNum(p.damaged || 0)}</td></tr>)}</tbody>
           </table>
         </div>
-      </div>
+      </DashboardDropdown>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">{[
-        { destination: 'Gudang Bazar', title: 'Kartu Stok Gudang Bazar', rows: bazarStock, color: '#f59e0b' },
-        { destination: 'Gudang E-commerce', title: 'Kartu Stok Gudang E-commerce', rows: ecommerceStock, color: '#0ea5e9' },
-      ].map(({ destination, title, rows, color }) => <div key={destination} className="card-surface p-6 border border-[#1f3657]">
-        <div className="flex flex-wrap items-start justify-between gap-3 mb-4"><div><div className="label-mono text-[10px]" style={{ color }}>Konsinyasi Unit 18</div><h2 className="font-display text-xl font-bold mt-1">{title}</h2></div><button onClick={() => downloadApiFile(`/export/consignment-stock-card.pdf?destination=${encodeURIComponent(destination)}`, `kartu_stok_${destination.replaceAll(' ', '_')}.pdf`).catch((e) => toast.error(apiError(e)))} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#294263] text-xs text-[#93c5fd]"><Printer size={14} /> Download kartu</button></div>
+        { destination: 'Gudang Bazar', title: 'Kartu Stok Gudang Bazar', rows: bazarStock, open: bazarCardOpen, toggle: () => setBazarCardOpen((value) => !value) },
+        { destination: 'Gudang E-commerce', title: 'Kartu Stok Gudang E-commerce', rows: ecommerceStock, open: ecomCardOpen, toggle: () => setEcomCardOpen((value) => !value) },
+      ].map(({ destination, title, rows, open, toggle }) => <DashboardDropdown key={destination} title={title} meta={`${rows.length} produk aktif`} open={open} onToggle={toggle}>
+        <div className="flex justify-end mb-4">
+          <button onClick={() => downloadApiFile(`/export/consignment-stock-card.pdf?destination=${encodeURIComponent(destination)}`, `kartu_stok_${destination.replaceAll(' ', '_')}.pdf`).catch((e) => toast.error(apiError(e)))} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#294263] text-xs text-[#93c5fd]"><Printer size={14} /> Download kartu</button>
+        </div>
         {rows.length === 0 ? <p className="text-sm text-[#8b93a1]">Belum ada stok konsinyasi aktif.</p> : <div className="overflow-x-auto"><table className="w-full text-sm tbl"><thead><tr className="text-left border-b border-[#1a222e]"><th className="py-2.5 pr-3">Saluran</th><th className="py-2.5 pr-3">SKU</th><th className="py-2.5 pr-3">Nama Komoditi</th><th className="py-2.5 pr-3">Pack/pcs</th><th className="py-2.5 pr-3">Kuantum Fisik</th><th className="py-2.5">Dokumen ND/Memo</th></tr></thead><tbody>{rows.map((item) => <tr key={`${item.productId}-${item.channel}`} className="tbl-row border-b border-[#131a24]"><td className="py-3 pr-3"><span className={`text-[10px] px-2 py-0.5 rounded-full ${(item.channel || 'KOM') === 'PSO' ? 'bg-[#2563eb]/15 text-[#60a5fa]' : 'bg-[#a855f7]/15 text-[#c084fc]'}`}>{item.channel || 'KOM'}</span></td><td className="py-3 pr-3 font-mono text-xs text-[#93c5fd]">{item.sku || '—'}</td><td className="py-3 pr-3 font-medium">{item.name}</td><td className="py-3 pr-3 font-mono whitespace-nowrap">{formatNum(item.qty)} {item.unit}</td><td className="py-3 pr-3 font-mono whitespace-nowrap">{item.weight > 0 ? `${formatNum(item.totalWeight)} ${item.measureUnit || 'kg'}` : '—'}</td><td className="py-3 text-xs text-[#8b93a1]">{item.documents?.join(', ') || '—'}</td></tr>)}</tbody></table></div>}
-      </div>)}</div>
+      </DashboardDropdown>)}</div>
 
-      <div className="card-surface p-6">
-        <h2 className="font-display text-lg font-bold mb-4">Aktivitas Terakhir</h2>
+      <DashboardDropdown
+        title="Aktivitas Terakhir"
+        meta={`${Math.min(transactions.length, 8)} aktivitas terbaru`}
+        open={activityOpen}
+        onToggle={() => setActivityOpen((value) => !value)}
+      >
         <div className="space-y-2">
           {transactions.slice(0, 8).map((t) => <div key={t.id} className="flex items-center justify-between gap-3 p-3 rounded-lg bg-[#0b0f17] border border-[#151d28]"><div><div className="font-medium text-sm">{t.product}</div><div className="label-mono text-[10px]">{t.sku} · {formatDate(t.time)}</div></div><div className={`flex items-center gap-2 text-sm font-mono ${t.type === 'MASUK' ? 'text-[#22c55e]' : 'text-[#ef4444]'}`}>{t.type === 'MASUK' ? <ArrowDownRight size={15} /> : <ArrowUpRight size={15} />}<span className="text-xs px-2 py-0.5 rounded-full" style={{ background: t.type === 'MASUK' ? 'rgba(34,197,94,.15)' : 'rgba(239,68,68,.15)' }}>{t.type}</span><span className="font-semibold">{t.change > 0 ? '+' : ''}{t.change}</span></div></div>)}
           {transactions.length === 0 && <p className="text-sm text-[#8b93a1]">Belum ada aktivitas.</p>}
         </div>
-      </div>
+      </DashboardDropdown>
     </div>
   );
 };
