@@ -180,7 +180,7 @@ const MonitorSO = () => {
 
             <div className="mt-4 overflow-x-auto">
               <table className="w-full text-xs">
-                <thead className="text-[#8b93a1]"><tr><th className="text-left py-1 pr-3">Komoditi</th><th>SO Total</th><th>Selesai</th><th>Dalam Antrean</th><th>Sisa Dijadwalkan</th><th>Outstanding Fisik</th></tr></thead>
+                <thead className="text-[#8b93a1]"><tr><th className="text-left py-1 pr-3">Komoditi</th><th>SO Total</th><th>Selesai</th><th>Dalam Antrean</th><th>Sisa Dijadwalkan</th><th>Outstanding Fisik</th><th>Koreksi</th></tr></thead>
                 <tbody>{(record.items || []).map((item) => <tr key={item.productId} className="border-t border-[#1f2937]">
                   <td className="py-2 pr-3"><div className="font-medium min-w-[220px]">{item.name || item.sku}</div><div className="font-mono text-[10px] text-[#64748b]">{item.sku}</div></td>
                   <td className="text-center font-mono">{item.orderedQty === null ? '—' : `${formatNum(item.orderedQty)} ${item.unit}`}</td>
@@ -188,6 +188,7 @@ const MonitorSO = () => {
                   <td className="text-center font-mono text-[#93c5fd]">{formatNum(item.reservedQty)} {item.unit}</td>
                   <td className="text-center font-mono font-bold text-[#fbbf24]">{item.remainingQty === null ? '—' : `${formatNum(item.remainingQty)} ${item.unit}`}</td>
                   <td className="text-center font-mono">{item.outstandingQty === null ? '—' : `${formatNum(item.outstandingQty)} ${item.unit}`}</td>
+                  <td className="text-center">{item.orderedQty === null ? '—' : <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); openCorrection(record, item); }} className="inline-flex items-center gap-1 rounded border border-[#2563eb] px-2 py-1 text-[10px] text-[#93c5fd] hover:bg-[#2563eb]/10"><FilePenLine size={11}/> Ubah</button>}</td>
                 </tr>)}</tbody>
               </table>
             </div>
@@ -197,6 +198,22 @@ const MonitorSO = () => {
             {(record.issues || []).length > 0 && <div>
               <div className="font-semibold text-sm mb-2 flex items-center gap-2"><AlertTriangle size={16} className="text-[#fca5a5]"/> Temuan</div>
               <div className="space-y-2">{record.issues.map((issue, index) => <div key={`${issue.code}-${index}`} className={`rounded-lg border px-3 py-2 text-xs ${issue.severity === 'ERROR' ? 'border-[#7f1d1d] bg-[#450a0a]/20 text-[#fca5a5]' : 'border-[#78350f] bg-[#451a03]/15 text-[#fcd34d]'}`}><b>{issue.code}</b> · {issue.issue}</div>)}</div>
+            </div>}
+
+            {correction?.documentNo === record.documentNo && <div className="rounded-xl border border-[#2563eb]/60 bg-[#0d1728] p-4">
+              <div className="font-semibold text-sm flex items-center gap-2"><FilePenLine size={16} className="text-[#93c5fd]"/> Koreksi Kuantum Induk SO</div>
+              <div className="text-xs text-[#8b93a1] mt-1">{correction.name} · sebelumnya {formatNum(correction.oldQty)} {correction.unit}</div>
+              <div className="grid grid-cols-1 md:grid-cols-[180px_1fr_auto] gap-3 mt-3 items-end">
+                <div><label className="text-[10px] text-[#93c5fd] block mb-1">Kuantum SO baru ({correction.unit})</label><input type="number" min="0.01" step="any" value={correction.newQty} onChange={(event) => setCorrection({ ...correction, newQty: event.target.value })} className="w-full bg-[#0b0f17] border border-[#294263] rounded-lg px-3 py-2.5 text-sm font-mono"/></div>
+                <div><label className="text-[10px] text-[#93c5fd] block mb-1">Alasan koreksi</label><input value={correction.reason} onChange={(event) => setCorrection({ ...correction, reason: event.target.value })} placeholder="Contoh: salah input total SO 4.000, seharusnya 800 pack" className="w-full bg-[#0b0f17] border border-[#294263] rounded-lg px-3 py-2.5 text-sm"/></div>
+                <div className="flex gap-2"><button type="button" disabled={savingCorrection} onClick={() => setCorrection(null)} className="px-3 py-2 rounded-lg border border-[#374151] text-xs">Batal</button><button type="button" disabled={savingCorrection} onClick={submitCorrection} className="px-3 py-2 rounded-lg bg-[#2563eb] text-white text-xs disabled:opacity-50">{savingCorrection ? 'Menyimpan...' : 'Simpan Koreksi'}</button></div>
+              </div>
+              <div className="mt-2 text-[10px] text-[#fbbf24]">Batas minimum saat ini: {formatNum(Number(correction.completedQty || 0) + Number(correction.reservedQty || 0))} {correction.unit} (selesai + reservasi aktif).</div>
+            </div>}
+
+            {(record.quantityCorrectionHistory || []).length > 0 && <div>
+              <div className="font-semibold text-sm mb-2">Riwayat Koreksi Kuantum SO</div>
+              <div className="space-y-2">{record.quantityCorrectionHistory.slice().reverse().map((entry) => <div key={entry.id || `${entry.time}-${entry.productId}`} className="rounded-lg border border-[#374151] bg-[#0b0f17] px-3 py-2 text-xs"><b>{entry.name || entry.sku}</b> · {formatNum(entry.oldOrderedQty)} → {formatNum(entry.newOrderedQty)} {entry.unit}<div className="text-[#8b93a1] mt-1">{entry.reason} · {entry.by || '—'} · {fmtDate(entry.time)}</div></div>)}</div>
             </div>}
 
             <div>
