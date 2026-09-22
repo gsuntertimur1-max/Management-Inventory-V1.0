@@ -502,8 +502,12 @@ async def correct_outbound_document_quantity(body: SOQuantityCorrectionInput, us
     # Samakan snapshot kuantum induk pada antrean SO aktif agar edit berikutnya
     # tidak membawa nilai lama, tanpa mengubah jumlah muat/reservasi yang berjalan.
     active_loads = await db.outbound_loads.find(
-        {"document_type": "SO", "status": {"$in": ["Menunggu", "Sedang Dimuat"]}, "documents": document_no},
-        {"_id": 0, "id": 1, "items": 1},
+        {
+            "document_type": "SO",
+            "status": {"$in": ["Menunggu", "Sedang Dimuat"]},
+            "$or": [{"documents": document_no}, {"ref": document_no}],
+        },
+        {"_id": 0, "id": 1, "items": 1, "ref": 1},
     ).to_list(5000)
     for load in active_loads:
         revised = []
