@@ -488,14 +488,14 @@ def _draw_sj_half(
     c.drawString(left, y, "Penerima")
     c.setFont("Helvetica", 7.5)
     c.drawString(left + 21 * mm, y, ":")
-    c.setFont("Helvetica", 8)
     penerima = str(sj.get("penerima") or "-")
-    penerima_font = 8.0
-    while penerima_font > 6.2 and stringWidth(penerima, "Helvetica", penerima_font) > (width - 27 * mm):
-        penerima_font -= 0.2
-    c.setFont("Helvetica", penerima_font)
-    c.drawString(left + 25 * mm, y, penerima)
-    y -= 10 * mm
+    penerima_lines = _sj_wrap(penerima, "Helvetica", 8.0, width - 27 * mm)[:3]
+    c.setFont("Helvetica", 8)
+    penerima_y = y
+    for line in penerima_lines:
+        c.drawString(left + 25 * mm, penerima_y, line)
+        penerima_y -= 3.8 * mm
+    y -= (10 + max(0, len(penerima_lines) - 1) * 3.8) * mm
 
     c.setFont("Helvetica-Bold", 7.3)
     c.drawString(left, y, "Gudang Asal :")
