@@ -98,6 +98,13 @@ class DocumentCancelInput(BaseModel):
     reason: str = Field(min_length=3, max_length=500)
 
 
+class SOQuantityCorrectionInput(BaseModel):
+    documentNo: str
+    productId: str
+    orderedQty: float = Field(gt=0)
+    reason: str = Field(min_length=3, max_length=500)
+
+
 class OutboundEditInput(BaseModel):
     items: List[OutboundItemInput] = Field(min_length=1)
     documents: List[str] = Field(min_length=1, max_length=20)
@@ -420,6 +427,100 @@ async def outbound_document_balance(documentNo: str, user: dict = Depends(get_cu
         raise HTTPException(status_code=400, detail="Nomor dokumen wajib diisi")
     if not document_no.startswith("SO/"):
         raise HTTPException(status_code=400, detail="Kontrol saldo dokumen bertahap saat ini khusus SO")
+    return await _so_balance(document_no)
+
+
+@router.post("/outbound-document-quantity-correction")
+async def correct_outbound_document_quantity(body: SOQuantityCorrectionInput, user: dict = Depends(require_admin)):
+    document_no = _doc_key(body.documentNo)
+    if not document_no.startswith("SO/"):
+        raise HTTPException(status_code=400, detail="Koreksi kuantum induk hanya berlaku untuk SO")
+
+    master = await db.outbound_documents.find_one(
+        {"documentNo": document_no, "documentType": "SO"},
+        {"_id": 0},
+    )
+    if not master:
+        raise HTTPException(status_code=404, detail="Master SO belum tersedia")
+
+    items = [dict(item) for item in (master.get("items") or [])]
+    index = next((i for i, item in enumerate(items) if str(item.get("productId") or "") == body.productId), -1)
+    if index < 0:
+        raise HTTPException(status_code=404, detail="Komoditas tidak ditemukan pada master SO")
+
+    product = await db.products.find_one({"id": body.productId}, {"_id": 0})
+    if product:
+        _validate_pack_qty(product, float(body.orderedQty))
+
+    usage = await _so_usage(document_no)
+    used = usage.get(body.productId, {})
+    completed = float(used.get("completedQty", 0) or 0)
+    reserved = float(used.get("reservedQty", 0) or 0)
+    committed = completed + reserved
+    new_qty = float(body.orderedQty)
+    if new_qty + 1e-9 < committed:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Kuantum SO tidak boleh lebih kecil dari yang sudah selesai + terreservasi "
+                f"({committed:g} {items[index].get('unit', '')})."
+            ),
+        )
+
+    old_qty = float(items[index].get("orderedQty", 0) or 0)
+    if abs(new_qty - old_qty) <= 1e-9:
+        return await _so_balance(document_no)
+
+    now = now_iso()
+    event = {
+        "id": new_id(),
+        "time": now,
+        "by": user.get("name", ""),
+        "productId": body.productId,
+        "sku": items[index].get("sku", ""),
+        "name": items[index].get("name", ""),
+        "unit": items[index].get("unit", ""),
+        "oldOrderedQty": old_qty,
+        "newOrderedQty": new_qty,
+        "completedQty": completed,
+        "reservedQty": reserved,
+        "reason": body.reason.strip(),
+    }
+    items[index]["orderedQty"] = new_qty
+    history = list(master.get("quantityCorrectionHistory") or []) + [event]
+    await db.outbound_documents.update_one(
+        {"documentNo": document_no, "documentType": "SO"},
+        {"$set": {
+            "items": items,
+            "quantityCorrectionHistory": history,
+            "lastQuantityCorrection": event,
+            "updatedAt": now,
+            "updatedBy": user.get("name", ""),
+        }},
+    )
+
+    # Samakan snapshot kuantum induk pada antrean SO aktif agar edit berikutnya
+    # tidak membawa nilai lama, tanpa mengubah jumlah muat/reservasi yang berjalan.
+    active_loads = await db.outbound_loads.find(
+        {"document_type": "SO", "status": {"$in": ["Menunggu", "Sedang Dimuat"]}, "documents": document_no},
+        {"_id": 0, "id": 1, "items": 1},
+    ).to_list(5000)
+    for load in active_loads:
+        revised = []
+        changed = False
+        for item in load.get("items") or []:
+            row = dict(item)
+            source = _doc_key(row.get("documentNo") or "")
+            if source == document_no and str(row.get("productId") or "") == body.productId:
+                row["documentQty"] = new_qty
+                changed = True
+            revised.append(row)
+        if changed:
+            await db.outbound_loads.update_one(
+                {"id": load.get("id")},
+                {"$set": {"items": revised, "updated_at": now}},
+            )
+
     return await _so_balance(document_no)
 
 
