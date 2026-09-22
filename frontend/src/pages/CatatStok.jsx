@@ -312,6 +312,26 @@ const CatatStok = ({ panel = '' }) => {
     };
   }, [type, documentType, outboundRefsKey]);
 
+  useEffect(() => {
+    if (type !== 'KELUAR' || documentType !== 'SO') return;
+    setRows((prev) => {
+      let changed = false;
+      const next = prev.map((row) => {
+        if (row.soTakeMode !== 'ALL' || !row.productId) return row;
+        const documentNo = String(row.documentNo || outboundDocumentRefs[0] || '').trim().toUpperCase();
+        const master = (soBalances[documentNo]?.items || []).find((item) => item.productId === row.productId);
+        if (!master) return row;
+        const qty = Number(master.remainingQty || 0);
+        const product = products.find((item) => item.id === row.productId);
+        const inputValue = row.inputMode === 'WEIGHT' ? totalWeight(qty, product) : qty;
+        if (Math.abs(Number(row.qty || 0) - qty) <= 1e-9 && Math.abs(Number(row.inputValue || 0) - Number(inputValue || 0)) <= 1e-9) return row;
+        changed = true;
+        return { ...row, qty, inputValue };
+      });
+      return changed ? next : prev;
+    });
+  }, [type, documentType, soBalances, outboundRefsKey, products]);
+
   const productOptions = type === 'KELUAR' && kondisi === 'RUSAK'
     ? products.filter((item) => Number(item.damaged || 0) > 0)
     : products;
