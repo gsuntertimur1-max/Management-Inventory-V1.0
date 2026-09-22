@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Search, Download, DollarSign, Printer, X, CheckCircle2, AlertTriangle, CreditCard } from 'lucide-react';
 import { useData } from '../context/DataContext';
-import api, { apiError, downloadApiFile } from '../lib/api';
+import api, { apiError, downloadApiFile, printApiFile } from '../lib/api';
 import { formatNum, formatDate, formatRp } from '../mock';
 import { toast } from 'sonner';
 import { packagingText, totalWeight } from '../lib/packaging';
@@ -49,6 +49,18 @@ const Riwayat = () => {
   const [feePayment, setFeePayment] = useState(null);
   const [settlementModal, setSettlementModal] = useState(null);
   const [savingPayment, setSavingPayment] = useState(false);
+
+  const printInboundWeighing = async (transaction) => {
+    if (!transaction?.operation_id || !transaction?.weighing_form) {
+      toast.error('Bukti timbang tidak tersedia untuk penerimaan ini');
+      return;
+    }
+    try {
+      await printApiFile(`/export/weighing-form/inbound/${transaction.operation_id}.pdf`);
+    } catch (error) {
+      toast.error(apiError(error));
+    }
+  };
 
   const loadCostSettlements = useCallback(async () => {
     try {
@@ -345,9 +357,9 @@ const Riwayat = () => {
 
         <div className="overflow-x-auto">
           <table className="w-full text-sm tbl">
-            <thead><tr className="text-left border-b border-[#1a222e]">{['Waktu', 'No. Referensi', 'Saluran', 'Rangkaian Dokumen', 'No. PO', 'Antrian', 'Tipe', 'Kondisi', 'Produk', 'Perubahan', 'Kadaluarsa', 'Pihak Terkait', 'Dicatat Oleh'].map((h) => <th key={h} className="py-2.5 pr-4 font-semibold whitespace-nowrap">{h}</th>)}</tr></thead>
+            <thead><tr className="text-left border-b border-[#1a222e]">{['Waktu', 'No. Referensi', 'Saluran', 'Rangkaian Dokumen', 'No. PO', 'Antrian', 'Tipe', 'Kondisi', 'Produk', 'Perubahan', 'Kadaluarsa', 'Pihak Terkait', 'Dicatat Oleh', 'Bukti Timbang'].map((h) => <th key={h} className="py-2.5 pr-4 font-semibold whitespace-nowrap">{h}</th>)}</tr></thead>
             <tbody>
-              {filtered.length === 0 ? <tr><td colSpan={13} className="py-8 text-center text-[#6b7688]">Belum ada transaksi yang sesuai filter.</td></tr> : filtered.map((t) => {
+              {filtered.length === 0 ? <tr><td colSpan={14} className="py-8 text-center text-[#6b7688]">Belum ada transaksi yang sesuai filter.</td></tr> : filtered.map((t, rowIndex) => {
                 const auditChannel = transactionChannel(t);
                 const badge = typeBadge(t.type);
                 return (
@@ -365,6 +377,11 @@ const Riwayat = () => {
                     <td className="py-3 pr-4 font-mono text-xs whitespace-nowrap">{t.exp || '—'}</td>
                     <td className="py-3 pr-4 text-[#c7d0dc]">{t.penerima || '—'}</td>
                     <td className="py-3 pr-4 text-[#8b93a1] text-xs">{t.operator || '—'}</td>
+                    <td className="py-3 pr-4 whitespace-nowrap">
+                      {t.type === 'MASUK' && t.weighing_form && t.operation_id && filtered.findIndex((row) => row.operation_id === t.operation_id) === rowIndex
+                        ? <button type="button" onClick={() => printInboundWeighing(t)} className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1.5 rounded-lg border border-[#294263] text-[#93c5fd] hover:bg-[#2563eb]/10"><Printer size={12} /> Cetak Ulang</button>
+                        : <span className="text-[#4b5563]">—</span>}
+                    </td>
                   </tr>
                 );
               })}
@@ -519,8 +536,8 @@ const Riwayat = () => {
 
                   <div className="overflow-x-auto mt-4">
                     <table className="w-full text-xs">
-                      <thead><tr className="text-left border-b border-[#242f3d]"><th className="py-2 pr-3">No. Ref / PO</th><th className="py-2 pr-3">Produk</th><th className="py-2 pr-3">Mandor</th><th className="py-2 pr-3">Kuantitas</th><th className="py-2 text-right">Biaya</th></tr></thead>
-                      <tbody>{day.items.map((item) => { const basisQty = Number(item.unloading_cost_basis_qty || 0) || Number(item.unloading_cost?.regularQty || 0) + Number(item.unloading_cost?.overtimeQty || 0) || Math.abs(Number(item.change || 0)); return <tr key={item.id} className="border-b border-[#171e29]"><td className="py-2 pr-3 font-mono">{item.po_no || item.ref || '—'}</td><td className="py-2 pr-3"><div className="font-medium">{item.product}</div><div className={`text-[10px] ${item.unloading_cost?.workStatus === 'LEMBUR_PENUH' ? 'text-[#f87171]' : item.unloading_cost?.workStatus === 'LEMBUR_PARSIAL' ? 'text-[#fbbf24]' : 'text-[#4ade80]'}`}>{(item.unloading_cost?.workStatus || 'NORMAL').replaceAll('_', ' ')}{item.unloading_cost?.holiday ? ' · Hari Libur' : ''}</div><div className="text-[10px] text-[#6b7688] mt-1">Normal {formatNum(item.unloading_cost?.regularQty ?? basisQty)} {item.unit || ''} · Lembur {formatNum(item.unloading_cost?.overtimeQty ?? 0)} {item.unit || ''}</div>{(item.unloading_cost?.startedAt || item.unloading_work?.startedAt) && <div className="text-[10px] text-[#8b93a1] mt-1">Mulai {formatDate(item.unloading_cost?.startedAt || item.unloading_work?.startedAt)} · Selesai {formatDate(item.unloading_cost?.completedAt || item.unloading_work?.completedAt)}</div>}{item.unloading_cost?.breakdown && <div className="text-[10px] text-[#8b93a1] mt-1">Dasar {formatRp(item.unloading_cost?.baseTotal || 0)} · Lembur {formatRp(item.unloading_cost?.overtimeTotal || 0)} · Libur {formatRp(item.unloading_cost?.holidayTotal || 0)} · Libur+Lembur {formatRp(item.unloading_cost?.holidayOvertimeTotal || 0)}</div>}</td><td className="py-2 pr-3">{item.unloading_group}</td><td className="py-2 pr-3 font-mono"><div>{formatNum(basisQty)} {item.unloading_cost_basis_unit || item.unit || ''}</div>{basisQty !== Math.abs(Number(item.change || 0)) && <div className="text-[10px] text-[#8b93a1]">Baris stok: {formatNum(Math.abs(Number(item.change || 0)))} {item.unit || ''}</div>}</td><td className="py-2 text-right font-mono"><div>{formatRp(item.unloading_cost?.total || 0)}</div>{item.unloading_cost?.breakdown && <div className="mt-1 text-[10px] text-[#8b93a1] font-sans">Buruh {formatRp(item.unloading_cost?.labor || 0)} · UH {formatRp(item.unloading_cost?.daily || 0)} · Gudang {formatRp(item.unloading_cost?.warehouse || 0)}</div>}</td></tr>; })}</tbody>
+                      <thead><tr className="text-left border-b border-[#242f3d]"><th className="py-2 pr-3">No. Ref / PO</th><th className="py-2 pr-3">Produk</th><th className="py-2 pr-3">Mandor</th><th className="py-2 pr-3">Kuantitas</th><th className="py-2 pr-3">Bukti Timbang</th><th className="py-2 text-right">Biaya</th></tr></thead>
+                      <tbody>{day.items.map((item, itemIndex) => { const basisQty = Number(item.unloading_cost_basis_qty || 0) || Number(item.unloading_cost?.regularQty || 0) + Number(item.unloading_cost?.overtimeQty || 0) || Math.abs(Number(item.change || 0)); const firstForOperation = item.operation_id && day.items.findIndex((row) => row.operation_id === item.operation_id) === itemIndex; return <tr key={item.id} className="border-b border-[#171e29]"><td className="py-2 pr-3 font-mono">{item.po_no || item.ref || '—'}</td><td className="py-2 pr-3"><div className="font-medium">{item.product}</div><div className={`text-[10px] ${item.unloading_cost?.workStatus === 'LEMBUR_PENUH' ? 'text-[#f87171]' : item.unloading_cost?.workStatus === 'LEMBUR_PARSIAL' ? 'text-[#fbbf24]' : 'text-[#4ade80]'}`}>{(item.unloading_cost?.workStatus || 'NORMAL').replaceAll('_', ' ')}{item.unloading_cost?.holiday ? ' · Hari Libur' : ''}</div><div className="text-[10px] text-[#6b7688] mt-1">Normal {formatNum(item.unloading_cost?.regularQty ?? basisQty)} {item.unit || ''} · Lembur {formatNum(item.unloading_cost?.overtimeQty ?? 0)} {item.unit || ''}</div>{(item.unloading_cost?.startedAt || item.unloading_work?.startedAt) && <div className="text-[10px] text-[#8b93a1] mt-1">Mulai {formatDate(item.unloading_cost?.startedAt || item.unloading_work?.startedAt)} · Selesai {formatDate(item.unloading_cost?.completedAt || item.unloading_work?.completedAt)}</div>}{item.unloading_cost?.breakdown && <div className="text-[10px] text-[#8b93a1] mt-1">Dasar {formatRp(item.unloading_cost?.baseTotal || 0)} · Lembur {formatRp(item.unloading_cost?.overtimeTotal || 0)} · Libur {formatRp(item.unloading_cost?.holidayTotal || 0)} · Libur+Lembur {formatRp(item.unloading_cost?.holidayOvertimeTotal || 0)}</div>}</td><td className="py-2 pr-3">{item.unloading_group}</td><td className="py-2 pr-3 font-mono"><div>{formatNum(basisQty)} {item.unloading_cost_basis_unit || item.unit || ''}</div>{basisQty !== Math.abs(Number(item.change || 0)) && <div className="text-[10px] text-[#8b93a1]">Baris stok: {formatNum(Math.abs(Number(item.change || 0)))} {item.unit || ''}</div>}</td><td className="py-2 pr-3">{firstForOperation && item.weighing_form ? <button type="button" onClick={() => printInboundWeighing(item)} className="inline-flex items-center gap-1 text-[10px] px-2.5 py-1.5 rounded-lg border border-[#294263] text-[#93c5fd]"><Printer size={12} /> Cetak Ulang</button> : <span className="text-[#4b5563]">—</span>}</td><td className="py-2 text-right font-mono"><div>{formatRp(item.unloading_cost?.total || 0)}</div>{item.unloading_cost?.breakdown && <div className="mt-1 text-[10px] text-[#8b93a1] font-sans">Buruh {formatRp(item.unloading_cost?.labor || 0)} · UH {formatRp(item.unloading_cost?.daily || 0)} · Gudang {formatRp(item.unloading_cost?.warehouse || 0)}</div>}</td></tr>; })}</tbody>
                     </table>
                   </div>
                 </div>
