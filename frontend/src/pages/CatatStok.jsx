@@ -12,7 +12,7 @@ import { consignmentAreaLabel, consignmentStackCodes } from '../lib/consignmentL
 
 const CONSIGNMENT_DESTINATIONS = ['Gudang E-commerce', 'Gudang Bazar'];
 const DAMAGED_AREA = 'AREA BARANG RUSAK';
-const emptyRow = () => ({ productId: '', inputMode: 'QTY', inputValue: 1, qty: 1, goodQty: 1, damagedQty: 0, normalQtyBefore1600: '', exp: '', stackCode: '', documentNo: '', documentQty: '', channel: '', fefoExceptionReason: '' });
+const emptyRow = () => ({ productId: '', inputMode: 'QTY', inputValue: 1, qty: 1, goodQty: 1, damagedQty: 0, normalQtyBefore1600: '', exp: '', stackCode: '', documentNo: '', documentQty: '', soTakeMode: 'PARTIAL', channel: '', fefoExceptionReason: '' });
 
 const wibMinutesNow = () => {
   const parts = new Intl.DateTimeFormat('en-GB', {
@@ -185,7 +185,14 @@ const CatatStok = ({ panel = '' }) => {
     if (i !== index) return row;
     const next = { ...row, ...patch };
     const product = products.find((item) => item.id === next.productId);
-    return { ...next, qty: quantityFromInput(next.inputValue, next.inputMode, product) };
+    const qty = quantityFromInput(next.inputValue, next.inputMode, product);
+    const updated = { ...next, qty };
+    if (type === 'KELUAR' && documentType === 'SO' && next.soTakeMode === 'ALL') {
+      const documentNo = String(next.documentNo || documentRefs[0] || '').trim().toUpperCase();
+      const master = (soBalances[documentNo]?.items || []).find((item) => item.productId === next.productId);
+      if (!master) updated.documentQty = qty;
+    }
+    return updated;
   }));
   const addRow = () => setRows((prev) => [...prev, emptyRow()]);
   const delRow = (index) => setRows((prev) => prev.length === 1 ? prev : prev.filter((_, i) => i !== index));
@@ -248,6 +255,32 @@ const CatatStok = ({ panel = '' }) => {
         return row;
       });
     });
+  };
+
+  const setSoTakeMode = (index, mode) => {
+    const target = rows[index];
+    if (!target?.productId) return toast.error('Pilih produk terlebih dahulu');
+    const documentNo = sourceDocumentForRow(target);
+    if (!documentNo) return toast.error('Isi nomor SO terlebih dahulu');
+    const duplicates = rows.filter((row) => row.productId === target.productId && sourceDocumentForRow(row) === documentNo).length;
+    if (mode === 'ALL' && duplicates > 1) {
+      return toast.error('Ambil Semua hanya dapat digunakan bila komoditi SO berada pada satu baris. Untuk multi-tumpukan gunakan Ambil Sebagian.');
+    }
+    const product = products.find((item) => item.id === target.productId);
+    const master = soMasterItemFor(target);
+    if (mode === 'ALL' && master) {
+      const qty = Number(master.remainingQty || 0);
+      if (qty <= 0) return toast.error('SO ini tidak memiliki sisa yang dapat dijadwalkan');
+      const inputValue = target.inputMode === 'WEIGHT' ? totalWeight(qty, product) : qty;
+      setRow(index, { soTakeMode: 'ALL', qty, inputValue });
+      return;
+    }
+    if (mode === 'ALL') {
+      const qty = Number(target.qty || 0);
+      setRow(index, { soTakeMode: 'ALL', documentQty: qty });
+      return;
+    }
+    setRow(index, { soTakeMode: 'PARTIAL' });
   };
 
   useEffect(() => {
@@ -628,7 +661,7 @@ const CatatStok = ({ panel = '' }) => {
                       placeholder="Ketik nama / SKU produk..."
                       onChange={(productId) => {
                         const chosenProduct = products.find((item) => item.id === productId);
-                        setTransactionInput(index, { productId, inputMode: 'QTY', inputValue: 1, stackCode: '', documentQty: '', channel: chosenProduct?.channel || 'KOM', fefoExceptionReason: '' });
+                        setTransactionInput(index, { productId, inputMode: 'QTY', inputValue: 1, stackCode: '', documentQty: '', soTakeMode: 'PARTIAL', channel: chosenProduct?.channel || 'KOM', fefoExceptionReason: '' });
                       }}
                       getDescription={(item) => kondisi === 'RUSAK' && type === 'KELUAR'
                         ? `Rusak ${formatNum(item.damaged || 0)} ${item.unit}`
@@ -647,14 +680,36 @@ const CatatStok = ({ panel = '' }) => {
                   {type === 'MASUK' && <><div><label className="text-[10px] text-[#22c55e] mb-1 block">Baik ({product?.unit || 'unit'})</label><input type="number" min="0" step="any" value={row.goodQty ?? 0} onChange={(e) => setRow(index, { goodQty: e.target.value })} className="w-full bg-[#0b0f17] border border-[#1f6f45] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#22c55e]" /></div><div><label className="text-[10px] text-[#f59e0b] mb-1 block">Rusak ({product?.unit || 'unit'})</label><input type="number" min="0" step="any" value={row.damagedQty ?? 0} onChange={(e) => setRow(index, { damagedQty: e.target.value })} className="w-full bg-[#0b0f17] border border-[#794b1c] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#f59e0b]" />{product && receiptQty(row) > 0 && <div className="text-[9px] text-[#60a5fa] mt-1">Total {formatNum(receiptQty(row))} {product.unit} · {formatNum(totalWeight(receiptQty(row), product))} kg</div>}</div></>}
                   {type === 'KELUAR' && <div>
                     <label className="text-[10px] text-[#6b7688] mb-1 block">{row.inputMode === 'WEIGHT' ? 'Berat (kg)' : `Jumlah (${product?.unit || 'unit'})`}</label>
-                    <input type="number" min="0.01" step="any" value={row.inputValue} onChange={(e) => setTransactionInput(index, { inputValue: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" />
+                    <input type="number" min="0.01" step="any" disabled={documentType === 'SO' && row.soTakeMode === 'ALL' && Boolean(soMasterItemFor(row))} value={row.inputValue} onChange={(e) => setTransactionInput(index, { inputValue: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb] disabled:opacity-70" />
                     {product && Number(row.qty || 0) > 0 && <div className="text-[9px] text-[#60a5fa] mt-1">{formatNum(row.qty)} {product.unit} · {formatNum(totalWeight(row.qty, product))} kg{packagingText(row.qty, product, formatNum) ? ` · ${packagingText(row.qty, product, formatNum)}` : ''}</div>}
-                    {documentType === 'SO' && product && (() => { const master = soMasterItemFor(row); const doc = sourceDocumentForRow(row); const legacy = soBalances[doc]?.legacyUsage?.[row.productId]; return <div className="mt-2 pt-2 border-t border-[#1f2937]"><label className="text-[9px] text-[#fbbf24] mb-1 block">Kuantum SO total ({product.unit})</label><input type="number" min="0.01" step="any" disabled={Boolean(master)} value={master ? master.orderedQty : (row.documentQty || '')} onChange={(e) => setSoDocumentTotal(index, e.target.value)} placeholder="Total pada SO, bukan jumlah muat" className="w-full bg-[#160f05] border border-[#78350f] rounded px-2 py-1.5 text-[10px] text-[#fde68a] disabled:opacity-70" />{master ? <div className="mt-1 text-[9px] text-[#86efac]">Selesai {formatNum(master.completedQty)} · Reservasi {formatNum(master.reservedQty)} · Sisa {formatNum(master.remainingQty)} {product.unit}</div> : legacy && Number(legacy.completedQty || 0) + Number(legacy.reservedQty || 0) > 0 ? <div className="mt-1 text-[9px] text-[#fbbf24]">SO lama: sudah tercatat {formatNum(Number(legacy.completedQty || 0) + Number(legacy.reservedQty || 0))} {product.unit}. Isi total SO asli untuk melanjutkan.</div> : <div className="mt-1 text-[9px] text-[#8b93a1]">Diisi sekali pada pengambilan pertama. Pengambilan berikutnya memakai sisa otomatis.</div>}</div>; })()}
+                    {documentType === 'SO' && product && (() => {
+                      const master = soMasterItemFor(row);
+                      const doc = sourceDocumentForRow(row);
+                      const legacy = soBalances[doc]?.legacyUsage?.[row.productId];
+                      const mode = row.inputMode || 'QTY';
+                      const totalQty = Number(master?.orderedQty ?? row.documentQty ?? 0);
+                      const totalDisplay = totalQty > 0 ? (mode === 'WEIGHT' ? totalWeight(totalQty, product) : totalQty) : '';
+                      const totalLabel = mode === 'WEIGHT' ? 'Kuantum SO total (kg)' : `Kuantum SO total (${product.unit})`;
+                      return <div className="mt-2 pt-2 border-t border-[#1f2937]">
+                        <div className="grid grid-cols-2 gap-1 mb-2">
+                          <button type="button" onClick={() => setSoTakeMode(index, 'ALL')} className={`rounded px-2 py-1.5 text-[10px] border ${row.soTakeMode === 'ALL' ? 'border-[#22c55e] bg-[#14532d]/20 text-[#86efac]' : 'border-[#374151] text-[#9ca3af]'}`}>Ambil Semua</button>
+                          <button type="button" onClick={() => setSoTakeMode(index, 'PARTIAL')} className={`rounded px-2 py-1.5 text-[10px] border ${row.soTakeMode !== 'ALL' ? 'border-[#f59e0b] bg-[#78350f]/20 text-[#fde68a]' : 'border-[#374151] text-[#9ca3af]'}`}>Ambil Sebagian</button>
+                        </div>
+                        {row.soTakeMode === 'ALL' && !master
+                          ? <div className="rounded border border-[#14532d] bg-[#14532d]/10 px-2 py-1.5 text-[9px] text-[#86efac]">Jumlah yang diinput menjadi Kuantum SO total sekaligus jumlah muat. Tidak perlu input dua kali.</div>
+                          : <>
+                            <label className="text-[9px] text-[#fbbf24] mb-1 block">{totalLabel}</label>
+                            <input type="number" min="0.01" step="any" disabled={Boolean(master)} value={totalDisplay} onChange={(e) => setSoDocumentTotal(index, quantityFromInput(e.target.value, mode, product))} placeholder="Total pada SO, bukan jumlah muat" className="w-full bg-[#160f05] border border-[#78350f] rounded px-2 py-1.5 text-[10px] text-[#fde68a] disabled:opacity-70" />
+                          </>
+                        }
+                        {master ? <div className="mt-1 text-[9px] text-[#86efac]">Selesai {formatNum(master.completedQty)} · Reservasi {formatNum(master.reservedQty)} · Sisa {formatNum(master.remainingQty)} {product.unit}{mode === 'WEIGHT' ? ` · ${formatNum(totalWeight(master.remainingQty, product))} kg` : ''}</div> : legacy && Number(legacy.completedQty || 0) + Number(legacy.reservedQty || 0) > 0 ? <div className="mt-1 text-[9px] text-[#fbbf24]">SO lama: sudah tercatat {formatNum(Number(legacy.completedQty || 0) + Number(legacy.reservedQty || 0))} {product.unit}. Isi total SO asli untuk melanjutkan.</div> : row.soTakeMode !== 'ALL' ? <div className="mt-1 text-[9px] text-[#8b93a1]">Ambil Sebagian membutuhkan total SO dan jumlah yang dimuat saat ini.</div> : null}
+                      </div>;
+                    })()}
                   </div>}
                   {type === 'MASUK' && (
                     <div><label className="text-[10px] text-[#6b7688] mb-1 flex items-center gap-1"><CalendarDays size={11} /> Kedaluwarsa / Lokasi</label><input type="date" value={row.exp || ''} onChange={(e) => setRow(index, { exp: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm" /><select value={row.stackCode || product?.location || ''} onChange={(e) => setRow(index, { stackCode: e.target.value })} className="w-full mt-1 bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2 text-xs"><option value="">Pilih lokasi...</option>{STACKS.map((code) => <option key={code}>{code}</option>)}</select></div>
                   )}
-                  {type === 'KELUAR' && <><div><label className="text-[10px] text-[#6b7688] mb-1 block">Dokumen sumber</label><select value={isMultiDocumentOutbound ? row.documentNo : (row.documentNo || outboundDocumentRefs[0] || '')} disabled={!isMultiDocumentOutbound && outboundDocumentRefs.length === 1} onChange={(e) => setRow(index, { documentNo: e.target.value, documentQty: '' })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2.5 text-xs disabled:opacity-70"><option value="">{isMultiDocumentOutbound ? 'Pilih dokumen...' : 'Isi nomor dokumen dulu'}</option>{outboundDocumentRefs.map((doc) => <option key={doc}>{doc}</option>)}</select></div><div><label className="text-[10px] text-[#6b7688] mb-1 block">{kondisi === 'RUSAK' ? 'Lokasi sumber' : 'Tumpukan asal · stok tersedia'}</label>{kondisi === 'RUSAK' ? <div className="w-full rounded-lg border border-[#7f1d1d] bg-[#2a0f14] px-3 py-2.5 text-xs text-[#fecaca]"><div className="font-semibold">{DAMAGED_AREA}</div><div className="text-[9px] text-[#fca5a5] mt-1">Tidak memakai tumpukan stok Baik · antrean otomatis seri R-xxx</div></div> : <><select value={row.stackCode || ''} onChange={(e) => { const stackCode = e.target.value; const guide = fefoGuideFor(row.productId); setRow(index, { stackCode, fefoExceptionReason: guide?.recommendedStacks?.includes(stackCode) ? '' : row.fefoExceptionReason }); }} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2.5 text-xs"><option value="">Pilih tumpukan asal (wajib)</option>{availableStacks.map((allocation) => { const secondaryQty = Number(allocation.secondaryQty || 0); const qty = Number(allocation.primaryQty || 0); const availableQty = Number(allocation.availableQty ?? qty); const reservedQty = Number(allocation.reservedQty || 0); const secondary = secondaryQty > 0 ? Math.floor(availableQty / secondaryQty) : 0; const remainder = secondaryQty > 0 ? availableQty - (secondary * secondaryQty) : 0; const packaging = secondaryQty > 0 ? ` · ${formatNum(secondary)} ${allocation.secondary || 'sekunder'}${remainder > 0 ? ` + ${formatNum(remainder)} ${allocation.unit || 'pcs'}` : ''}` : ''; const guide = fefoGuideFor(row.productId); const meta = fefoStackMeta(row.productId, allocation.stackCode); const recommended = guide?.recommendedStacks?.includes(allocation.stackCode); const expiry = meta?.nextLot?.exp ? ` · exp ${meta.nextLot.exp}` : (Number(meta?.untrackedQty || 0) > 0 ? ' · legacy' : ''); const reservation = reservedQty > 0 ? ` · reservasi ${formatNum(reservedQty)}` : ''; return <option key={allocation.id} value={allocation.stackCode}>{recommended ? '★ ' : ''}{allocation.stackCode} — tersedia {formatNum(availableQty)} {allocation.unit || 'pcs'}{reservation}{packaging}{expiry}</option>; })}</select>{row.productId && fefoGuideFor(row.productId) && <div className={`mt-1 rounded border px-2 py-1.5 text-[9px] ${fefoGuideFor(row.productId).mode === 'FEFO_TRACKED' ? 'border-[#14532d] text-[#86efac]' : 'border-[#78350f] text-[#fcd34d]'}`}><b>{fefoGuideFor(row.productId).mode}</b> · Prioritas: {(fefoGuideFor(row.productId).recommendedStacks || []).join(', ') || 'periksa integritas'}<br/>{fefoGuideFor(row.productId).reason}</div>}{isFefoException(row) && <div className="mt-1"><label className="text-[9px] text-[#fbbf24] block mb-1">Alasan memilih di luar prioritas FEFO *</label><input value={row.fefoExceptionReason || ''} onChange={(e) => setRow(index, { fefoExceptionReason: e.target.value })} placeholder="Contoh: akses tumpukan tertutup / dokumen mensyaratkan batch tertentu" className="w-full bg-[#160f05] border border-[#78350f] rounded px-2 py-1.5 text-[10px] text-[#fde68a]" /></div>}{row.productId && availableStacks.length === 0 && <p className="text-[9px] text-[#fbbf24] mt-1">Belum ada alokasi tumpukan untuk produk ini.</p>}</>}</div></>}
+                  {type === 'KELUAR' && <><div><label className="text-[10px] text-[#6b7688] mb-1 block">Dokumen sumber</label><select value={isMultiDocumentOutbound ? row.documentNo : (row.documentNo || outboundDocumentRefs[0] || '')} disabled={!isMultiDocumentOutbound && outboundDocumentRefs.length === 1} onChange={(e) => setRow(index, { documentNo: e.target.value, documentQty: '', soTakeMode: 'PARTIAL' })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2.5 text-xs disabled:opacity-70"><option value="">{isMultiDocumentOutbound ? 'Pilih dokumen...' : 'Isi nomor dokumen dulu'}</option>{outboundDocumentRefs.map((doc) => <option key={doc}>{doc}</option>)}</select></div><div><label className="text-[10px] text-[#6b7688] mb-1 block">{kondisi === 'RUSAK' ? 'Lokasi sumber' : 'Tumpukan asal · stok tersedia'}</label>{kondisi === 'RUSAK' ? <div className="w-full rounded-lg border border-[#7f1d1d] bg-[#2a0f14] px-3 py-2.5 text-xs text-[#fecaca]"><div className="font-semibold">{DAMAGED_AREA}</div><div className="text-[9px] text-[#fca5a5] mt-1">Tidak memakai tumpukan stok Baik · antrean otomatis seri R-xxx</div></div> : <><select value={row.stackCode || ''} onChange={(e) => { const stackCode = e.target.value; const guide = fefoGuideFor(row.productId); setRow(index, { stackCode, fefoExceptionReason: guide?.recommendedStacks?.includes(stackCode) ? '' : row.fefoExceptionReason }); }} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2.5 text-xs"><option value="">Pilih tumpukan asal (wajib)</option>{availableStacks.map((allocation) => { const secondaryQty = Number(allocation.secondaryQty || 0); const qty = Number(allocation.primaryQty || 0); const availableQty = Number(allocation.availableQty ?? qty); const reservedQty = Number(allocation.reservedQty || 0); const secondary = secondaryQty > 0 ? Math.floor(availableQty / secondaryQty) : 0; const remainder = secondaryQty > 0 ? availableQty - (secondary * secondaryQty) : 0; const packaging = secondaryQty > 0 ? ` · ${formatNum(secondary)} ${allocation.secondary || 'sekunder'}${remainder > 0 ? ` + ${formatNum(remainder)} ${allocation.unit || 'pcs'}` : ''}` : ''; const guide = fefoGuideFor(row.productId); const meta = fefoStackMeta(row.productId, allocation.stackCode); const recommended = guide?.recommendedStacks?.includes(allocation.stackCode); const expiry = meta?.nextLot?.exp ? ` · exp ${meta.nextLot.exp}` : (Number(meta?.untrackedQty || 0) > 0 ? ' · legacy' : ''); const reservation = reservedQty > 0 ? ` · reservasi ${formatNum(reservedQty)}` : ''; return <option key={allocation.id} value={allocation.stackCode}>{recommended ? '★ ' : ''}{allocation.stackCode} — tersedia {formatNum(availableQty)} {allocation.unit || 'pcs'}{reservation}{packaging}{expiry}</option>; })}</select>{row.productId && fefoGuideFor(row.productId) && <div className={`mt-1 rounded border px-2 py-1.5 text-[9px] ${fefoGuideFor(row.productId).mode === 'FEFO_TRACKED' ? 'border-[#14532d] text-[#86efac]' : 'border-[#78350f] text-[#fcd34d]'}`}><b>{fefoGuideFor(row.productId).mode}</b> · Prioritas: {(fefoGuideFor(row.productId).recommendedStacks || []).join(', ') || 'periksa integritas'}<br/>{fefoGuideFor(row.productId).reason}</div>}{isFefoException(row) && <div className="mt-1"><label className="text-[9px] text-[#fbbf24] block mb-1">Alasan memilih di luar prioritas FEFO *</label><input value={row.fefoExceptionReason || ''} onChange={(e) => setRow(index, { fefoExceptionReason: e.target.value })} placeholder="Contoh: akses tumpukan tertutup / dokumen mensyaratkan batch tertentu" className="w-full bg-[#160f05] border border-[#78350f] rounded px-2 py-1.5 text-[10px] text-[#fde68a]" /></div>}{row.productId && availableStacks.length === 0 && <p className="text-[9px] text-[#fbbf24] mt-1">Belum ada alokasi tumpukan untuk produk ini.</p>}</>}</div></>}
                   <button type="button" onClick={() => delRow(index)} disabled={rows.length === 1} className="w-10 h-[42px] rounded-lg border border-[#242f3d] flex items-center justify-center text-[#ef4444] disabled:opacity-30"><Trash2 size={15} /></button>
                 </div>
               );
