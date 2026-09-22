@@ -716,8 +716,14 @@ def _weighing_form_pdf(title: str, document_no: str, party: str, polisi: str, cr
     c.setFont("Helvetica", 8); c.drawString(left + 3 * mm, y - 10 * mm, document_no or "-"); c.drawString(left + 92 * mm, y - 10 * mm, _date(created_at, True))
     y -= 23 * mm
     c.setFont("Helvetica-Bold", 7); c.drawString(left, y, "PENERIMA / PENGIRIM"); c.drawString(left + 92 * mm, y, "NO. POLISI")
-    c.setFont("Helvetica", 8); c.drawString(left, y - 5 * mm, party or "-"); c.drawString(left + 92 * mm, y - 5 * mm, polisi or "-")
-    y -= 15 * mm
+    party_lines = _wrap_thermal(str(party or "-"), "Helvetica", 8, 86 * mm)[:3]
+    c.setFont("Helvetica", 8)
+    party_y = y - 5 * mm
+    for line in party_lines:
+        c.drawString(left, party_y, line)
+        party_y -= 4 * mm
+    c.drawString(left + 92 * mm, y - 5 * mm, polisi or "-")
+    y -= (15 + max(0, len(party_lines) - 1) * 4) * mm
     row_h = 8 * mm
     gap = 8 * mm
     half = (right - left - gap) / 2
