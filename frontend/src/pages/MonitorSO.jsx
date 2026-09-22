@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, ClipboardList, RefreshCcw, Search, TimerReset } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ClipboardList, FilePenLine, RefreshCcw, Search, TimerReset } from 'lucide-react';
 import api, { apiError } from '../lib/api';
 import { formatNum } from '../mock';
 import { toast } from 'sonner';
@@ -33,6 +33,8 @@ const MonitorSO = () => {
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('OUTSTANDING');
+  const [correction, setCorrection] = useState(null);
+  const [savingCorrection, setSavingCorrection] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -47,6 +49,44 @@ const MonitorSO = () => {
   };
 
   useEffect(() => { load(); }, []);
+
+  const openCorrection = (record, item) => setCorrection({
+    documentNo: record.documentNo,
+    productId: item.productId,
+    name: item.name || item.sku,
+    unit: item.unit,
+    oldQty: Number(item.orderedQty || 0),
+    newQty: Number(item.orderedQty || 0),
+    completedQty: Number(item.completedQty || 0),
+    reservedQty: Number(item.reservedQty || 0),
+    reason: '',
+  });
+
+  const submitCorrection = async () => {
+    if (!correction || savingCorrection) return;
+    if (Number(correction.newQty) <= 0) return toast.error('Kuantum SO baru harus lebih dari 0');
+    if (String(correction.reason || '').trim().length < 3) return toast.error('Alasan koreksi minimal 3 karakter');
+    const committed = Number(correction.completedQty || 0) + Number(correction.reservedQty || 0);
+    if (Number(correction.newQty) + 1e-9 < committed) {
+      return toast.error(`Kuantum baru tidak boleh lebih kecil dari selesai + reservasi (${formatNum(committed)} ${correction.unit})`);
+    }
+    setSavingCorrection(true);
+    try {
+      await api.post('/outbound-document-quantity-correction', {
+        documentNo: correction.documentNo,
+        productId: correction.productId,
+        orderedQty: Number(correction.newQty),
+        reason: String(correction.reason || '').trim(),
+      });
+      toast.success('Kuantum induk SO berhasil dikoreksi dan outstanding dihitung ulang');
+      setCorrection(null);
+      await load();
+    } catch (error) {
+      toast.error(apiError(error));
+    } finally {
+      setSavingCorrection(false);
+    }
+  };
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
