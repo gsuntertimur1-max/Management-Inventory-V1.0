@@ -333,6 +333,7 @@ async def build_so_monitoring() -> dict:
             "lastActivity": last_activity,
             "createdAt": (master or {}).get("createdAt", ""),
             "updatedAt": (master or {}).get("updatedAt", ""),
+            "quantityCorrectionHistory": list((master or {}).get("quantityCorrectionHistory") or []),
             "loadCount": len(history_rows),
             "completedLoadCount": sum(1 for row in history_rows if row.get("status") == "Selesai"),
             "activeLoadCount": sum(1 for row in history_rows if row.get("status") in ACTIVE_LOAD_STATUSES),
