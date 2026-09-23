@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { CheckCircle2, Clock3, Play, Printer, RefreshCcw, RotateCcw, Truck, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import api, { apiError, printApiFile } from '../lib/api';
@@ -37,6 +38,7 @@ const statusClass = (status) => ({
 
 const Penerimaan = () => {
   const { products, settings, fetchAll } = useData();
+  const navigate = useNavigate();
   const STACKS = stackCodes(settings?.warehouses);
   const [loads, setLoads] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -217,7 +219,7 @@ const Penerimaan = () => {
   return <div className="space-y-6">
     <div className="flex flex-wrap items-end justify-between gap-3">
       <div><div className="label-mono mb-2">Operasional Penerimaan PO</div><h1 className="font-display text-3xl sm:text-4xl font-bold">Penerimaan & Bongkar Kendaraan</h1><p className="text-sm text-[#8b93a1] mt-2">Satu kendaraan = satu sesi bongkar. PO dan stok baru berubah ketika Selesai Bongkar.</p></div>
-      <button onClick={loadAll} className="inline-flex items-center gap-2 rounded-lg border border-[#294263] px-3 py-2 text-xs text-[#93c5fd]"><RefreshCcw size={14}/> Refresh</button>
+      <div className="flex flex-wrap gap-2"><button onClick={() => navigate('/catat?mode=masuk')} className="btn-primary inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold"><Truck size={14}/> Tambah Kendaraan PO</button><button onClick={loadAll} className="inline-flex items-center gap-2 rounded-lg border border-[#294263] px-3 py-2 text-xs text-[#93c5fd]"><RefreshCcw size={14}/> Refresh</button></div>
     </div>
 
     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
