@@ -368,7 +368,7 @@ async def seed_master(force: bool = False):
             db.outbound_documents,
             db.consignment_damaged_opnames,
             db.stock_opnames, db.stack_lots, db.stack_lot_movements,
-            db.operation_requests, db.operation_locks, db.unloading_sessions,
+            db.operation_requests, db.operation_locks, db.unloading_sessions, db.inbound_loads,
             db.marketplace_sync_logs, db.marketplace_auth_sessions, db.marketplace_webhook_events,
             db.marketplace_sku_mappings,
             db.operational_postcommit_issues,
