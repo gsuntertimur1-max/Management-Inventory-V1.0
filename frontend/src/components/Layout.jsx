@@ -32,6 +32,7 @@ const NAV_GROUPS = [
       { to: '/catat', label: 'Catat Stok', icon: ArrowLeftRight, permission: 'operations' },
       { to: '/temuan-kerusakan', label: 'Temuan Kerusakan', icon: TriangleAlert, permission: 'operations' },
       { to: '/retur-pemasok', label: 'Retur / Ganti Pemasok', icon: RefreshCcw, permission: 'operations' },
+      { to: '/penerimaan', label: 'Penerimaan', icon: Truck, permission: 'inbound' },
       { to: '/pengeluaran', label: 'Pengeluaran', icon: Send, permission: 'outboundPage' },
       { to: '/monitoring-so', label: 'Monitoring SO', icon: ClipboardList, permission: 'outboundPage' },
       { to: '/koreksi-operasional', label: 'Koreksi Operasional', icon: ShieldCheck, permission: 'corrections' },
