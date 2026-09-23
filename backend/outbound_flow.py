@@ -869,16 +869,23 @@ async def get_loading_costs(date: str = "", user: dict = Depends(require_cost_vi
     rows, totals = [], {"labor": 0.0, "daily": 0.0, "warehouse": 0.0, "total": 0.0, "chargeable": 0.0, "collected": 0.0}
     groups = {name: {"labor": 0.0, "daily": 0.0, "warehouse": 0.0, "total": 0.0, "chargeable": 0.0, "collected": 0.0} for name in ("GRUP 1 - GBB 17-20", "GRUP 2 - MP1/21-24", "GRUP 3 - RTR")}
     for load in loads:
-        cost = dict(load.get("loading_cost") or {})
-        if not cost:
-            cost = {key: sum(float(item.get("loadingFee", {}).get(key, 0) or 0) for item in load.get("items", [])) for key in ("labor", "daily", "warehouse", "total", "chargeable")}
+        eligible_items = [
+            item for item in load.get("items", [])
+            if str((item.get("loadingFee") or {}).get("mode") or "").strip().upper() != "TERMASUK"
+            and not bool((item.get("loadingFee") or {}).get("settlementExcluded", False))
+        ]
+        # Hitung ulang dari item eligible agar data lama ber-mode TERMASUK
+        # tidak ikut lagi ke flow pembayaran harian.
+        cost = {
+            key: sum(float((item.get("loadingFee") or {}).get(key, 0) or 0) for item in eligible_items)
+            for key in ("labor", "daily", "warehouse", "total", "chargeable")
+        }
         for key in ("labor", "daily", "warehouse", "total", "chargeable"):
-            cost[key] = float(cost.get(key, 0) or 0)
             totals[key] += cost[key]
         collected = float(load.get("loading_fee_payment_total", 0) or 0)
         totals["collected"] += collected
         item_groups = defaultdict(lambda: {"labor": 0.0, "daily": 0.0, "warehouse": 0.0, "total": 0.0, "chargeable": 0.0})
-        for item in load.get("items", []):
+        for item in eligible_items:
             group = item.get("crewGroup") or _crew_group(item.get("stackCode") or item.get("location") or load.get("unit_loading"))
             fee = item.get("loadingFee", {}) or {}
             for key in ("labor", "daily", "warehouse", "total", "chargeable"):
@@ -935,11 +942,18 @@ async def settle_loading_cost(date: str, body: DailyLoadingSettlementInput, user
     for load in loads:
         if group:
             for item in load.get("items", []):
+                fee = item.get("loadingFee") or {}
+                if str(fee.get("mode") or "").strip().upper() == "TERMASUK" or bool(fee.get("settlementExcluded", False)):
+                    continue
                 item_group = _crew_group(item.get("crewGroup") or item.get("stackCode") or item.get("location") or load.get("unit_loading"))
                 if item_group == group:
-                    amount += float((item.get("loadingFee") or {}).get(key, 0) or 0)
+                    amount += float(fee.get(key, 0) or 0)
         else:
-            amount += float((load.get("loading_cost") or {}).get(key, 0) or 0)
+            for item in load.get("items", []):
+                fee = item.get("loadingFee") or {}
+                if str(fee.get("mode") or "").strip().upper() == "TERMASUK" or bool(fee.get("settlementExcluded", False)):
+                    continue
+                amount += float(fee.get(key, 0) or 0)
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Tidak ada biaya yang perlu dibayarkan untuk grup/tanggal ini")
     doc = {"date": date, "recipient": body.recipient, "group": group, "amount": amount, "settledAt": now_iso(), "settledBy": user.get("name", ""), "note": body.note.strip()}
