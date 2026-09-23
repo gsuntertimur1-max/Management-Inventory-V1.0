@@ -246,7 +246,7 @@ const CatatStok = ({ panel = '' }) => {
   const receiptQty = (row) => selectedPO ? Number(row.plannedQty || 0) : Number(row.goodQty || 0) + Number(row.damagedQty || 0);
   const chosen = rows
     .map((row) => ({ ...row, qty: type === 'MASUK' ? receiptQty(row) : row.qty, product: products.find((product) => product.id === row.productId) }))
-    .filter((row) => row.product);
+    .filter((row) => row.product && !(type === 'MASUK' && selectedPO && Number(row.qty || 0) <= 0));
 
   const totalUnit = chosen.reduce((a, row) => a + Number(row.qty || 0), 0);
   const totalBerat = chosen.reduce((a, row) => a + (row.product.weight || 0) * Number(row.qty || 0), 0);
@@ -419,8 +419,8 @@ const CatatStok = ({ panel = '' }) => {
   };
 
   const submit = async () => {
-    if (chosen.length === 0 || chosen.length !== rows.length) {
-      toast.error('Lengkapi semua produk');
+    if (chosen.length === 0 || (!(type === 'MASUK' && selectedPO) && chosen.length !== rows.length)) {
+      toast.error(type === 'MASUK' && selectedPO ? 'Isi minimal satu kuantum rencana kendaraan' : 'Lengkapi semua produk');
       return;
     }
     if (chosen.some((row) => Number(row.qty) <= 0)) {
