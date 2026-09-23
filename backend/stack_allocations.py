@@ -508,10 +508,13 @@ async def export_warehouse_stack_map_pdf(warehouse: str, user: dict = Depends(ge
     c.drawCentredString(page_w / 2, page_h - 23.5 * mm, f"Tanggal penarikan data: {pulled}")
 
     left, right = 12 * mm, page_w - 12 * mm
-    front_strip_y = page_h - 40 * mm
-    zone_header_y = page_h - 49 * mm
-    grid_top = page_h - 57 * mm
-    bottom = 24 * mm
+    # Sisakan strip pintu yang benar-benar terpisah dari header zona.
+    # Jarak ini sengaja dibuat longgar agar label PINTU DEPAN tidak pernah
+    # menimpa kotak TUMPUKAN A/B/C pada hasil cetak.
+    front_strip_y = page_h - 38 * mm
+    zone_header_y = page_h - 51 * mm
+    grid_top = page_h - 60 * mm
+    bottom = 25 * mm
     zone_gap = 6 * mm
     usable_w = right - left
     zone_count = max(len(zones), 1)
@@ -536,10 +539,10 @@ async def export_warehouse_stack_map_pdf(warehouse: str, user: dict = Depends(ge
     for x in front_positions:
         c.setFillColor(colors.white)
         c.setStrokeColor(colors.HexColor("#CBD5E1"))
-        c.roundRect(x - 15 * mm, front_strip_y - 3.3 * mm, 30 * mm, 6.6 * mm, 2 * mm, fill=1, stroke=1)
+        c.roundRect(x - 13 * mm, front_strip_y - 3.0 * mm, 26 * mm, 6.0 * mm, 2 * mm, fill=1, stroke=1)
         c.setFillColor(colors.HexColor("#475569"))
-        c.setFont("Helvetica-Bold", 7.2)
-        c.drawCentredString(x, front_strip_y - 1.1 * mm, "PINTU DEPAN")
+        c.setFont("Helvetica-Bold", 7.0)
+        c.drawCentredString(x, front_strip_y - 1.0 * mm, "PINTU DEPAN")
 
     for zone_index, zone in enumerate(zones):
         x = left + zone_index * (col_w + zone_gap)
@@ -568,25 +571,22 @@ async def export_warehouse_stack_map_pdf(warehouse: str, user: dict = Depends(ge
                 c.drawCentredString(x + col_w / 2, y + row_h / 2 - 1 * mm, "KOSONG")
                 continue
 
-            visible_items = stack_items[:3]
+            visible_items = stack_items[:4]
             hidden_count = max(len(stack_items) - len(visible_items), 0)
-            compact = max_rows > 4 or len(visible_items) > 1
-            sku_size = 4.4 if compact else 6.3
-            name_size = 4.5 if compact else 6.6
-            body_size = 4.15 if compact else 5.9
-            step = 1.95 * mm if compact else 3.0 * mm
-            cursor_y = y + row_h - (7.6 * mm if compact else 9.2 * mm)
 
-            for item_index, item in enumerate(visible_items):
-                if item_index:
-                    c.setStrokeColor(colors.HexColor("#CBD5E1"))
-                    c.line(x + 3 * mm, cursor_y + 0.45 * mm, x + col_w - 3 * mm, cursor_y + 0.45 * mm)
-                    cursor_y -= 1.0 * mm
+            def draw_stack_item(item: dict, item_x: float, item_y_top: float, item_width: float, compact: bool = False) -> float:
+                sku_size = 4.35 if compact else (4.8 if max_rows > 4 else 6.3)
+                name_size = 4.35 if compact else (4.9 if max_rows > 4 else 6.6)
+                body_size = 4.0 if compact else (4.55 if max_rows > 4 else 5.9)
+                step = 1.85 * mm if compact else (2.05 * mm if max_rows > 4 else 3.0 * mm)
+                cursor = item_y_top
+                inset = 1.7 * mm if compact else 3 * mm
+                max_text_width = max(item_width - inset * 2, 8 * mm)
 
                 c.setFillColor(colors.HexColor("#475569"))
                 c.setFont("Helvetica-Bold", sku_size)
-                c.drawString(x + 3 * mm, cursor_y, f"SKU: {item.get('sku', '-') or '-'}")
-                cursor_y -= step
+                c.drawString(item_x + inset, cursor, f"SKU: {item.get('sku', '-') or '-'}")
+                cursor -= step
 
                 c.setFillColor(colors.HexColor("#0F172A"))
                 c.setFont("Helvetica-Bold", name_size)
@@ -594,25 +594,25 @@ async def export_warehouse_stack_map_pdf(warehouse: str, user: dict = Depends(ge
                     str(item.get("productName", "") or "-"),
                     "Helvetica-Bold",
                     name_size,
-                    col_w - 6 * mm,
-                )[: 1 if compact else 2]
+                    max_text_width,
+                )[:1 if compact or max_rows > 4 else 2]
                 for line in name_lines:
-                    c.drawString(x + 3 * mm, cursor_y, line)
-                    cursor_y -= step
+                    c.drawString(item_x + inset, cursor, line)
+                    cursor -= step
 
                 c.setFillColor(colors.HexColor("#1D4ED8"))
                 c.setFont("Helvetica", body_size)
                 calculation = _stack_map_calculation(item)
-                calc_lines = _stack_map_wrap(calculation, "Helvetica", body_size, col_w - 6 * mm)[:1]
-                c.drawString(x + 3 * mm, cursor_y, calc_lines[0] if calc_lines else calculation)
-                cursor_y -= step
+                calc_lines = _stack_map_wrap(calculation, "Helvetica", body_size, max_text_width)[:1]
+                c.drawString(item_x + inset, cursor, calc_lines[0] if calc_lines else calculation)
+                cursor -= step
 
                 qty = float(item.get("primaryQty", 0) or 0)
                 unit = str(item.get("unit", "") or "unit")
                 c.setFillColor(colors.HexColor("#166534"))
                 c.setFont("Helvetica-Bold", body_size)
-                c.drawString(x + 3 * mm, cursor_y, f"Total: {qty:g} {unit}")
-                cursor_y -= step
+                c.drawString(item_x + inset, cursor, f"Total: {qty:g} {unit}")
+                cursor -= step
 
                 measure_per_unit = float(item.get("weight", 0) or 0)
                 measure_total = qty * measure_per_unit
@@ -622,24 +622,54 @@ async def export_warehouse_stack_map_pdf(warehouse: str, user: dict = Depends(ge
                 c.setFont("Helvetica", body_size)
                 if measure_total > 0:
                     if measure_unit in {"liter", "litre", "l"} or is_oil:
-                        c.drawString(x + 3 * mm, cursor_y, f"Liter: {measure_total:g} liter")
+                        c.drawString(item_x + inset, cursor, f"Liter: {measure_total:g} liter")
                     else:
-                        c.drawString(x + 3 * mm, cursor_y, f"Berat: {measure_total:g} {item.get('measureUnit', 'kg') or 'kg'}")
-                    cursor_y -= step
+                        c.drawString(item_x + inset, cursor, f"Berat: {measure_total:g} {item.get('measureUnit', 'kg') or 'kg'}")
+                    cursor -= step
+                return cursor
+
+            # Dua komoditi dalam satu tumpukan ditaruh berdampingan, bukan ditumpuk.
+            # Untuk lebih dari dua, gunakan grid 2 kolom agar isi tetap berada di dalam kotak.
+            item_top = y + row_h - (7.5 * mm if max_rows > 4 else 9.2 * mm)
+            if len(visible_items) == 1:
+                draw_stack_item(visible_items[0], x, item_top, col_w, compact=max_rows > 4)
+            else:
+                inner_left = x + 1.2 * mm
+                inner_width = col_w - 2.4 * mm
+                gutter = 1.2 * mm
+                half_width = (inner_width - gutter) / 2
+                row_slots = 1 if len(visible_items) <= 2 else 2
+                content_bottom = y + 2.3 * mm + (2.8 * mm if hidden_count else 0)
+                content_height = max(item_top - content_bottom, 8 * mm)
+                slot_height = content_height / row_slots
+
+                c.setStrokeColor(colors.HexColor("#CBD5E1"))
+                divider_x = inner_left + half_width + gutter / 2
+                c.line(divider_x, content_bottom, divider_x, item_top + 1.2 * mm)
+                if row_slots == 2:
+                    mid_y = content_bottom + slot_height
+                    c.line(inner_left, mid_y, inner_left + inner_width, mid_y)
+
+                for item_index, item in enumerate(visible_items):
+                    col_index = item_index % 2
+                    row_slot = item_index // 2
+                    item_x = inner_left + col_index * (half_width + gutter)
+                    item_y = item_top - row_slot * slot_height
+                    draw_stack_item(item, item_x, item_y, half_width, compact=True)
 
             if hidden_count > 0:
                 c.setFillColor(colors.HexColor("#64748B"))
-                c.setFont("Helvetica-Oblique", 4.2 if compact else 5.4)
-                c.drawString(x + 3 * mm, max(y + 2.2 * mm, cursor_y), f"+ {hidden_count} komoditi lain")
+                c.setFont("Helvetica-Oblique", 4.2 if max_rows > 4 else 5.2)
+                c.drawString(x + 3 * mm, y + 2.1 * mm, f"+ {hidden_count} komoditi lain")
 
-    back_y = 16 * mm
+    back_y = 17 * mm
     for x in back_positions:
         c.setFillColor(colors.white)
         c.setStrokeColor(colors.HexColor("#CBD5E1"))
-        c.roundRect(x - 15 * mm, back_y - 3.3 * mm, 30 * mm, 6.6 * mm, 2 * mm, fill=1, stroke=1)
+        c.roundRect(x - 13 * mm, back_y - 3.0 * mm, 26 * mm, 6.0 * mm, 2 * mm, fill=1, stroke=1)
         c.setFillColor(colors.HexColor("#475569"))
-        c.setFont("Helvetica-Bold", 7.2)
-        c.drawCentredString(x, back_y - 1.1 * mm, "PINTU BELAKANG")
+        c.setFont("Helvetica-Bold", 7.0)
+        c.drawCentredString(x, back_y - 1.0 * mm, "PINTU BELAKANG")
 
     c.setFillColor(colors.HexColor("#94A3B8"))
     c.setFont("Helvetica", 6.5)
