@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutGrid, Boxes, Layers, ArrowLeftRight, Send, History, ClipboardList, Truck, MonitorSmartphone, Users, Settings, PlusCircle, LogOut, Menu, ChevronDown, PackageSearch, Workflow, ShoppingCart, ShieldCheck, ClipboardCheck, TriangleAlert, RefreshCcw, Activity, CalendarClock, PackageX, Store, ShoppingBag, PackagePlus, Link2, FileInput } from 'lucide-react';
+import { LayoutGrid, Boxes, Layers, ArrowLeftRight, Send, History, ClipboardList, Truck, MonitorSmartphone, Users, Settings, PlusCircle, LogOut, Menu, ChevronDown, PackageSearch, Workflow, ShoppingCart, ShieldCheck, ClipboardCheck, TriangleAlert, RefreshCcw, Activity, CalendarClock, PackageX, Store, ShoppingBag, PackagePlus, Link2, FileInput, Sun, Moon } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { hasPermission, roleLabel } from '../lib/permissions';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from './ui/sheet';
@@ -63,7 +63,7 @@ const NAV_GROUPS = [
 ];
 
 const Layout = ({ children }) => {
-  const { user, logout, canWrite, settings } = useData();
+  const { user, logout, canWrite, settings, theme, setTheme } = useData();
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -122,6 +122,10 @@ const Layout = ({ children }) => {
           </nav>
 
           <div className="hidden xl:flex items-center gap-2 shrink-0">
+            <div className="inline-flex items-center rounded-full border border-[#242f3d] bg-[#0b0f17]/70 p-1" aria-label="Pilih mode tampilan">
+              <button type="button" onClick={() => setTheme('light')} title="Mode terang" aria-label="Mode terang" aria-pressed={theme === 'light'} className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${theme === 'light' ? 'bg-white text-[#d97706] shadow-sm' : 'text-[#8b93a1] hover:text-white hover:bg-[#141a24]'}`}><Sun size={16} /></button>
+              <button type="button" onClick={() => setTheme('dark')} title="Mode gelap" aria-label="Mode gelap" aria-pressed={theme === 'dark'} className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${theme === 'dark' ? 'bg-[#1e293b] text-[#93c5fd] shadow-sm' : 'text-[#8b93a1] hover:text-[#334155] hover:bg-[#e2e8f0]'}`}><Moon size={16} /></button>
+            </div>
             {canWrite && <button data-testid="header-catat-btn" onClick={() => navigate('/catat')} className="btn-primary inline-flex items-center gap-1.5 text-xs font-semibold px-3.5 py-2 rounded-lg"><PlusCircle size={15} /> Catat Transaksi</button>}
             <div className="flex items-center gap-2 pl-2">
               <div className="text-right leading-tight hidden md:block"><div className="text-[13px] font-semibold">{user?.name}</div><div className="label-mono text-[9px]">{roleLabel(user?.role)}</div></div>
@@ -147,6 +151,10 @@ const Layout = ({ children }) => {
                   ))}
                 </nav>
                 <div className="p-4 border-t border-[#1a222e] space-y-2 pb-[max(1rem,env(safe-area-inset-bottom))]">
+                  <div className="grid grid-cols-2 gap-2" aria-label="Pilih mode tampilan">
+                    <button type="button" onClick={() => setTheme('light')} aria-pressed={theme === 'light'} className={`inline-flex items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold ${theme === 'light' ? 'border-[#f59e0b] bg-[#fffbeb] text-[#a16207]' : 'border-[#242f3d] text-[#aab4c4]'}`}><Sun size={17} /> Terang</button>
+                    <button type="button" onClick={() => setTheme('dark')} aria-pressed={theme === 'dark'} className={`inline-flex items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold ${theme === 'dark' ? 'border-[#3b82f6] bg-[#102044] text-[#93c5fd]' : 'border-[#242f3d] text-[#aab4c4]'}`}><Moon size={17} /> Gelap</button>
+                  </div>
                   {canWrite && <button data-testid="mobile-catat-btn" onClick={goToTransaction} className="btn-primary w-full inline-flex items-center justify-center gap-2 text-sm font-semibold px-4 py-3 rounded-xl"><PlusCircle size={18} /> Catat Transaksi</button>}
                   <button data-testid="mobile-logout-btn" onClick={handleLogout} className="w-full inline-flex items-center justify-center gap-2 text-sm font-semibold px-4 py-3 rounded-xl border border-[#242f3d] text-[#c7d0dc] hover:text-white hover:bg-[#141a24] transition-colors"><LogOut size={18} /> Keluar</button>
                 </div>
