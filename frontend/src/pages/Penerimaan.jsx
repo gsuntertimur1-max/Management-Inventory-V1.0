@@ -4,7 +4,7 @@ import { CheckCircle2, Clock3, Play, Printer, RefreshCcw, RotateCcw, Truck, XCir
 import { toast } from 'sonner';
 import api, { apiError, printApiFile } from '../lib/api';
 import { useData } from '../context/DataContext';
-import { formatNum } from '../mock';
+import { formatNum, formatRp } from '../mock';
 import { stackCodes } from '../lib/warehouses';
 
 const displayTime = (value) => value
@@ -115,7 +115,10 @@ const Penerimaan = () => {
         plannedQty: Number(item.qty || 0),
         goodQty: Number(item.qty || 0),
         damagedQty: 0,
-        overtimeQty: fullOvertime ? Number(item.qty || 0) : crossesCutoff ? '' : 0,
+        // Untuk sesi yang mulai sebelum 16.00, biarkan kosong sampai selesai.
+        // Jika modal dibuka sebelum 16.00 tetapi disimpan setelah 16.00,
+        // completeLoad akan mewajibkan operator mengisi jumlah setelah 16.00.
+        overtimeQty: fullOvertime ? Number(item.qty || 0) : '',
         stackCode: item.stackCode || product?.location || '',
         exp: item.exp || '',
         channel: item.channel || product?.channel || 'KOM',
@@ -133,6 +136,13 @@ const Penerimaan = () => {
 
   const completeLoad = async () => {
     if (!completion || busy) return;
+    const started = minutesWib(completion.load.startedAt);
+    const now = nowMinutesWib();
+    const fullOvertimeNow = started !== null && started >= 16 * 60;
+    const crossesCutoffNow = started !== null && started < 16 * 60 && now >= 16 * 60;
+    if (crossesCutoffNow && !completion.crossesCutoff) {
+      setCompletion((prev) => prev ? { ...prev, crossesCutoff: true } : prev);
+    }
     for (const row of completion.rows) {
       const good = Number(row.goodQty || 0);
       const damaged = Number(row.damagedQty || 0);
@@ -141,7 +151,7 @@ const Penerimaan = () => {
         return toast.error(`${row.name}: jumlah aktual melebihi rencana kendaraan`);
       }
       if (good > 0 && !row.stackCode) return toast.error(`Pilih tumpukan barang baik untuk ${row.name}`);
-      if (completion.crossesCutoff && row.overtimeQty === '') {
+      if (crossesCutoffNow && row.overtimeQty === '') {
         return toast.error(`Isi jumlah yang dibongkar setelah 16.00 untuk ${row.name}; isi 0 bila tidak ada.`);
       }
       if (Number(row.overtimeQty || 0) > total + 1e-9) {
@@ -158,7 +168,9 @@ const Penerimaan = () => {
           productId: row.productId,
           goodQty: Number(row.goodQty || 0),
           damagedQty: Number(row.damagedQty || 0),
-          overtimeQty: Number(row.overtimeQty || 0),
+          overtimeQty: fullOvertimeNow
+            ? Number(row.goodQty || 0) + Number(row.damagedQty || 0)
+            : (crossesCutoffNow ? (row.overtimeQty === '' ? null : Number(row.overtimeQty)) : null),
           stackCode: row.stackCode || '',
           exp: row.exp || '',
           channel: row.channel || 'KOM',
@@ -192,6 +204,18 @@ const Penerimaan = () => {
           <div className="font-semibold mt-2">{load.poNo} · {load.party}</div>
           <div className="text-xs text-[#8b93a1] mt-1">{load.polisi || 'Tanpa nomor polisi'}{load.driver ? ` · ${load.driver}` : ''}</div>
           {load.startedAt && <div className="text-xs text-[#8b93a1] mt-1">Mulai bongkar: {displayTime(load.startedAt)}</div>}
+          {load.status === 'Selesai' && Number(load.unloadingCost?.total || 0) > 0 && (
+            <div className="text-xs text-[#fbbf24] mt-1">
+              Biaya bongkar kendaraan: {formatRp(load.unloadingCost.total)}
+              {load.unloadingCost?.groups?.length ? ` · ${load.unloadingCost.groups.join(', ')}` : ''}
+            </div>
+          )}
+          {load.reversedAt && (
+            <div className="mt-2 rounded-lg border border-[#b45309] bg-[#78350f]/10 px-2.5 py-2 text-xs text-[#fbbf24]">
+              Penerimaan sudah direversal melalui Koreksi Operasional pada {displayTime(load.reversedAt)}
+              {load.reversalReason ? ` · ${load.reversalReason}` : ''}.
+            </div>
+          )}
         </div>
         <Truck size={20} className="text-[#60a5fa]" />
       </div>
