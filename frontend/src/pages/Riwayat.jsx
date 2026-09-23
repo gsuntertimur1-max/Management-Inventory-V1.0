@@ -32,6 +32,17 @@ const normalizeUnloadingGroup = (value) => {
   return '';
 };
 
+const loadingUhLabel = (group) => ({
+  'GRUP 1 - GBB 17-20': 'UH 1 - GBB 17-20',
+  'GRUP 2 - MP1/21-24': 'UH 2 - MP1/21-24',
+  'GRUP 3 - RTR': 'UH 3 - RTR',
+}[group] || group || 'UH');
+
+const unloadingUhLabel = (group) => ({
+  'MANDOR 1 - GBB 17-20': 'UH 1 - GBB 17-20',
+  'MANDOR 2 - MP1/GBB 21-24': 'UH 2 - MP1/GBB 21-24',
+}[group] || group || 'UH');
+
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;',
 }[char]));
@@ -283,7 +294,7 @@ const Riwayat = () => {
     }
   };
 
-  const printLoadingDay = (day, group, recipient) => {
+  const printLoadingDay = (day, group, recipient, displayGroup = group) => {
     const key = recipient === 'BURUH' ? 'labor' : 'daily';
     const title = recipient === 'BURUH' ? 'REKAP UPAH BURUH PEMUATAN' : 'REKAP UH GUDANG PEMUATAN';
     const items = (day.items || []).filter((item) => item.crewGroup === group && Number(item.fee?.[key] || 0) > 0);
@@ -295,11 +306,11 @@ const Riwayat = () => {
     const totalAmount = items.reduce((sum, item) => sum + Number(item.fee?.[key] || 0), 0);
     const w = window.open('', '_blank', 'width=460,height=720');
     if (!w) return toast.error('Izinkan popup untuk mencetak rekap thermal.');
-    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>@page{size:80mm auto;margin:3mm}*{box-sizing:border-box}body{width:74mm;margin:0 auto;color:#000;font:12px/1.35 Arial,sans-serif}.center{text-align:center}.title{font-size:15px;font-weight:900;margin:6px 0}.sub{font-size:10px;margin-bottom:8px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border-bottom:1px dashed #000;padding:6px 2px;text-align:left;vertical-align:top}.r{text-align:right;font-weight:700}.total{font-size:17px;font-weight:900;margin:12px 0}.line{border-top:1px solid #000;margin-top:38px;padding-top:5px;text-align:center;font-size:11px;font-weight:700}small{font-size:9px}</style></head><body><div class="center"><b>PERUM BULOG</b><div>Gudang Sunter Timur I & II</div><div class="title">${title}</div><div class="sub">${escapeHtml(group)}<br/>Tanggal: ${escapeHtml(day.date)}</div></div><table><thead><tr><th>No</th><th>Pemuatan</th><th class="r">Biaya</th></tr></thead><tbody>${rows || '<tr><td colspan="3">Tidak ada biaya</td></tr>'}</tbody></table><div class="total">TOTAL: Rp ${escapeHtml(formatNum(totalAmount))}</div><div class="line">Petugas Gudang</div><div class="line">Penerima ${recipient === 'BURUH' ? 'Buruh' : 'UH Gudang'}</div><script>window.onload=()=>window.print()</script></body></html>`);
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>@page{size:80mm auto;margin:3mm}*{box-sizing:border-box}body{width:74mm;margin:0 auto;color:#000;font:12px/1.35 Arial,sans-serif}.center{text-align:center}.title{font-size:15px;font-weight:900;margin:6px 0}.sub{font-size:10px;margin-bottom:8px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border-bottom:1px dashed #000;padding:6px 2px;text-align:left;vertical-align:top}.r{text-align:right;font-weight:700}.total{font-size:17px;font-weight:900;margin:12px 0}.line{border-top:1px solid #000;margin-top:38px;padding-top:5px;text-align:center;font-size:11px;font-weight:700}small{font-size:9px}</style></head><body><div class="center"><b>PERUM BULOG</b><div>Gudang Sunter Timur I & II</div><div class="title">${title}</div><div class="sub">${escapeHtml(displayGroup)}<br/>Tanggal: ${escapeHtml(day.date)}</div></div><table><thead><tr><th>No</th><th>Pemuatan</th><th class="r">Biaya</th></tr></thead><tbody>${rows || '<tr><td colspan="3">Tidak ada biaya</td></tr>'}</tbody></table><div class="total">TOTAL: Rp ${escapeHtml(formatNum(totalAmount))}</div><div class="line">Petugas Gudang</div><div class="line">Penerima ${recipient === 'BURUH' ? 'Buruh' : 'UH Gudang'}</div><script>window.onload=()=>window.print()</script></body></html>`);
     w.document.close();
   };
 
-  const printUnloadingDay = (day, group, recipient) => {
+  const printUnloadingDay = (day, group, recipient, displayGroup = group) => {
     const key = recipient === 'BURUH' ? 'labor' : 'daily';
     const title = recipient === 'BURUH' ? 'REKAP UPAH BURUH BONGKAR' : 'REKAP UH GUDANG BONGKAR';
     const items = (day.items || []).filter((item) => item.unloading_group === group && Number(item.unloading_cost?.[key] || 0) > 0);
@@ -312,7 +323,7 @@ const Riwayat = () => {
     const totalAmount = items.reduce((sum, item) => sum + Number(item.unloading_cost?.[key] || 0), 0);
     const w = window.open('', '_blank', 'width=460,height=720');
     if (!w) return toast.error('Izinkan popup untuk mencetak rekap thermal.');
-    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>@page{size:80mm auto;margin:3mm}*{box-sizing:border-box}body{width:74mm;margin:0 auto;color:#000;font:12px/1.35 Arial,sans-serif}.center{text-align:center}.title{font-size:15px;font-weight:900;margin:6px 0}.sub{font-size:10px;margin-bottom:8px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border-bottom:1px dashed #000;padding:6px 2px;text-align:left;vertical-align:top}.r{text-align:right;font-weight:700}.total{font-size:17px;font-weight:900;margin:12px 0}.line{border-top:1px solid #000;margin-top:38px;padding-top:5px;text-align:center;font-size:11px;font-weight:700}small{font-size:9px}</style></head><body><div class="center"><b>PERUM BULOG</b><div>Gudang Sunter Timur I & II</div><div class="title">${title}</div><div class="sub">${escapeHtml(group)}<br/>Tanggal: ${escapeHtml(day.date)}</div></div><table><thead><tr><th>No</th><th>Penerimaan</th><th class="r">Biaya</th></tr></thead><tbody>${rows || '<tr><td colspan="3">Tidak ada biaya</td></tr>'}</tbody></table><div class="total">TOTAL: Rp ${escapeHtml(formatNum(totalAmount))}</div><div class="line">Petugas Gudang</div><div class="line">Penerima ${recipient === 'BURUH' ? 'Buruh' : 'UH Gudang'}</div><script>window.onload=()=>window.print()</script></body></html>`);
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>@page{size:80mm auto;margin:3mm}*{box-sizing:border-box}body{width:74mm;margin:0 auto;color:#000;font:12px/1.35 Arial,sans-serif}.center{text-align:center}.title{font-size:15px;font-weight:900;margin:6px 0}.sub{font-size:10px;margin-bottom:8px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border-bottom:1px dashed #000;padding:6px 2px;text-align:left;vertical-align:top}.r{text-align:right;font-weight:700}.total{font-size:17px;font-weight:900;margin:12px 0}.line{border-top:1px solid #000;margin-top:38px;padding-top:5px;text-align:center;font-size:11px;font-weight:700}small{font-size:9px}</style></head><body><div class="center"><b>PERUM BULOG</b><div>Gudang Sunter Timur I & II</div><div class="title">${title}</div><div class="sub">${escapeHtml(displayGroup)}<br/>Tanggal: ${escapeHtml(day.date)}</div></div><table><thead><tr><th>No</th><th>Penerimaan</th><th class="r">Biaya</th></tr></thead><tbody>${rows || '<tr><td colspan="3">Tidak ada biaya</td></tr>'}</tbody></table><div class="total">TOTAL: Rp ${escapeHtml(formatNum(totalAmount))}</div><div class="line">Petugas Gudang</div><div class="line">Penerima ${recipient === 'BURUH' ? 'Buruh' : 'UH Gudang'}</div><script>window.onload=()=>window.print()</script></body></html>`);
     w.document.close();
   };
 
@@ -429,38 +440,50 @@ const Riwayat = () => {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-                    {['GRUP 1 - GBB 17-20', 'GRUP 2 - MP1/21-24', 'GRUP 3 - RTR'].map((group) => {
-                      const values = day.groups[group];
-                      if (!values) return null;
-                      return (
-                        <div key={group} className="rounded-lg border border-[#202a38] p-3">
-                          <div className="font-semibold text-sm">{group}</div>
-                          <div className="grid grid-cols-2 gap-2 mt-2 text-xs">
-                            <div><span className="text-[#8b93a1]">Buruh</span><div className="font-mono">{formatRp(values.labor)}</div></div>
-                            <div><span className="text-[#8b93a1]">UH</span><div className="font-mono">{formatRp(values.daily)}</div></div>
-                            <div><span className="text-[#8b93a1]">Gudang</span><div className="font-mono">{formatRp(values.warehouse)}</div></div>
-                            <div><span className="text-[#8b93a1]">Total</span><div className="font-mono font-bold text-[#93c5fd]">{formatRp(values.total)}</div></div>
-                          </div>
-                          <div className="grid grid-cols-1 gap-2 mt-3">
-                            {renderSettlementCard('loading', day, 'BURUH', values.labor, group)}
-                            {renderSettlementCard('loading', day, 'HARIAN', values.daily, group)}
-                          </div>
-                          <div className="flex flex-wrap gap-2 mt-3">
-                            <button onClick={() => printLoadingDay(day, group, 'BURUH')} className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-[#294263] text-[#93c5fd]"><Printer size={12} /> Buruh 80mm</button>
-                            <button onClick={() => printLoadingDay(day, group, 'HARIAN')} className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-[#294263] text-[#93c5fd]"><Printer size={12} /> UH 80mm</button>
-                          </div>
-                        </div>
-                      );
-                    })}
+                  <div className="space-y-3">
+                    <div>
+                      <div className="text-xs font-semibold text-[#93c5fd] mb-2">Grup Buruh / Mandor Pemuatan</div>
+                      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                        {['GRUP 1 - GBB 17-20', 'GRUP 2 - MP1/21-24', 'GRUP 3 - RTR'].map((group) => {
+                          const values = day.groups[group];
+                          if (!values || Number(values.labor || 0) <= 0) return null;
+                          return (
+                            <div key={`buruh-${group}`} className="rounded-lg border border-[#202a38] p-3">
+                              <div className="font-semibold text-sm">{group}</div>
+                              <div className="mt-2 text-xs"><span className="text-[#8b93a1]">Upah Buruh</span><div className="font-mono font-bold mt-1">{formatRp(values.labor)}</div></div>
+                              <div className="grid grid-cols-1 gap-2 mt-3">{renderSettlementCard('loading', day, 'BURUH', values.labor, group)}</div>
+                              <button onClick={() => printLoadingDay(day, group, 'BURUH', group)} className="mt-3 inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-[#294263] text-[#93c5fd]"><Printer size={12} /> Buruh 80mm</button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold text-[#c4b5fd] mb-2">Grup Uang Harian Pemuatan</div>
+                      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                        {['GRUP 1 - GBB 17-20', 'GRUP 2 - MP1/21-24', 'GRUP 3 - RTR'].map((group) => {
+                          const values = day.groups[group];
+                          if (!values || Number(values.daily || 0) <= 0) return null;
+                          const uhGroup = loadingUhLabel(group);
+                          return (
+                            <div key={`uh-${group}`} className="rounded-lg border border-[#3b2f5f] p-3">
+                              <div className="font-semibold text-sm">{uhGroup}</div>
+                              <div className="mt-2 text-xs"><span className="text-[#8b93a1]">Uang Harian</span><div className="font-mono font-bold mt-1">{formatRp(values.daily)}</div></div>
+                              <div className="grid grid-cols-1 gap-2 mt-3">{renderSettlementCard('loading', day, 'HARIAN', values.daily, group)}</div>
+                              <button onClick={() => printLoadingDay(day, group, 'HARIAN', uhGroup)} className="mt-3 inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-[#5b4a82] text-[#c4b5fd]"><Printer size={12} /> UH 80mm</button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
 
                   <div className="overflow-x-auto mt-4">
                     <table className="w-full text-xs">
-                      <thead><tr className="text-left border-b border-[#242f3d]"><th className="py-2 pr-3">Dokumen / Bon</th><th className="py-2 pr-3">Produk</th><th className="py-2 pr-3">Tumpukan</th><th className="py-2 pr-3">Mandor</th><th className="py-2 pr-3">Pengambil</th><th className="py-2 pr-3">Status Tagihan</th><th className="py-2 text-right">Biaya</th></tr></thead>
+                      <thead><tr className="text-left border-b border-[#242f3d]"><th className="py-2 pr-3">Dokumen / Bon</th><th className="py-2 pr-3">Produk</th><th className="py-2 pr-3">Tumpukan</th><th className="py-2 pr-3">Mandor/Buruh</th><th className="py-2 pr-3">Grup UH</th><th className="py-2 pr-3">Pengambil</th><th className="py-2 pr-3">Status Tagihan</th><th className="py-2 text-right">Biaya</th></tr></thead>
                       <tbody>{day.items.map((item) => {
                         const latestPayment = item.payments?.length ? item.payments[item.payments.length - 1] : null;
-                        return <tr key={item.id} className="border-b border-[#171e29]"><td className="py-2 pr-3 font-mono"><div>{item.documentNo || '—'}</div><div className="text-[10px] text-[#6b7688]">{item.bonNo || item.antrian || '—'}{item.suratJalanNo ? ` · ${item.suratJalanNo}` : ''}</div></td><td className="py-2 pr-3"><div className="font-medium">{item.product}</div><div className="text-[10px] text-[#6b7688]">{formatNum(item.qty)} {item.unit}{item.fee?.holiday ? ' · Hari Libur' : ''}</div><div className={`text-[10px] mt-1 ${item.fee?.workStatus === 'LEMBUR_PENUH' ? 'text-[#f87171]' : item.fee?.workStatus === 'LEMBUR_PARSIAL' ? 'text-[#fbbf24]' : 'text-[#4ade80]'}`}>{(item.fee?.workStatus || 'NORMAL').replaceAll('_', ' ')} · Normal {formatNum(item.fee?.regularQty ?? item.qty)} {item.unit} · Lembur {formatNum(item.fee?.overtimeQty ?? 0)} {item.unit}</div>{(item.work?.startedAt || item.work?.completedAt) && <div className="text-[10px] text-[#8b93a1] mt-1">Mulai {formatDate(item.work?.startedAt)} · Selesai {formatDate(item.work?.completedAt)}</div>}{item.fee?.breakdown && <div className="text-[10px] text-[#8b93a1] mt-1">Dasar {formatRp(item.fee.baseTotal || 0)} · Lembur {formatRp(item.fee.overtimeTotal || 0)} · Libur {formatRp(item.fee.holidayTotal || 0)} · Libur+Lembur {formatRp(item.fee.holidayOvertimeTotal || 0)}</div>}</td><td className="py-2 pr-3 font-mono">{item.stackCode || '—'}</td><td className="py-2 pr-3">{item.crewGroup}</td><td className="py-2 pr-3">{item.pengambil || '—'}</td><td className="py-2 pr-3"><span className={item.paymentStatus === 'LUNAS' ? 'text-[#4ade80]' : item.paymentStatus === 'SEBAGIAN' ? 'text-[#fbbf24]' : item.paymentStatus === 'TIDAK_DITAGIH' ? 'text-[#8b93a1]' : 'text-[#f87171]'}>{item.paymentStatus === 'LUNAS' ? 'Sudah dibayar' : item.paymentStatus === 'SEBAGIAN' ? 'Dibayar sebagian' : item.paymentStatus === 'TIDAK_DITAGIH' ? 'Tidak ditagihkan' : 'Belum dibayar'}</span>{item.outstanding > 0 && <div className="font-mono text-[10px] mt-1">{formatRp(item.outstanding)}</div>}{item.isFirstLoadItem && latestPayment && <div className="text-[10px] text-[#8b93a1] mt-1">Terakhir {formatDate(latestPayment.time)} · {latestPayment.method}{latestPayment.payer ? ` · ${latestPayment.payer}` : ''}</div>}{canWrite && item.isFirstLoadItem && item.outstanding > 0 && item.paymentStatus !== 'TIDAK_DITAGIH' && <button type="button" onClick={() => setFeePayment({ loadId: item.loadId, max: item.outstanding, amount: String(item.outstanding), method: 'TUNAI', payer: item.pengambil || '', note: '' })} className="mt-2 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[#2563eb] text-[#93c5fd] hover:bg-[#2563eb]/10"><CreditCard size={12} /> Catat pembayaran</button>}</td><td className="py-2 text-right font-mono"><div>{formatRp(item.fee?.total || 0)}</div>{item.fee?.breakdown && <div className="mt-1 text-[10px] text-[#8b93a1] font-sans">Buruh {formatRp(item.fee?.labor || 0)} · UH {formatRp(item.fee?.daily || 0)} · Gudang {formatRp(item.fee?.warehouse || 0)}</div>}</td></tr>;
+                        return <tr key={item.id} className="border-b border-[#171e29]"><td className="py-2 pr-3 font-mono"><div>{item.documentNo || '—'}</div><div className="text-[10px] text-[#6b7688]">{item.bonNo || item.antrian || '—'}{item.suratJalanNo ? ` · ${item.suratJalanNo}` : ''}</div></td><td className="py-2 pr-3"><div className="font-medium">{item.product}</div><div className="text-[10px] text-[#6b7688]">{formatNum(item.qty)} {item.unit}{item.fee?.holiday ? ' · Hari Libur' : ''}</div><div className={`text-[10px] mt-1 ${item.fee?.workStatus === 'LEMBUR_PENUH' ? 'text-[#f87171]' : item.fee?.workStatus === 'LEMBUR_PARSIAL' ? 'text-[#fbbf24]' : 'text-[#4ade80]'}`}>{(item.fee?.workStatus || 'NORMAL').replaceAll('_', ' ')} · Normal {formatNum(item.fee?.regularQty ?? item.qty)} {item.unit} · Lembur {formatNum(item.fee?.overtimeQty ?? 0)} {item.unit}</div>{(item.work?.startedAt || item.work?.completedAt) && <div className="text-[10px] text-[#8b93a1] mt-1">Mulai {formatDate(item.work?.startedAt)} · Selesai {formatDate(item.work?.completedAt)}</div>}{item.fee?.breakdown && <div className="text-[10px] text-[#8b93a1] mt-1">Dasar {formatRp(item.fee.baseTotal || 0)} · Lembur {formatRp(item.fee.overtimeTotal || 0)} · Libur {formatRp(item.fee.holidayTotal || 0)} · Libur+Lembur {formatRp(item.fee.holidayOvertimeTotal || 0)}</div>}</td><td className="py-2 pr-3 font-mono">{item.stackCode || '—'}</td><td className="py-2 pr-3">{item.crewGroup}</td><td className="py-2 pr-3">{loadingUhLabel(item.crewGroup)}</td><td className="py-2 pr-3">{item.pengambil || '—'}</td><td className="py-2 pr-3"><span className={item.paymentStatus === 'LUNAS' ? 'text-[#4ade80]' : item.paymentStatus === 'SEBAGIAN' ? 'text-[#fbbf24]' : item.paymentStatus === 'TIDAK_DITAGIH' ? 'text-[#8b93a1]' : 'text-[#f87171]'}>{item.paymentStatus === 'LUNAS' ? 'Sudah dibayar' : item.paymentStatus === 'SEBAGIAN' ? 'Dibayar sebagian' : item.paymentStatus === 'TIDAK_DITAGIH' ? 'Tidak ditagihkan' : 'Belum dibayar'}</span>{item.outstanding > 0 && <div className="font-mono text-[10px] mt-1">{formatRp(item.outstanding)}</div>}{item.isFirstLoadItem && latestPayment && <div className="text-[10px] text-[#8b93a1] mt-1">Terakhir {formatDate(latestPayment.time)} · {latestPayment.method}{latestPayment.payer ? ` · ${latestPayment.payer}` : ''}</div>}{canWrite && item.isFirstLoadItem && item.outstanding > 0 && item.paymentStatus !== 'TIDAK_DITAGIH' && <button type="button" onClick={() => setFeePayment({ loadId: item.loadId, max: item.outstanding, amount: String(item.outstanding), method: 'TUNAI', payer: item.pengambil || '', note: '' })} className="mt-2 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-[#2563eb] text-[#93c5fd] hover:bg-[#2563eb]/10"><CreditCard size={12} /> Catat pembayaran</button>}</td><td className="py-2 text-right font-mono"><div>{formatRp(item.fee?.total || 0)}</div>{item.fee?.breakdown && <div className="mt-1 text-[10px] text-[#8b93a1] font-sans">Buruh {formatRp(item.fee?.labor || 0)} · UH {formatRp(item.fee?.daily || 0)} · Gudang {formatRp(item.fee?.warehouse || 0)}</div>}</td></tr>;
                       })}</tbody>
                     </table>
                   </div>
@@ -508,36 +531,48 @@ const Riwayat = () => {
                     {Number(day.totals.chargeable || 0) > 0 && <div className="text-xs rounded-lg border border-[#8a5a16] px-3 py-2 text-[#fbbf24]">Tagihan Pengirim {formatRp(day.totals.chargeable)}</div>}
                   </div>
 
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                    {['MANDOR 1 - GBB 17-20', 'MANDOR 2 - MP1/GBB 21-24'].map((group) => {
-                      const values = day.groups[group];
-                      if (!values) return null;
-                      return (
-                        <div key={group} className="rounded-lg border border-[#202a38] p-3">
-                          <div className="font-semibold text-sm">{group}</div>
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2 text-xs">
-                            <div><span className="text-[#8b93a1]">Buruh</span><div className="font-mono">{formatRp(values.labor)}</div></div>
-                            <div><span className="text-[#8b93a1]">UH</span><div className="font-mono">{formatRp(values.daily)}</div></div>
-                            <div><span className="text-[#8b93a1]">Gudang</span><div className="font-mono">{formatRp(values.warehouse)}</div></div>
-                            <div><span className="text-[#8b93a1]">Total</span><div className="font-mono font-bold text-[#fbbf24]">{formatRp(values.total)}</div></div>
-                          </div>
-                          <div className="grid grid-cols-1 gap-2 mt-3">
-                            {renderSettlementCard('unloading', day, 'BURUH', values.labor, group)}
-                            {renderSettlementCard('unloading', day, 'HARIAN', values.daily, group)}
-                          </div>
-                          <div className="flex flex-wrap gap-2 mt-3">
-                            <button onClick={() => printUnloadingDay(day, group, 'BURUH')} className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-[#294263] text-[#93c5fd]"><Printer size={12} /> Buruh 80mm</button>
-                            <button onClick={() => printUnloadingDay(day, group, 'HARIAN')} className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-[#294263] text-[#93c5fd]"><Printer size={12} /> UH 80mm</button>
-                          </div>
-                        </div>
-                      );
-                    })}
+                  <div className="space-y-3">
+                    <div>
+                      <div className="text-xs font-semibold text-[#fbbf24] mb-2">Grup Buruh / Mandor Bongkar</div>
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                        {['MANDOR 1 - GBB 17-20', 'MANDOR 2 - MP1/GBB 21-24'].map((group) => {
+                          const values = day.groups[group];
+                          if (!values || Number(values.labor || 0) <= 0) return null;
+                          return (
+                            <div key={`buruh-${group}`} className="rounded-lg border border-[#202a38] p-3">
+                              <div className="font-semibold text-sm">{group}</div>
+                              <div className="mt-2 text-xs"><span className="text-[#8b93a1]">Upah Buruh Bongkar</span><div className="font-mono font-bold mt-1">{formatRp(values.labor)}</div></div>
+                              <div className="grid grid-cols-1 gap-2 mt-3">{renderSettlementCard('unloading', day, 'BURUH', values.labor, group)}</div>
+                              <button onClick={() => printUnloadingDay(day, group, 'BURUH', group)} className="mt-3 inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-[#294263] text-[#93c5fd]"><Printer size={12} /> Buruh 80mm</button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold text-[#c4b5fd] mb-2">Grup Uang Harian Bongkar</div>
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                        {['MANDOR 1 - GBB 17-20', 'MANDOR 2 - MP1/GBB 21-24'].map((group) => {
+                          const values = day.groups[group];
+                          if (!values || Number(values.daily || 0) <= 0) return null;
+                          const uhGroup = unloadingUhLabel(group);
+                          return (
+                            <div key={`uh-${group}`} className="rounded-lg border border-[#3b2f5f] p-3">
+                              <div className="font-semibold text-sm">{uhGroup}</div>
+                              <div className="mt-2 text-xs"><span className="text-[#8b93a1]">Uang Harian Bongkar</span><div className="font-mono font-bold mt-1">{formatRp(values.daily)}</div></div>
+                              <div className="grid grid-cols-1 gap-2 mt-3">{renderSettlementCard('unloading', day, 'HARIAN', values.daily, group)}</div>
+                              <button onClick={() => printUnloadingDay(day, group, 'HARIAN', uhGroup)} className="mt-3 inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border border-[#5b4a82] text-[#c4b5fd]"><Printer size={12} /> UH 80mm</button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
 
                   <div className="overflow-x-auto mt-4">
                     <table className="w-full text-xs">
-                      <thead><tr className="text-left border-b border-[#242f3d]"><th className="py-2 pr-3">No. Ref / PO</th><th className="py-2 pr-3">Produk</th><th className="py-2 pr-3">Mandor</th><th className="py-2 pr-3">Kuantitas</th><th className="py-2 pr-3">Bukti Timbang</th><th className="py-2 text-right">Biaya</th></tr></thead>
-                      <tbody>{day.items.map((item, itemIndex) => { const basisQty = Number(item.unloading_cost_basis_qty || 0) || Number(item.unloading_cost?.regularQty || 0) + Number(item.unloading_cost?.overtimeQty || 0) || Math.abs(Number(item.change || 0)); const firstForOperation = item.operation_id && day.items.findIndex((row) => row.operation_id === item.operation_id) === itemIndex; return <tr key={item.id} className="border-b border-[#171e29]"><td className="py-2 pr-3 font-mono">{item.po_no || item.ref || '—'}</td><td className="py-2 pr-3"><div className="font-medium">{item.product}</div><div className={`text-[10px] ${item.unloading_cost?.workStatus === 'LEMBUR_PENUH' ? 'text-[#f87171]' : item.unloading_cost?.workStatus === 'LEMBUR_PARSIAL' ? 'text-[#fbbf24]' : 'text-[#4ade80]'}`}>{(item.unloading_cost?.workStatus || 'NORMAL').replaceAll('_', ' ')}{item.unloading_cost?.holiday ? ' · Hari Libur' : ''}</div><div className="text-[10px] text-[#6b7688] mt-1">Normal {formatNum(item.unloading_cost?.regularQty ?? basisQty)} {item.unit || ''} · Lembur {formatNum(item.unloading_cost?.overtimeQty ?? 0)} {item.unit || ''}</div>{(item.unloading_cost?.startedAt || item.unloading_work?.startedAt) && <div className="text-[10px] text-[#8b93a1] mt-1">Mulai {formatDate(item.unloading_cost?.startedAt || item.unloading_work?.startedAt)} · Selesai {formatDate(item.unloading_cost?.completedAt || item.unloading_work?.completedAt)}</div>}{item.unloading_cost?.breakdown && <div className="text-[10px] text-[#8b93a1] mt-1">Dasar {formatRp(item.unloading_cost?.baseTotal || 0)} · Lembur {formatRp(item.unloading_cost?.overtimeTotal || 0)} · Libur {formatRp(item.unloading_cost?.holidayTotal || 0)} · Libur+Lembur {formatRp(item.unloading_cost?.holidayOvertimeTotal || 0)}</div>}</td><td className="py-2 pr-3">{item.unloading_group}</td><td className="py-2 pr-3 font-mono"><div>{formatNum(basisQty)} {item.unloading_cost_basis_unit || item.unit || ''}</div>{basisQty !== Math.abs(Number(item.change || 0)) && <div className="text-[10px] text-[#8b93a1]">Baris stok: {formatNum(Math.abs(Number(item.change || 0)))} {item.unit || ''}</div>}</td><td className="py-2 pr-3">{firstForOperation && item.weighing_form ? <button type="button" onClick={() => printInboundWeighing(item)} className="inline-flex items-center gap-1 text-[10px] px-2.5 py-1.5 rounded-lg border border-[#294263] text-[#93c5fd]"><Printer size={12} /> Cetak Ulang</button> : <span className="text-[#4b5563]">—</span>}</td><td className="py-2 text-right font-mono"><div>{formatRp(item.unloading_cost?.total || 0)}</div>{item.unloading_cost?.breakdown && <div className="mt-1 text-[10px] text-[#8b93a1] font-sans">Buruh {formatRp(item.unloading_cost?.labor || 0)} · UH {formatRp(item.unloading_cost?.daily || 0)} · Gudang {formatRp(item.unloading_cost?.warehouse || 0)}</div>}</td></tr>; })}</tbody>
+                      <thead><tr className="text-left border-b border-[#242f3d]"><th className="py-2 pr-3">No. Ref / PO</th><th className="py-2 pr-3">Produk</th><th className="py-2 pr-3">Mandor/Buruh</th><th className="py-2 pr-3">Grup UH</th><th className="py-2 pr-3">Kuantitas</th><th className="py-2 pr-3">Bukti Timbang</th><th className="py-2 text-right">Biaya</th></tr></thead>
+                      <tbody>{day.items.map((item, itemIndex) => { const basisQty = Number(item.unloading_cost_basis_qty || 0) || Number(item.unloading_cost?.regularQty || 0) + Number(item.unloading_cost?.overtimeQty || 0) || Math.abs(Number(item.change || 0)); const firstForOperation = item.operation_id && day.items.findIndex((row) => row.operation_id === item.operation_id) === itemIndex; return <tr key={item.id} className="border-b border-[#171e29]"><td className="py-2 pr-3 font-mono">{item.po_no || item.ref || '—'}</td><td className="py-2 pr-3"><div className="font-medium">{item.product}</div><div className={`text-[10px] ${item.unloading_cost?.workStatus === 'LEMBUR_PENUH' ? 'text-[#f87171]' : item.unloading_cost?.workStatus === 'LEMBUR_PARSIAL' ? 'text-[#fbbf24]' : 'text-[#4ade80]'}`}>{(item.unloading_cost?.workStatus || 'NORMAL').replaceAll('_', ' ')}{item.unloading_cost?.holiday ? ' · Hari Libur' : ''}</div><div className="text-[10px] text-[#6b7688] mt-1">Normal {formatNum(item.unloading_cost?.regularQty ?? basisQty)} {item.unit || ''} · Lembur {formatNum(item.unloading_cost?.overtimeQty ?? 0)} {item.unit || ''}</div>{(item.unloading_cost?.startedAt || item.unloading_work?.startedAt) && <div className="text-[10px] text-[#8b93a1] mt-1">Mulai {formatDate(item.unloading_cost?.startedAt || item.unloading_work?.startedAt)} · Selesai {formatDate(item.unloading_cost?.completedAt || item.unloading_work?.completedAt)}</div>}{item.unloading_cost?.breakdown && <div className="text-[10px] text-[#8b93a1] mt-1">Dasar {formatRp(item.unloading_cost?.baseTotal || 0)} · Lembur {formatRp(item.unloading_cost?.overtimeTotal || 0)} · Libur {formatRp(item.unloading_cost?.holidayTotal || 0)} · Libur+Lembur {formatRp(item.unloading_cost?.holidayOvertimeTotal || 0)}</div>}</td><td className="py-2 pr-3">{item.unloading_group}</td><td className="py-2 pr-3">{unloadingUhLabel(item.unloading_group)}</td><td className="py-2 pr-3 font-mono"><div>{formatNum(basisQty)} {item.unloading_cost_basis_unit || item.unit || ''}</div>{basisQty !== Math.abs(Number(item.change || 0)) && <div className="text-[10px] text-[#8b93a1]">Baris stok: {formatNum(Math.abs(Number(item.change || 0)))} {item.unit || ''}</div>}</td><td className="py-2 pr-3">{firstForOperation && item.weighing_form ? <button type="button" onClick={() => printInboundWeighing(item)} className="inline-flex items-center gap-1 text-[10px] px-2.5 py-1.5 rounded-lg border border-[#294263] text-[#93c5fd]"><Printer size={12} /> Cetak Ulang</button> : <span className="text-[#4b5563]">—</span>}</td><td className="py-2 text-right font-mono"><div>{formatRp(item.unloading_cost?.total || 0)}</div>{item.unloading_cost?.breakdown && <div className="mt-1 text-[10px] text-[#8b93a1] font-sans">Buruh {formatRp(item.unloading_cost?.labor || 0)} · UH {formatRp(item.unloading_cost?.daily || 0)} · Gudang {formatRp(item.unloading_cost?.warehouse || 0)}</div>}</td></tr>; })}</tbody>
                     </table>
                   </div>
                 </div>
