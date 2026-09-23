@@ -151,7 +151,7 @@ const Penerimaan = () => {
         return toast.error(`${row.name}: jumlah aktual melebihi rencana kendaraan`);
       }
       if (good > 0 && !row.stackCode) return toast.error(`Pilih tumpukan barang baik untuk ${row.name}`);
-      if (crossesCutoffNow && row.overtimeQty === '') {
+      if (total > 0 && crossesCutoffNow && row.overtimeQty === '') {
         return toast.error(`Isi jumlah yang dibongkar setelah 16.00 untuk ${row.name}; isi 0 bila tidak ada.`);
       }
       if (Number(row.overtimeQty || 0) > total + 1e-9) {
