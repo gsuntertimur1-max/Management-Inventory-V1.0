@@ -78,7 +78,7 @@ const LayarAntrian = () => {
 
   useEffect(() => {
     if (!('speechSynthesis' in window)) {
-      setVoiceNotice('Fitur suara tidak didukung browser ini. Gunakan Chrome atau Safari versi terbaru.');
+      setVoiceNotice('Fitur suara tidak didukung browser ini. Gunakan Chrome, Edge, atau Safari versi terbaru.');
       return undefined;
     }
 
@@ -89,7 +89,9 @@ const LayarAntrian = () => {
         || voices.find((voice) => /bahasa indonesia|indonesian|damayanti|dimas/i.test(voice.name));
 
       setIndonesianVoice(selected || null);
-      setVoiceNotice(selected ? '' : 'Suara Bahasa Indonesia belum tersedia. Tambahkan suara Bahasa Indonesia pada pengaturan perangkat, lalu buka kembali halaman ini.');
+      if (selected) setVoiceNotice('');
+      else if (voices.length > 0) setVoiceNotice('Suara Bahasa Indonesia tidak ditemukan. PEPEG akan memakai suara bawaan browser dengan bahasa id-ID.');
+      else setVoiceNotice('Daftar suara browser belum dimuat. Tekan Aktifkan suara sekali untuk mengizinkan audio.');
     };
 
     loadIndonesianVoice();
@@ -97,8 +99,42 @@ const LayarAntrian = () => {
     return () => window.speechSynthesis.removeEventListener?.('voiceschanged', loadIndonesianVoice);
   }, []);
 
+  const speakText = useCallback((text, { immediate = false, onStart } = {}) => {
+    if (!('speechSynthesis' in window) || !('SpeechSynthesisUtterance' in window)) {
+      setVoiceNotice('Fitur suara tidak didukung browser ini.');
+      return false;
+    }
+
+    const synth = window.speechSynthesis;
+    if (synth.paused) synth.resume();
+
+    const message = new SpeechSynthesisUtterance(text);
+    if (indonesianVoice) message.voice = indonesianVoice;
+    message.lang = 'id-ID';
+    message.rate = 0.85;
+    message.volume = 1;
+    message.onstart = () => {
+      setVoiceNotice('');
+      onStart?.();
+    };
+    message.onerror = (event) => {
+      if (event?.error !== 'interrupted' && event?.error !== 'canceled') {
+        setVoiceNotice('Suara gagal diputar. Pastikan tab tidak dibisukan dan volume Windows aktif, lalu tekan Aktifkan suara lagi.');
+      }
+    };
+
+    synth.cancel();
+    const play = () => {
+      if (synth.paused) synth.resume();
+      synth.speak(message);
+    };
+    if (immediate) play();
+    else window.setTimeout(play, 90);
+    return true;
+  }, [indonesianVoice]);
+
   useEffect(() => {
-    if (!voiceEnabled || !indonesianVoice || !('speechSynthesis' in window)) return;
+    if (!voiceEnabled || !('speechSynthesis' in window)) return;
     const nextLoad = loadingLoads.find((load) => load.antrian && !announcedQueuesRef.current.has(load.antrian));
     if (!nextLoad) return;
 
@@ -107,15 +143,12 @@ const LayarAntrian = () => {
     const location = nextLoad.unit_loading && nextLoad.unit_loading !== '-'
       ? ` menuju ${nextLoad.unit_loading}`
       : ' menuju area pemuatan';
-    const message = new SpeechSynthesisUtterance(`Nomor antrian ${spokenQueueNumber}. Silakan${location}.`);
-    message.voice = indonesianVoice;
-    message.lang = indonesianVoice.lang || 'id-ID';
-    message.rate = 0.85;
-    message.volume = 1;
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(message);
-    announcedQueuesRef.current.add(queueNumber);
-  }, [indonesianVoice, loadingLoads, voiceEnabled]);
+
+    speakText(
+      `Nomor antrian ${spokenQueueNumber}. Silakan${location}.`,
+      { onStart: () => announcedQueuesRef.current.add(queueNumber) },
+    );
+  }, [loadingLoads, speakText, voiceEnabled]);
 
   useEffect(() => {
     const activeQueueNumbers = new Set(active.map((load) => load.antrian).filter(Boolean));
@@ -126,6 +159,7 @@ const LayarAntrian = () => {
     setPresentationMode(true);
     setVoiceEnabled(true);
     announcedQueuesRef.current = new Set();
+    speakText('Suara antrian aktif.', { immediate: true });
     try {
       await screenRef.current?.requestFullscreen?.();
     } catch (error) {
@@ -139,9 +173,15 @@ const LayarAntrian = () => {
   };
 
   const toggleVoice = () => {
-    if (voiceEnabled && 'speechSynthesis' in window) window.speechSynthesis.cancel();
     announcedQueuesRef.current = new Set();
-    setVoiceEnabled((enabled) => !enabled);
+    if (voiceEnabled) {
+      if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+      setVoiceEnabled(false);
+      return;
+    }
+
+    setVoiceEnabled(true);
+    speakText('Suara antrian aktif.', { immediate: true });
   };
 
   const loadingQueueLabel = loadingLoads.length
