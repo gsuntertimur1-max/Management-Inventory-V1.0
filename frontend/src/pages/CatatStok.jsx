@@ -3,7 +3,7 @@ import { ArrowDownLeft, ArrowUpRight, Plus, Trash2, Save, ClipboardList, Calenda
 import { useData } from '../context/DataContext';
 import { formatRp, formatNum } from '../mock';
 import { toast } from 'sonner';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { packagingText, quantityFromInput, quantityIsValid, totalWeight } from '../lib/packaging';
 import api, { downloadApiFile } from '../lib/api';
 import { stackCodes } from '../lib/warehouses';
@@ -35,8 +35,10 @@ const CatatStok = ({ panel = '' }) => {
   const { products, suppliers, purchaseOrders, settings, stackAllocations, transactions, supplierReturns, addReceipt, createOutboundLoad, recordStockDamage, createSupplierReturn, receiveSupplierReplacement, canInbound, canOutbound } = useData();
   const STACKS = stackCodes(settings?.warehouses);
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const activePanel = panel;
-  const [type, setType] = useState(canOutbound ? 'KELUAR' : 'MASUK');
+  const initialType = searchParams.get('mode') === 'masuk' && canInbound ? 'MASUK' : (canOutbound ? 'KELUAR' : 'MASUK');
+  const [type, setType] = useState(initialType);
   const [rows, setRows] = useState([emptyRow()]);
   const [poId, setPoId] = useState('');
   const [party, setParty] = useState('');
