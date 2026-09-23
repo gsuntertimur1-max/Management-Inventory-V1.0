@@ -1,8 +1,9 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
 import { Plus, X, Trash2, PackageCheck } from 'lucide-react';
 import { useData } from '../context/DataContext';
-import { apiError } from '../lib/api';
+import api, { apiError } from '../lib/api';
 import { formatRp, formatDate, formatNum } from '../mock';
 import { toast } from 'sonner';
 import { packagingText, quantityFromInput, quantityIsValid, totalWeight } from '../lib/packaging';
@@ -23,7 +24,9 @@ const STATUS = {
 const newRow = () => ({ productId: '', inputMode: 'QTY', inputValue: 1, qty: 1 });
 
 const PurchaseOrder = () => {
-  const { purchaseOrders, suppliers, products, addPO, cancelPurchaseOrder, canManageMasterData } = useData();
+  const { purchaseOrders, suppliers, products, addPO, cancelPurchaseOrder, canManageMasterData, canInbound } = useData();
+  const navigate = useNavigate();
+  const [inboundReservations, setInboundReservations] = useState({});
   const [modal, setModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ supplier: '', no: '', items: [newRow()] });
@@ -116,9 +119,9 @@ const PurchaseOrder = () => {
       <div className="card-surface p-6">
         <div className="overflow-x-auto">
           <table className="w-full text-sm tbl">
-            <thead><tr className="text-left border-b border-[#1a222e]">{['No. PO', 'Tanggal', 'Supplier', 'Barang Dipesan', 'Progres Penerimaan', 'Total Nilai', 'Status', ...(canManageMasterData ? ['Aksi'] : [])].map((h) => <th key={h} className="py-2.5 pr-4 font-semibold whitespace-nowrap">{h}</th>)}</tr></thead>
+            <thead><tr className="text-left border-b border-[#1a222e]">{['No. PO', 'Tanggal', 'Supplier', 'Barang Dipesan', 'Progres Penerimaan', 'Total Nilai', 'Status', ...((canManageMasterData || canInbound) ? ['Aksi'] : [])].map((h) => <th key={h} className="py-2.5 pr-4 font-semibold whitespace-nowrap">{h}</th>)}</tr></thead>
             <tbody>
-              {purchaseOrders.length === 0 ? <tr><td colSpan={canManageMasterData ? 8 : 7} className="py-8 text-center text-[#6b7688]">Belum ada PO. Buat PO baru untuk mencatat rencana pengadaan.</td></tr> : purchaseOrders.map((po) => {
+              {purchaseOrders.length === 0 ? <tr><td colSpan={(canManageMasterData || canInbound) ? 8 : 7} className="py-8 text-center text-[#6b7688]">Belum ada PO. Buat PO baru untuk mencatat rencana pengadaan.</td></tr> : purchaseOrders.map((po) => {
                 const ordered = (po.items || []).reduce((a, it) => a + Number(it.qty || 0), 0);
                 const received = (po.items || []).reduce((a, it) => a + Number(it.receivedQty || 0), 0);
                 const pct = ordered > 0 ? Math.min((received / ordered) * 100, 100) : 0;
@@ -133,7 +136,7 @@ const PurchaseOrder = () => {
                         <div key={i} className="mb-1.5 last:mb-0">
                           <div>{it.name} × <span className="font-mono">{formatNum(it.qty)} {it.unit || ''}</span></div>
                           {(packagingText(it.qty, it, formatNum) || Number(it.weight || 0) > 0) && <div className="text-[#7892b5]">{packagingText(it.qty, it, formatNum)}{packagingText(it.qty, it, formatNum) && Number(it.weight || 0) > 0 ? ' · ' : ''}{Number(it.weight || 0) > 0 ? `${formatNum(totalWeight(it.qty, it))} kg` : ''}</div>}
-                          <div className="text-[#6b7688]">Diterima {formatNum(it.receivedQty || 0)} · Sisa {formatNum(Math.max(Number(it.qty || 0) - Number(it.receivedQty || 0) - Number(it.cancelledQty || 0), 0))} {it.unit || ''}{Number(it.cancelledQty || 0) > 0 ? ` · Dibatalkan ${formatNum(it.cancelledQty)}` : ''}</div>
+                          {(() => { const pending = Number((inboundReservations[po.id] || {})[it.productId] || 0); const remaining = Math.max(Number(it.qty || 0) - Number(it.receivedQty || 0) - Number(it.cancelledQty || 0), 0); const schedulable = Math.max(remaining - pending, 0); return <><div className="text-[#6b7688]">Diterima {formatNum(it.receivedQty || 0)} · Sisa PO {formatNum(remaining)} {it.unit || ''}{Number(it.cancelledQty || 0) > 0 ? ` · Dibatalkan ${formatNum(it.cancelledQty)}` : ''}</div>{pending > 0 && <div className="text-[#fbbf24]">Dalam proses kendaraan {formatNum(pending)} · Bisa dijadwalkan {formatNum(schedulable)} {it.unit || ''}</div>}</>; })()}
                         </div>
                       ))}
                     </td>
@@ -144,7 +147,7 @@ const PurchaseOrder = () => {
                     </td>
                     <td className="py-3 pr-4 font-mono whitespace-nowrap">{formatRp(po.total)}</td>
                     <td className="py-3 pr-4"><span className="text-xs px-2.5 py-1 rounded-full font-medium whitespace-nowrap" style={{ background: `${color}22`, color }}>{po.status}</span></td>
-                    {canManageMasterData && <td className="py-3 pr-4">{!['Selesai', 'Dibatalkan', 'Diterima Sebagian · Sisa Dibatalkan'].includes(po.status) && <button onClick={() => cancelRemaining(po)} className="text-xs px-3 py-2 rounded-lg border border-[#ef4444] text-[#f87171] hover:bg-[#ef4444]/10">Batalkan Sisa</button>}</td>}
+                    {(canManageMasterData || canInbound) && <td className="py-3 pr-4"><div className="flex flex-wrap gap-2">{canInbound && !['Selesai', 'Dibatalkan', 'Diterima Sebagian · Sisa Dibatalkan'].includes(po.status) && <button onClick={() => navigate('/catat?mode=masuk')} className="text-xs px-3 py-2 rounded-lg border border-[#2563eb] text-[#60a5fa] hover:bg-[#2563eb]/10">Tambah Kendaraan</button>}{canInbound && <button onClick={() => navigate('/penerimaan')} className="text-xs px-3 py-2 rounded-lg border border-[#294263] text-[#93c5fd] hover:bg-[#2563eb]/10">Kelola Bongkar</button>}{canManageMasterData && !['Selesai', 'Dibatalkan', 'Diterima Sebagian · Sisa Dibatalkan'].includes(po.status) && <button onClick={() => cancelRemaining(po)} className="text-xs px-3 py-2 rounded-lg border border-[#ef4444] text-[#f87171] hover:bg-[#ef4444]/10">Batalkan Sisa</button>}</div></td>}
                   </tr>
                 );
               })}
