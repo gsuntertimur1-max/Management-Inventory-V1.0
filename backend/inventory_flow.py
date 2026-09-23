@@ -391,6 +391,23 @@ async def cancel_purchase_order(po_id: str, body: PurchaseOrderCancelInput, user
     if "Dibatalkan" in str(po.get("status", "")):
         raise HTTPException(status_code=400, detail="Sisa PO sudah dibatalkan")
 
+    active_load = await db.inbound_loads.find_one(
+        {"poId": po_id, "status": {"$in": ["Menunggu Bongkar", "Sedang Bongkar"]}},
+        {"_id": 0, "loadNo": 1, "polisi": 1, "status": 1},
+    )
+    if active_load:
+        vehicle = " · ".join(
+            value for value in [
+                str(active_load.get("loadNo") or "").strip(),
+                str(active_load.get("polisi") or "").strip().upper(),
+                str(active_load.get("status") or "").strip(),
+            ] if value
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=f"Masih ada kendaraan penerimaan aktif{f' ({vehicle})' if vehicle else ''}. Selesaikan atau batalkan kendaraan terlebih dahulu sebelum membatalkan sisa PO.",
+        )
+
     items = []
     cancelled_total = 0.0
     for item in po.get("items", []):
