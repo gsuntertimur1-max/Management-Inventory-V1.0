@@ -307,6 +307,8 @@ async def complete_inbound_load(load_id: str, body: InboundLoadComplete, user: d
         stored_actual = []
         total_actual = 0.0
         started_minutes = _started_minutes(str(load.get("startedAt") or ""))
+        completed_at = operational_now()
+        completed_minutes = completed_at.hour * 60 + completed_at.minute
 
         for product_id, planned_item in planned.items():
             actual = completion_map.get(product_id)
@@ -324,11 +326,25 @@ async def complete_inbound_load(load_id: str, body: InboundLoadComplete, user: d
                     detail=f"Total aktual {planned_item.get('name', 'produk')} melebihi rencana kendaraan ({planned_qty:g} {planned_item.get('unit', '')})",
                 )
 
-            overtime = float(actual.overtimeQty or 0)
-            if started_minutes is not None and started_minutes >= 16 * 60:
+            if started_minutes is None:
+                raise HTTPException(status_code=409, detail="Waktu mulai bongkar kendaraan tidak valid. Batalkan sesi dan mulai kembali.")
+            if started_minutes >= 16 * 60:
+                # Mulai setelah pukul 16.00: seluruh aktual otomatis lembur.
                 overtime = total
+            elif completed_minutes < 16 * 60:
+                # Selesai sebelum pukul 16.00: seluruh aktual otomatis normal.
+                overtime = 0.0
+            else:
+                # Mulai sebelum 16.00 dan selesai setelah 16.00: operator hanya
+                # mengisi jumlah yang benar-benar dibongkar setelah pukul 16.00.
+                if actual.overtimeQty is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Isi jumlah {planned_item.get('name', 'produk')} yang dibongkar setelah pukul 16.00.",
+                    )
+                overtime = float(actual.overtimeQty)
             if overtime > total + EPS:
-                raise HTTPException(status_code=400, detail=f"Jumlah lembur {planned_item.get('name', 'produk')} tidak boleh melebihi total aktual")
+                raise HTTPException(status_code=400, detail=f"Jumlah setelah 16.00 {planned_item.get('name', 'produk')} tidak boleh melebihi total aktual")
             normal = max(total - overtime, 0)
 
             stack_code = actual.stackCode.strip().upper() or str(planned_item.get("stackCode") or "").strip().upper()
@@ -388,8 +404,29 @@ async def complete_inbound_load(load_id: str, body: InboundLoadComplete, user: d
         result = await enrich_receipt_result(receipt_body, result)
         await record_receipt_lots(receipt_body, result)
 
+        cost_keys = ("labor", "daily", "warehouse", "total", "chargeable", "baseTotal", "overtimeTotal", "holidayTotal", "holidayOvertimeTotal")
+        unloading_cost = {key: 0.0 for key in cost_keys}
+        unloading_groups: set[str] = set()
+        for transaction in result.get("transactions", []):
+            fee = transaction.get("unloading_cost") or {}
+            for key in cost_keys:
+                unloading_cost[key] += float(fee.get(key, 0) or 0)
+            group = str(transaction.get("unloading_group") or "").strip()
+            if group:
+                unloading_groups.add(group)
+        unloading_cost["groups"] = sorted(unloading_groups)
+
         now = now_iso()
         event = {"time": now, "status": "Selesai", "by": user.get("name", ""), "note": body.note.strip() or "Bongkar selesai"}
+        completed_load = {
+            **load,
+            "status": "Selesai",
+            "completedAt": now,
+            "completedBy": user.get("name", ""),
+            "operationId": result.get("operationId", ""),
+            "actualItems": stored_actual,
+            "unloadingCost": unloading_cost,
+        }
         await db.inbound_loads.update_one(
             {"id": load_id, "status": "Sedang Bongkar"},
             {"$set": {
@@ -398,10 +435,11 @@ async def complete_inbound_load(load_id: str, body: InboundLoadComplete, user: d
                 "completedBy": user.get("name", ""),
                 "operationId": result.get("operationId", ""),
                 "actualItems": stored_actual,
+                "unloadingCost": unloading_cost,
             }, "$push": {"history": event}},
         )
         return {
-            "load": {**load, "status": "Selesai", "completedAt": now, "completedBy": user.get("name", ""), "operationId": result.get("operationId", ""), "actualItems": stored_actual},
+            "load": completed_load,
             "operationId": result.get("operationId", ""),
             "purchaseOrder": result.get("purchaseOrder"),
             "transactions": result.get("transactions", []),
