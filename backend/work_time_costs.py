@@ -108,6 +108,25 @@ def handling_fee(
         }
 
     mode = str(charge_mode_override or product.get(f"{prefix}FeeChargeMode") or "TIDAK_ADA").strip().upper()
+    theoretical_components = dict(components)
+    theoretical_breakdown = {key: dict(value) for key, value in breakdown.items()}
+    theoretical_total = sum(theoretical_components.values())
+    theoretical_base_total = sum(row["base"] for row in theoretical_breakdown.values())
+    theoretical_overtime_total = sum(row["overtime"] for row in theoretical_breakdown.values())
+    theoretical_holiday_total = sum(row["holiday"] for row in theoretical_breakdown.values())
+    theoretical_holiday_overtime_total = sum(row["holidayOvertime"] for row in theoretical_breakdown.values())
+
+    # TERMASUK berarti biaya telah diselesaikan langsung di luar flow pembayaran
+    # harian PEPEG (mis. sudah termasuk SO/dokumen). Jangan membentuk kewajiban
+    # Buruh/UH/Gudang lagi agar tidak terjadi pembayaran ganda.
+    settlement_excluded = mode == "TERMASUK"
+    if settlement_excluded:
+        components = {"labor": 0.0, "daily": 0.0, "warehouse": 0.0}
+        breakdown = {
+            key: {"base": 0.0, "overtime": 0.0, "holiday": 0.0, "holidayOvertime": 0.0, "total": 0.0}
+            for key in theoretical_breakdown
+        }
+
     total = sum(components.values())
     base_total = sum(row["base"] for row in breakdown.values())
     overtime_total = sum(row["overtime"] for row in breakdown.values())
@@ -124,6 +143,18 @@ def handling_fee(
         "overtimeTotal": overtime_total,
         "holidayTotal": holiday_total,
         "holidayOvertimeTotal": holiday_overtime_total,
+        "settlementExcluded": settlement_excluded,
+        "settlementReason": "SUDAH_DIBAYAR_LANGSUNG" if settlement_excluded else "",
+        # Nilai teoritis disimpan hanya sebagai jejak audit; tidak dipakai
+        # dalam rekap atau pembayaran Buruh/UH harian.
+        "auditTheoreticalCost": {
+            **theoretical_components,
+            "total": theoretical_total,
+            "baseTotal": theoretical_base_total,
+            "overtimeTotal": theoretical_overtime_total,
+            "holidayTotal": theoretical_holiday_total,
+            "holidayOvertimeTotal": theoretical_holiday_overtime_total,
+        } if settlement_excluded else {},
         "overtime": overtime_qty > 1e-9,
         "holiday": holiday,
         "regularQty": regular_qty,
