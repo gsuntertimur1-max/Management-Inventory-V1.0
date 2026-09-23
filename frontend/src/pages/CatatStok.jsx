@@ -12,7 +12,7 @@ import { consignmentAreaLabel, consignmentStackCodes } from '../lib/consignmentL
 
 const CONSIGNMENT_DESTINATIONS = ['Gudang E-commerce', 'Gudang Bazar'];
 const DAMAGED_AREA = 'AREA BARANG RUSAK';
-const emptyRow = () => ({ productId: '', inputMode: 'QTY', inputValue: 1, qty: 1, goodQty: 1, damagedQty: 0, normalQtyBefore1600: '', exp: '', stackCode: '', documentNo: '', documentQty: '', soTakeMode: 'PARTIAL', channel: '', fefoExceptionReason: '' });
+const emptyRow = () => ({ productId: '', inputMode: 'QTY', inputValue: 1, qty: 1, plannedQty: '', goodQty: 1, damagedQty: 0, normalQtyBefore1600: '', exp: '', stackCode: '', documentNo: '', documentQty: '', soTakeMode: 'PARTIAL', channel: '', fefoExceptionReason: '' });
 
 const wibMinutesNow = () => {
   const parts = new Intl.DateTimeFormat('en-GB', {
@@ -65,6 +65,7 @@ const CatatStok = ({ panel = '' }) => {
   const [feeChargeMode, setFeeChargeMode] = useState('PENGAMBIL');
   const [fefoGuides, setFefoGuides] = useState({});
   const [soBalances, setSoBalances] = useState({});
+  const [inboundReservations, setInboundReservations] = useState({});
 
   useEffect(() => {
     if (activePanel === 'damage' && !damageForm) setDamageForm({ productId: '', stackCode: '', qty: '', channel: 'KOM', cause: '', note: '', referenceNo: '' });
@@ -76,6 +77,15 @@ const CatatStok = ({ panel = '' }) => {
     [purchaseOrders],
   );
   const selectedPO = purchaseOrders.find((po) => po.id === poId);
+
+  useEffect(() => {
+    if (type !== 'MASUK') return;
+    let cancelled = false;
+    api.get('/inbound-loads/reservations')
+      .then(({ data }) => { if (!cancelled) setInboundReservations(data || {}); })
+      .catch(() => { if (!cancelled) setInboundReservations({}); });
+    return () => { cancelled = true; };
+  }, [type, poId]);
 
   const startUnloading = async () => {
     if (startingUnloading) return;
@@ -172,6 +182,7 @@ const CatatStok = ({ panel = '' }) => {
     setGrossMin('');
     setGrossMax('');
     setFeeChargeMode(nextType === 'MASUK' ? 'PENGIRIM' : 'PENGAMBIL');
+    if (nextType !== 'MASUK') setInboundReservations({});
   };
 
   const chooseType = (nextType) => {
@@ -207,28 +218,35 @@ const CatatStok = ({ panel = '' }) => {
     }
     const po = purchaseOrders.find((item) => item.id === id);
     if (!po) return;
+    const reserved = inboundReservations[id] || {};
     const remainingItems = (po.items || [])
-      .map((item) => ({
-        productId: item.productId,
-        inputMode: 'QTY',
-        inputValue: Math.max(Number(item.qty || 0) - Number(item.receivedQty || 0), 0),
-        qty: Math.max(Number(item.qty || 0) - Number(item.receivedQty || 0), 0),
-        goodQty: Math.max(Number(item.qty || 0) - Number(item.receivedQty || 0), 0),
-        damagedQty: 0,
-        normalQtyBefore1600: '',
-        exp: '',
-        channel: item.channel || products.find((product) => product.id === item.productId)?.channel || 'KOM',
-      }))
-      .filter((item) => item.productId && item.qty > 0);
+      .map((item) => {
+        const available = Math.max(Number(item.qty || 0) - Number(item.receivedQty || 0) - Number(reserved[item.productId] || 0), 0);
+        return {
+          productId: item.productId,
+          inputMode: 'QTY',
+          inputValue: 0,
+          qty: 0,
+          plannedQty: '',
+          goodQty: 0,
+          damagedQty: 0,
+          normalQtyBefore1600: '',
+          exp: '',
+          stackCode: '',
+          channel: item.channel || products.find((product) => product.id === item.productId)?.channel || 'KOM',
+          availableToSchedule: available,
+        };
+      })
+      .filter((item) => item.productId && item.availableToSchedule > 0);
     setParty(po.supplier || '');
     setRef(po.no || '');
     setRows(remainingItems.length ? remainingItems : [emptyRow()]);
   };
 
-  const receiptQty = (row) => Number(row.goodQty || 0) + Number(row.damagedQty || 0);
+  const receiptQty = (row) => selectedPO ? Number(row.plannedQty || 0) : Number(row.goodQty || 0) + Number(row.damagedQty || 0);
   const chosen = rows
     .map((row) => ({ ...row, qty: type === 'MASUK' ? receiptQty(row) : row.qty, product: products.find((product) => product.id === row.productId) }))
-    .filter((row) => row.product);
+    .filter((row) => row.product && !(type === 'MASUK' && selectedPO && Number(row.qty || 0) <= 0));
 
   const totalUnit = chosen.reduce((a, row) => a + Number(row.qty || 0), 0);
   const totalBerat = chosen.reduce((a, row) => a + (row.product.weight || 0) * Number(row.qty || 0), 0);
@@ -367,7 +385,8 @@ const CatatStok = ({ panel = '' }) => {
     if (!selectedPO) return null;
     const item = (selectedPO.items || []).find((poItem) => poItem.productId === productId);
     if (!item) return 0;
-    return Math.max(Number(item.qty || 0) - Number(item.receivedQty || 0), 0);
+    const pending = Number((inboundReservations[selectedPO.id] || {})[productId] || 0);
+    return Math.max(Number(item.qty || 0) - Number(item.receivedQty || 0) - pending, 0);
   };
   const damageStacks = (stackAllocations || []).filter((allocation) => allocation.productId === damageForm?.productId && Number(allocation.primaryQty || 0) > 0);
   const saveDamageDiscovery = async () => {
@@ -400,8 +419,8 @@ const CatatStok = ({ panel = '' }) => {
   };
 
   const submit = async () => {
-    if (chosen.length === 0 || chosen.length !== rows.length) {
-      toast.error('Lengkapi semua produk');
+    if (chosen.length === 0 || (!(type === 'MASUK' && selectedPO) && chosen.length !== rows.length)) {
+      toast.error(type === 'MASUK' && selectedPO ? 'Isi minimal satu kuantum rencana kendaraan' : 'Lengkapi semua produk');
       return;
     }
     if (chosen.some((row) => Number(row.qty) <= 0)) {
@@ -424,7 +443,7 @@ const CatatStok = ({ panel = '' }) => {
       toast.error(type === 'MASUK' ? 'Pilih supplier pengirim' : 'Isi penerima barang');
       return;
     }
-    if (type === 'MASUK') {
+    if (type === 'MASUK' && !selectedPO) {
       if (!unloadingSession?.id) {
         toast.error('Tekan Mulai Bongkar sebelum menyelesaikan penerimaan');
         return;
@@ -514,6 +533,10 @@ const CatatStok = ({ panel = '' }) => {
     }
 
     if (type === 'MASUK' && selectedPO) {
+      if (!polisi.trim()) {
+        toast.error('Isi nomor polisi kendaraan sebelum membuat antrian bongkar');
+        return;
+      }
       for (const row of chosen) {
         const remaining = remainingFor(row.productId);
         if (remaining === null || Number(row.qty) > remaining) {
@@ -527,34 +550,57 @@ const CatatStok = ({ panel = '' }) => {
     setSaving(true);
     try {
       if (type === 'MASUK') {
-        const result = await addReceipt({
-          poId,
-          items: chosen.map((row) => ({
-            productId: row.productId,
-            qty: Number(row.qty),
-            goodQty: Number(row.goodQty || 0),
-            damagedQty: Number(row.damagedQty || 0),
-            normalQtyBefore1600: row.normalQtyBefore1600 === '' ? null : Number(row.normalQtyBefore1600),
-            exp: row.exp || '',
-            stackCode: row.stackCode || row.product.location || '',
-            channel: row.channel || row.product.channel || 'KOM',
-          })),
-          party,
-          ref,
-          polisi,
-          keterangan: ket,
-          weighingForm,
-          grossWeight: Number(grossWeight || 0),
-          grossMin: Number(grossMin || 0),
-          grossMax: Number(grossMax || 0),
-          unloadingFeeChargeMode: feeChargeMode,
-          unloadingSessionId: unloadingSession.id,
-        });
-        const poStatus = result?.purchaseOrder?.status;
-        setUnloadingSession(null);
-        toast.success(poStatus ? `Bongkar selesai & penerimaan tersimpan · Status PO: ${poStatus}` : 'Bongkar selesai & stok masuk tersimpan');
-        if (weighingForm && result?.operationId) await downloadApiFile(`/export/weighing-form/inbound/${result.operationId}.pdf`, `form_timbangan_masuk_${result.operationId}.pdf`);
-        navigate('/riwayat');
+        if (selectedPO) {
+          const { data: load } = await api.post('/inbound-loads', {
+            poId,
+            items: chosen.filter((row) => Number(row.qty || 0) > 0).map((row) => ({
+              productId: row.productId,
+              qty: Number(row.qty),
+              stackCode: row.stackCode || '',
+              exp: row.exp || '',
+              channel: row.channel || row.product.channel || 'KOM',
+            })),
+            polisi,
+            driver: '',
+            keterangan: ket,
+            weighingForm,
+            grossWeight: Number(grossWeight || 0),
+            grossMin: Number(grossMin || 0),
+            grossMax: Number(grossMax || 0),
+            unloadingFeeChargeMode: feeChargeMode,
+          });
+          toast.success(`${load.loadNo} dibuat untuk ${polisi.toUpperCase()}. PO dan stok belum berubah sampai bongkar selesai.`);
+          navigate('/penerimaan');
+        } else {
+          const result = await addReceipt({
+            poId,
+            items: chosen.map((row) => ({
+              productId: row.productId,
+              qty: Number(row.qty),
+              goodQty: Number(row.goodQty || 0),
+              damagedQty: Number(row.damagedQty || 0),
+              normalQtyBefore1600: row.normalQtyBefore1600 === '' ? null : Number(row.normalQtyBefore1600),
+              exp: row.exp || '',
+              stackCode: row.stackCode || row.product.location || '',
+              channel: row.channel || row.product.channel || 'KOM',
+            })),
+            party,
+            ref,
+            polisi,
+            keterangan: ket,
+            weighingForm,
+            grossWeight: Number(grossWeight || 0),
+            grossMin: Number(grossMin || 0),
+            grossMax: Number(grossMax || 0),
+            unloadingFeeChargeMode: feeChargeMode,
+            unloadingSessionId: unloadingSession.id,
+          });
+          const poStatus = result?.purchaseOrder?.status;
+          setUnloadingSession(null);
+          toast.success(poStatus ? `Bongkar selesai & penerimaan tersimpan · Status PO: ${poStatus}` : 'Bongkar selesai & stok masuk tersimpan');
+          if (weighingForm && result?.operationId) await downloadApiFile(`/export/weighing-form/inbound/${result.operationId}.pdf`, `form_timbangan_masuk_${result.operationId}.pdf`);
+          navigate('/riwayat');
+        }
       } else {
         const load = await createOutboundLoad({
           items: chosen.map((row) => ({ productId: row.productId, qty: Number(row.qty), documentNo: row.documentNo || documentRefs[0], documentQty: documentType === 'SO' ? soTotalFor(row) : 0, stackCode: kondisi === 'RUSAK' ? '' : (row.stackCode || ''), channel: row.channel || row.product.channel || 'KOM', fefoExceptionReason: kondisi === 'BAIK' ? String(row.fefoExceptionReason || '').trim() : '' })),
@@ -647,7 +693,9 @@ const CatatStok = ({ panel = '' }) => {
             </select>
           </div>
 
-          {type === 'MASUK' && <div className="mb-5 rounded-xl border border-[#7c5a1f] bg-[#191307] p-4">
+          {type === 'MASUK' && selectedPO && <div className="mb-5 rounded-xl border border-[#1f3657] bg-[#0d1728] p-4"><div className="flex gap-3"><Truck size={18} className="text-[#60a5fa] shrink-0 mt-0.5"/><div><div className="text-sm font-semibold text-[#93c5fd]">Tahap Persiapan Penerimaan</div><p className="text-xs text-[#8fb8ef] mt-1">Daftarkan kuantum rencana untuk satu kendaraan. Stok dan received PO belum berubah. Mulai/Selesai Bongkar dilakukan dari menu Penerimaan.</p></div></div></div>}
+
+          {type === 'MASUK' && !selectedPO && <div className="mb-5 rounded-xl border border-[#7c5a1f] bg-[#191307] p-4">
             <div className="text-sm font-semibold text-[#fde68a]">Waktu Kerja Bongkar</div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3 items-end">
               <div>
@@ -671,7 +719,7 @@ const CatatStok = ({ panel = '' }) => {
               const remaining = remainingFor(row.productId);
               const availableStacks = type === 'KELUAR' && kondisi === 'BAIK' ? availableStacksFor(row.productId) : [];
               return (
-                <div key={index} className={`grid gap-2 items-end p-3 rounded-lg border border-[#1a222e] bg-[#0b0f17] ${type === 'MASUK' ? 'grid-cols-1 md:grid-cols-[minmax(190px,1fr)_125px_125px_175px_52px]' : 'grid-cols-1 md:grid-cols-[minmax(170px,1fr)_100px_135px_150px_140px_52px]'}`}>
+                <div key={index} className={`grid gap-2 items-end p-3 rounded-lg border border-[#1a222e] bg-[#0b0f17] ${type === 'MASUK' ? (selectedPO ? 'grid-cols-1 md:grid-cols-[minmax(230px,1fr)_160px_190px_52px]' : 'grid-cols-1 md:grid-cols-[minmax(190px,1fr)_125px_125px_175px_52px]') : 'grid-cols-1 md:grid-cols-[minmax(170px,1fr)_100px_135px_150px_140px_52px]'}`}>
                   <div>
                     <label className="text-[10px] text-[#6b7688] mb-1 block">Produk</label>
                     <SearchableProductSelect
@@ -697,7 +745,7 @@ const CatatStok = ({ panel = '' }) => {
                       <option value="WEIGHT" disabled={!Number(product?.weight || 0)}>Berat</option>
                     </select>
                   </div>}
-                  {type === 'MASUK' && <><div><label className="text-[10px] text-[#22c55e] mb-1 block">Baik ({product?.unit || 'unit'})</label><input type="number" min="0" step="any" value={row.goodQty ?? 0} onChange={(e) => setRow(index, { goodQty: e.target.value })} className="w-full bg-[#0b0f17] border border-[#1f6f45] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#22c55e]" /></div><div><label className="text-[10px] text-[#f59e0b] mb-1 block">Rusak ({product?.unit || 'unit'})</label><input type="number" min="0" step="any" value={row.damagedQty ?? 0} onChange={(e) => setRow(index, { damagedQty: e.target.value })} className="w-full bg-[#0b0f17] border border-[#794b1c] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#f59e0b]" />{product && receiptQty(row) > 0 && <div className="text-[9px] text-[#60a5fa] mt-1">Total {formatNum(receiptQty(row))} {product.unit} · {formatNum(totalWeight(receiptQty(row), product))} kg</div>}</div></>}
+                  {type === 'MASUK' && (selectedPO ? <div><label className="text-[10px] text-[#60a5fa] mb-1 block">Rencana kendaraan ({product?.unit || 'unit'})</label><input type="number" min="0" max={remaining ?? undefined} step="any" value={row.plannedQty ?? ''} onChange={(e) => setRow(index, { plannedQty: e.target.value })} placeholder="Contoh: 2000" className="w-full bg-[#0b0f17] border border-[#1f3657] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" />{product && <div className="text-[9px] text-[#60a5fa] mt-1">Dapat dijadwalkan: {formatNum(remaining || 0)} {product.unit}{Number(row.plannedQty || 0) > 0 ? ` · ${formatNum(totalWeight(Number(row.plannedQty), product))} kg` : ''}</div>}</div> : <><div><label className="text-[10px] text-[#22c55e] mb-1 block">Baik ({product?.unit || 'unit'})</label><input type="number" min="0" step="any" value={row.goodQty ?? 0} onChange={(e) => setRow(index, { goodQty: e.target.value })} className="w-full bg-[#0b0f17] border border-[#1f6f45] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#22c55e]" /></div><div><label className="text-[10px] text-[#f59e0b] mb-1 block">Rusak ({product?.unit || 'unit'})</label><input type="number" min="0" step="any" value={row.damagedQty ?? 0} onChange={(e) => setRow(index, { damagedQty: e.target.value })} className="w-full bg-[#0b0f17] border border-[#794b1c] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#f59e0b]" />{product && receiptQty(row) > 0 && <div className="text-[9px] text-[#60a5fa] mt-1">Total {formatNum(receiptQty(row))} {product.unit} · {formatNum(totalWeight(receiptQty(row), product))} kg</div>}</div></>)}
                   {type === 'KELUAR' && <div>
                     <label className="text-[10px] text-[#6b7688] mb-1 block">{row.inputMode === 'WEIGHT' ? 'Berat (kg)' : `Jumlah (${product?.unit || 'unit'})`}</label>
                     <input type="number" min="0.01" step="any" disabled={documentType === 'SO' && row.soTakeMode === 'ALL' && Boolean(soMasterItemFor(row))} value={row.inputValue} onChange={(e) => setTransactionInput(index, { inputValue: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb] disabled:opacity-70" />
@@ -727,7 +775,7 @@ const CatatStok = ({ panel = '' }) => {
                     })()}
                   </div>}
                   {type === 'MASUK' && (
-                    <div><label className="text-[10px] text-[#6b7688] mb-1 flex items-center gap-1"><CalendarDays size={11} /> Kedaluwarsa / Lokasi</label><input type="date" value={row.exp || ''} onChange={(e) => setRow(index, { exp: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm" /><select value={row.stackCode || product?.location || ''} onChange={(e) => setRow(index, { stackCode: e.target.value })} className="w-full mt-1 bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2 text-xs"><option value="">Pilih lokasi...</option>{STACKS.map((code) => <option key={code}>{code}</option>)}</select></div>
+                    <div><label className="text-[10px] text-[#6b7688] mb-1 flex items-center gap-1"><CalendarDays size={11} /> {selectedPO ? 'Rencana Exp / Tumpukan' : 'Kedaluwarsa / Lokasi'}</label><input type="date" value={row.exp || ''} onChange={(e) => setRow(index, { exp: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2 text-sm" /><select value={row.stackCode || product?.location || ''} onChange={(e) => setRow(index, { stackCode: e.target.value })} className="w-full mt-1 bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2 text-xs"><option value="">Pilih lokasi...</option>{STACKS.map((code) => <option key={code}>{code}</option>)}</select></div>
                   )}
                   {type === 'KELUAR' && <><div><label className="text-[10px] text-[#6b7688] mb-1 block">Dokumen sumber</label><select value={isMultiDocumentOutbound ? row.documentNo : (row.documentNo || outboundDocumentRefs[0] || '')} disabled={!isMultiDocumentOutbound && outboundDocumentRefs.length === 1} onChange={(e) => setRow(index, { documentNo: e.target.value, documentQty: '', soTakeMode: 'PARTIAL' })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2.5 text-xs disabled:opacity-70"><option value="">{isMultiDocumentOutbound ? 'Pilih dokumen...' : 'Isi nomor dokumen dulu'}</option>{outboundDocumentRefs.map((doc) => <option key={doc}>{doc}</option>)}</select></div><div><label className="text-[10px] text-[#6b7688] mb-1 block">{kondisi === 'RUSAK' ? 'Lokasi sumber' : 'Tumpukan asal · stok tersedia'}</label>{kondisi === 'RUSAK' ? <div className="w-full rounded-lg border border-[#7f1d1d] bg-[#2a0f14] px-3 py-2.5 text-xs text-[#fecaca]"><div className="font-semibold">{DAMAGED_AREA}</div><div className="text-[9px] text-[#fca5a5] mt-1">Tidak memakai tumpukan stok Baik · antrean otomatis seri R-xxx</div></div> : <><select value={row.stackCode || ''} onChange={(e) => { const stackCode = e.target.value; const guide = fefoGuideFor(row.productId); setRow(index, { stackCode, fefoExceptionReason: guide?.recommendedStacks?.includes(stackCode) ? '' : row.fefoExceptionReason }); }} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2.5 text-xs"><option value="">Pilih tumpukan asal (wajib)</option>{availableStacks.map((allocation) => { const secondaryQty = Number(allocation.secondaryQty || 0); const qty = Number(allocation.primaryQty || 0); const availableQty = Number(allocation.availableQty ?? qty); const reservedQty = Number(allocation.reservedQty || 0); const secondary = secondaryQty > 0 ? Math.floor(availableQty / secondaryQty) : 0; const remainder = secondaryQty > 0 ? availableQty - (secondary * secondaryQty) : 0; const packaging = secondaryQty > 0 ? ` · ${formatNum(secondary)} ${allocation.secondary || 'sekunder'}${remainder > 0 ? ` + ${formatNum(remainder)} ${allocation.unit || 'pcs'}` : ''}` : ''; const guide = fefoGuideFor(row.productId); const meta = fefoStackMeta(row.productId, allocation.stackCode); const recommended = guide?.recommendedStacks?.includes(allocation.stackCode); const expiry = meta?.nextLot?.exp ? ` · exp ${meta.nextLot.exp}` : (Number(meta?.untrackedQty || 0) > 0 ? ' · legacy' : ''); const reservation = reservedQty > 0 ? ` · reservasi ${formatNum(reservedQty)}` : ''; return <option key={allocation.id} value={allocation.stackCode}>{recommended ? '★ ' : ''}{allocation.stackCode} — tersedia {formatNum(availableQty)} {allocation.unit || 'pcs'}{reservation}{packaging}{expiry}</option>; })}</select>{row.productId && fefoGuideFor(row.productId) && <div className={`mt-1 rounded border px-2 py-1.5 text-[9px] ${fefoGuideFor(row.productId).mode === 'FEFO_TRACKED' ? 'border-[#14532d] text-[#86efac]' : 'border-[#78350f] text-[#fcd34d]'}`}><b>{fefoGuideFor(row.productId).mode}</b> · Prioritas: {(fefoGuideFor(row.productId).recommendedStacks || []).join(', ') || 'periksa integritas'}<br/>{fefoGuideFor(row.productId).reason}</div>}{isFefoException(row) && <div className="mt-1"><label className="text-[9px] text-[#fbbf24] block mb-1">Alasan memilih di luar prioritas FEFO *</label><input value={row.fefoExceptionReason || ''} onChange={(e) => setRow(index, { fefoExceptionReason: e.target.value })} placeholder="Contoh: akses tumpukan tertutup / dokumen mensyaratkan batch tertentu" className="w-full bg-[#160f05] border border-[#78350f] rounded px-2 py-1.5 text-[10px] text-[#fde68a]" /></div>}{row.productId && availableStacks.length === 0 && <p className="text-[9px] text-[#fbbf24] mt-1">Belum ada alokasi tumpukan untuk produk ini.</p>}</>}</div></>}
                   <button type="button" onClick={() => delRow(index)} disabled={rows.length === 1} className="w-10 h-[42px] rounded-lg border border-[#242f3d] flex items-center justify-center text-[#ef4444] disabled:opacity-30"><Trash2 size={15} /></button>
@@ -735,7 +783,7 @@ const CatatStok = ({ panel = '' }) => {
               );
             })}
           </div>
-          {type === 'MASUK' && unloadingSession && (showUnloadingSplit || (unloadingStartedMinutes() < 16 * 60 && wibMinutesNow() >= 16 * 60)) && <div className="mb-4 rounded-xl border border-[#b45309] bg-[#1f1408] p-4">
+          {type === 'MASUK' && !selectedPO && unloadingSession && (showUnloadingSplit || (unloadingStartedMinutes() < 16 * 60 && wibMinutesNow() >= 16 * 60)) && <div className="mb-4 rounded-xl border border-[#b45309] bg-[#1f1408] p-4">
             <div className="font-semibold text-[#fbbf24]">Kuantitas selesai sampai pukul 16.00</div>
             <p className="text-xs text-[#d6b77c] mt-1 mb-3">Isi per komoditas. Sistem menghitung <b>lembur = total bongkar − selesai s.d. 16.00</b>.</p>
             <div className="space-y-2">{rows.map((row, index) => {
@@ -758,11 +806,11 @@ const CatatStok = ({ panel = '' }) => {
             <div><label className="text-sm font-medium mb-1.5 block">Nomor Plat Kendaraan</label><input value={polisi} onChange={(e) => setPolisi(e.target.value)} placeholder="B 1441 PQF" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm" /></div>
             {type === 'KELUAR' ? (
               <div><label className="text-sm font-medium mb-1.5 block">Nama Pengambil / Sopir</label><input value={pengambil} onChange={(e) => setPengambil(e.target.value)} placeholder="Contoh: KOYUM" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm" /></div>
-            ) : <div className="rounded-lg border border-[#1f3657] bg-[#0d1728] px-3 py-2.5 text-xs text-[#8fb8ef]">Isi kuantum <b>Baik</b> dan <b>Rusak</b> pada setiap komoditas.</div>}
+            ) : <div className="rounded-lg border border-[#1f3657] bg-[#0d1728] px-3 py-2.5 text-xs text-[#8fb8ef]">{selectedPO ? <>Kuantum pada form ini adalah <b>rencana per kendaraan</b>. Baik/Rusak diisi saat Selesai Bongkar.</> : <>Isi kuantum <b>Baik</b> dan <b>Rusak</b> pada setiap komoditas.</>}</div>}
             {type === 'KELUAR' && <div><label className="text-sm font-medium mb-1.5 block">Kondisi Barang</label><select value={kondisi} onChange={(e) => { const next = e.target.value; setKondisi(next); if (next === 'RUSAK') setRows((prev) => prev.map((row) => ({ ...row, stackCode: '' }))); }} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm"><option value="BAIK">Baik (Good)</option><option value="RUSAK">Rusak (Damage)</option></select>{kondisi === 'RUSAK' && <p className="text-[10px] text-[#fca5a5] mt-1">Sumber fisik otomatis: {DAMAGED_AREA} · antrean R-xxx.</p>}</div>}
           </div>
           <div className="mt-4"><label className="text-sm font-medium mb-1.5 block">Keterangan</label><textarea value={ket} onChange={(e) => setKet(e.target.value)} rows={2} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm resize-none" /></div>
-          <button onClick={submit} disabled={saving || (type === 'MASUK' && !unloadingSession)} className="btn-primary w-full mt-5 flex items-center justify-center gap-2 py-3 rounded-lg font-semibold text-sm disabled:opacity-60"><Save size={16} /> {saving ? 'Menyimpan…' : type === 'MASUK' ? (unloadingSession ? 'Selesai Bongkar & Simpan Stok Masuk' : 'Mulai Bongkar terlebih dahulu') : 'Buat Antrian Pemuatan'}</button>
+          <button onClick={submit} disabled={saving || (type === 'MASUK' && !selectedPO && !unloadingSession)} className="btn-primary w-full mt-5 flex items-center justify-center gap-2 py-3 rounded-lg font-semibold text-sm disabled:opacity-60"><Save size={16} /> {saving ? 'Menyimpan…' : type === 'MASUK' ? (selectedPO ? 'Buat Antrian Bongkar Kendaraan' : (unloadingSession ? 'Selesai Bongkar & Simpan Stok Masuk' : 'Mulai Bongkar terlebih dahulu')) : 'Buat Antrian Pemuatan'}</button>
         </div>
 
         <div className="card-surface p-6 h-fit">
