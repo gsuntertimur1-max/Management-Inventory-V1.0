@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from backend.server import app
 import backend.role_four_config  # noqa: F401 - consolidates legacy roles into warehouse roles
 from backend.inventory_flow import router as inventory_flow_router
+from backend.inbound_vehicle_flow import router as inbound_vehicle_flow_router
 from backend.master_products import router as master_products_router
 from backend.outbound_flow import router as outbound_flow_router
 from backend.outbound_reservation_view import router as outbound_reservation_view_router
@@ -96,6 +97,7 @@ app.include_router(cost_payment_hardening_router)
 # the same public paths are serialized across Railway workers. The core outbound flow
 # performs the per-stack reservation check while these guards serialize product writes.
 app.include_router(operational_guards_router)
+app.include_router(inbound_vehicle_flow_router)
 app.include_router(inventory_flow_router)
 app.include_router(master_products_router)
 app.include_router(outbound_flow_router)
