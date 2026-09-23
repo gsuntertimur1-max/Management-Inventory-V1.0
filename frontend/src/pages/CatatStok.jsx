@@ -12,7 +12,7 @@ import { consignmentAreaLabel, consignmentStackCodes } from '../lib/consignmentL
 
 const CONSIGNMENT_DESTINATIONS = ['Gudang E-commerce', 'Gudang Bazar'];
 const DAMAGED_AREA = 'AREA BARANG RUSAK';
-const emptyRow = () => ({ productId: '', inputMode: 'QTY', inputValue: 1, qty: 1, goodQty: 1, damagedQty: 0, normalQtyBefore1600: '', exp: '', stackCode: '', documentNo: '', documentQty: '', soTakeMode: 'PARTIAL', channel: '', fefoExceptionReason: '' });
+const emptyRow = () => ({ productId: '', inputMode: 'QTY', inputValue: 1, qty: 1, plannedQty: '', goodQty: 1, damagedQty: 0, normalQtyBefore1600: '', exp: '', stackCode: '', documentNo: '', documentQty: '', soTakeMode: 'PARTIAL', channel: '', fefoExceptionReason: '' });
 
 const wibMinutesNow = () => {
   const parts = new Intl.DateTimeFormat('en-GB', {
@@ -65,6 +65,7 @@ const CatatStok = ({ panel = '' }) => {
   const [feeChargeMode, setFeeChargeMode] = useState('PENGAMBIL');
   const [fefoGuides, setFefoGuides] = useState({});
   const [soBalances, setSoBalances] = useState({});
+  const [inboundReservations, setInboundReservations] = useState({});
 
   useEffect(() => {
     if (activePanel === 'damage' && !damageForm) setDamageForm({ productId: '', stackCode: '', qty: '', channel: 'KOM', cause: '', note: '', referenceNo: '' });
@@ -76,6 +77,15 @@ const CatatStok = ({ panel = '' }) => {
     [purchaseOrders],
   );
   const selectedPO = purchaseOrders.find((po) => po.id === poId);
+
+  useEffect(() => {
+    if (type !== 'MASUK') return;
+    let cancelled = false;
+    api.get('/inbound-loads/reservations')
+      .then(({ data }) => { if (!cancelled) setInboundReservations(data || {}); })
+      .catch(() => { if (!cancelled) setInboundReservations({}); });
+    return () => { cancelled = true; };
+  }, [type, poId]);
 
   const startUnloading = async () => {
     if (startingUnloading) return;
@@ -172,6 +182,7 @@ const CatatStok = ({ panel = '' }) => {
     setGrossMin('');
     setGrossMax('');
     setFeeChargeMode(nextType === 'MASUK' ? 'PENGIRIM' : 'PENGAMBIL');
+    if (nextType !== 'MASUK') setInboundReservations({});
   };
 
   const chooseType = (nextType) => {
@@ -207,25 +218,32 @@ const CatatStok = ({ panel = '' }) => {
     }
     const po = purchaseOrders.find((item) => item.id === id);
     if (!po) return;
+    const reserved = inboundReservations[id] || {};
     const remainingItems = (po.items || [])
-      .map((item) => ({
-        productId: item.productId,
-        inputMode: 'QTY',
-        inputValue: Math.max(Number(item.qty || 0) - Number(item.receivedQty || 0), 0),
-        qty: Math.max(Number(item.qty || 0) - Number(item.receivedQty || 0), 0),
-        goodQty: Math.max(Number(item.qty || 0) - Number(item.receivedQty || 0), 0),
-        damagedQty: 0,
-        normalQtyBefore1600: '',
-        exp: '',
-        channel: item.channel || products.find((product) => product.id === item.productId)?.channel || 'KOM',
-      }))
-      .filter((item) => item.productId && item.qty > 0);
+      .map((item) => {
+        const available = Math.max(Number(item.qty || 0) - Number(item.receivedQty || 0) - Number(reserved[item.productId] || 0), 0);
+        return {
+          productId: item.productId,
+          inputMode: 'QTY',
+          inputValue: 0,
+          qty: 0,
+          plannedQty: '',
+          goodQty: 0,
+          damagedQty: 0,
+          normalQtyBefore1600: '',
+          exp: '',
+          stackCode: '',
+          channel: item.channel || products.find((product) => product.id === item.productId)?.channel || 'KOM',
+          availableToSchedule: available,
+        };
+      })
+      .filter((item) => item.productId && item.availableToSchedule > 0);
     setParty(po.supplier || '');
     setRef(po.no || '');
     setRows(remainingItems.length ? remainingItems : [emptyRow()]);
   };
 
-  const receiptQty = (row) => Number(row.goodQty || 0) + Number(row.damagedQty || 0);
+  const receiptQty = (row) => selectedPO ? Number(row.plannedQty || 0) : Number(row.goodQty || 0) + Number(row.damagedQty || 0);
   const chosen = rows
     .map((row) => ({ ...row, qty: type === 'MASUK' ? receiptQty(row) : row.qty, product: products.find((product) => product.id === row.productId) }))
     .filter((row) => row.product);
@@ -367,7 +385,8 @@ const CatatStok = ({ panel = '' }) => {
     if (!selectedPO) return null;
     const item = (selectedPO.items || []).find((poItem) => poItem.productId === productId);
     if (!item) return 0;
-    return Math.max(Number(item.qty || 0) - Number(item.receivedQty || 0), 0);
+    const pending = Number((inboundReservations[selectedPO.id] || {})[productId] || 0);
+    return Math.max(Number(item.qty || 0) - Number(item.receivedQty || 0) - pending, 0);
   };
   const damageStacks = (stackAllocations || []).filter((allocation) => allocation.productId === damageForm?.productId && Number(allocation.primaryQty || 0) > 0);
   const saveDamageDiscovery = async () => {
@@ -424,7 +443,7 @@ const CatatStok = ({ panel = '' }) => {
       toast.error(type === 'MASUK' ? 'Pilih supplier pengirim' : 'Isi penerima barang');
       return;
     }
-    if (type === 'MASUK') {
+    if (type === 'MASUK' && !selectedPO) {
       if (!unloadingSession?.id) {
         toast.error('Tekan Mulai Bongkar sebelum menyelesaikan penerimaan');
         return;
@@ -514,6 +533,10 @@ const CatatStok = ({ panel = '' }) => {
     }
 
     if (type === 'MASUK' && selectedPO) {
+      if (!polisi.trim()) {
+        toast.error('Isi nomor polisi kendaraan sebelum membuat antrian bongkar');
+        return;
+      }
       for (const row of chosen) {
         const remaining = remainingFor(row.productId);
         if (remaining === null || Number(row.qty) > remaining) {
