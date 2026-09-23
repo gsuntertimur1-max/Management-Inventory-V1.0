@@ -550,34 +550,57 @@ const CatatStok = ({ panel = '' }) => {
     setSaving(true);
     try {
       if (type === 'MASUK') {
-        const result = await addReceipt({
-          poId,
-          items: chosen.map((row) => ({
-            productId: row.productId,
-            qty: Number(row.qty),
-            goodQty: Number(row.goodQty || 0),
-            damagedQty: Number(row.damagedQty || 0),
-            normalQtyBefore1600: row.normalQtyBefore1600 === '' ? null : Number(row.normalQtyBefore1600),
-            exp: row.exp || '',
-            stackCode: row.stackCode || row.product.location || '',
-            channel: row.channel || row.product.channel || 'KOM',
-          })),
-          party,
-          ref,
-          polisi,
-          keterangan: ket,
-          weighingForm,
-          grossWeight: Number(grossWeight || 0),
-          grossMin: Number(grossMin || 0),
-          grossMax: Number(grossMax || 0),
-          unloadingFeeChargeMode: feeChargeMode,
-          unloadingSessionId: unloadingSession.id,
-        });
-        const poStatus = result?.purchaseOrder?.status;
-        setUnloadingSession(null);
-        toast.success(poStatus ? `Bongkar selesai & penerimaan tersimpan · Status PO: ${poStatus}` : 'Bongkar selesai & stok masuk tersimpan');
-        if (weighingForm && result?.operationId) await downloadApiFile(`/export/weighing-form/inbound/${result.operationId}.pdf`, `form_timbangan_masuk_${result.operationId}.pdf`);
-        navigate('/riwayat');
+        if (selectedPO) {
+          const { data: load } = await api.post('/inbound-loads', {
+            poId,
+            items: chosen.filter((row) => Number(row.qty || 0) > 0).map((row) => ({
+              productId: row.productId,
+              qty: Number(row.qty),
+              stackCode: row.stackCode || '',
+              exp: row.exp || '',
+              channel: row.channel || row.product.channel || 'KOM',
+            })),
+            polisi,
+            driver: '',
+            keterangan: ket,
+            weighingForm,
+            grossWeight: Number(grossWeight || 0),
+            grossMin: Number(grossMin || 0),
+            grossMax: Number(grossMax || 0),
+            unloadingFeeChargeMode: feeChargeMode,
+          });
+          toast.success(`${load.loadNo} dibuat untuk ${polisi.toUpperCase()}. PO dan stok belum berubah sampai bongkar selesai.`);
+          navigate('/penerimaan');
+        } else {
+          const result = await addReceipt({
+            poId,
+            items: chosen.map((row) => ({
+              productId: row.productId,
+              qty: Number(row.qty),
+              goodQty: Number(row.goodQty || 0),
+              damagedQty: Number(row.damagedQty || 0),
+              normalQtyBefore1600: row.normalQtyBefore1600 === '' ? null : Number(row.normalQtyBefore1600),
+              exp: row.exp || '',
+              stackCode: row.stackCode || row.product.location || '',
+              channel: row.channel || row.product.channel || 'KOM',
+            })),
+            party,
+            ref,
+            polisi,
+            keterangan: ket,
+            weighingForm,
+            grossWeight: Number(grossWeight || 0),
+            grossMin: Number(grossMin || 0),
+            grossMax: Number(grossMax || 0),
+            unloadingFeeChargeMode: feeChargeMode,
+            unloadingSessionId: unloadingSession.id,
+          });
+          const poStatus = result?.purchaseOrder?.status;
+          setUnloadingSession(null);
+          toast.success(poStatus ? `Bongkar selesai & penerimaan tersimpan · Status PO: ${poStatus}` : 'Bongkar selesai & stok masuk tersimpan');
+          if (weighingForm && result?.operationId) await downloadApiFile(`/export/weighing-form/inbound/${result.operationId}.pdf`, `form_timbangan_masuk_${result.operationId}.pdf`);
+          navigate('/riwayat');
+        }
       } else {
         const load = await createOutboundLoad({
           items: chosen.map((row) => ({ productId: row.productId, qty: Number(row.qty), documentNo: row.documentNo || documentRefs[0], documentQty: documentType === 'SO' ? soTotalFor(row) : 0, stackCode: kondisi === 'RUSAK' ? '' : (row.stackCode || ''), channel: row.channel || row.product.channel || 'KOM', fefoExceptionReason: kondisi === 'BAIK' ? String(row.fefoExceptionReason || '').trim() : '' })),
