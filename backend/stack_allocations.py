@@ -8,8 +8,13 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.units import mm
+from reportlab.pdfbase.pdfmetrics import stringWidth
+from reportlab.pdfgen import canvas
 
-from backend.server import build_xlsx, db, get_current_user, new_id, now_iso, require_write
+from backend.server import build_xlsx, db, get_current_user, new_id, now_iso, operational_now, require_write
 
 router = APIRouter(prefix="/api")
 
@@ -373,6 +378,281 @@ async def create_stack_treatment(body: StackTreatmentBody, user: dict = Depends(
     })
     await db.stack_treatments.insert_one(dict(doc))
     return doc
+
+
+
+def _stack_map_wrap(text: str, font: str, size: float, max_width: float) -> list[str]:
+    words = str(text or "").split()
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = word if not current else f"{current} {word}"
+        if stringWidth(candidate, font, size) <= max_width:
+            current = candidate
+            continue
+        if current:
+            lines.append(current)
+        current = word
+    if current:
+        lines.append(current)
+    return lines or [""]
+
+
+def _stack_map_warehouse_config(settings: dict, warehouse: str) -> Optional[dict]:
+    warehouses = settings.get("warehouses") or [
+        *[
+            {
+                "code": str(unit),
+                "name": f"GBB {unit}",
+                "type": "GBB",
+                "length": 50,
+                "width": 30,
+                "zones": [{"code": zone, "count": 4} for zone in ("A", "B", "C")],
+                "active": True,
+            }
+            for unit in range(17, 25)
+        ],
+        {
+            "code": "MP1",
+            "name": "MP1",
+            "type": "MP",
+            "length": 230,
+            "width": 30,
+            "zones": [{"code": "A", "count": 8}, {"code": "B", "count": 8}],
+            "active": True,
+        },
+    ]
+    return next(
+        (
+            item
+            for item in warehouses
+            if str(item.get("code", "")).strip().upper() == warehouse and item.get("active", True) is not False
+        ),
+        None,
+    )
+
+
+def _stack_map_calculation(item: dict) -> str:
+    if item.get("arrangementAdjusted"):
+        return "Perkalian perlu dihitung ulang"
+    arrangements = item.get("arrangements") or [
+        {
+            "hamparan": item.get("length", 0),
+            "kaki": item.get("width", 0),
+            "height": item.get("height", 0),
+        }
+    ]
+    parts = []
+    for row in arrangements:
+        h = int(row.get("hamparan", 0) or 0)
+        k = int(row.get("kaki", 0) or 0)
+        t = int(row.get("height", 0) or 0)
+        parts.append(f"{h} x {k} x {t} = {h * k * t:g}")
+    text = " + ".join(parts)
+    if float(item.get("extraSecondary", 0) or 0) > 0:
+        text += f" + {float(item.get('extraSecondary', 0) or 0):g} {item.get('secondary', 'sekunder')}"
+    if float(item.get("extraPrimary", 0) or 0) > 0:
+        text += f" + {float(item.get('extraPrimary', 0) or 0):g} {item.get('unit', 'unit')} lepas"
+    return text
+
+
+@router.get("/export/warehouse-stack-map.pdf")
+async def export_warehouse_stack_map_pdf(warehouse: str, user: dict = Depends(get_current_user)):
+    warehouse = str(warehouse or "").strip().upper()
+    settings = await db.settings.find_one({"_id": "app"}, {"_id": 0, "warehouses": 1}) or {}
+    config = _stack_map_warehouse_config(settings, warehouse)
+    if not config:
+        raise HTTPException(status_code=404, detail="Gudang tidak ditemukan")
+
+    zones = [str(zone.get("code", "")).strip().upper() for zone in (config.get("zones") or []) if str(zone.get("code", "")).strip()]
+    zone_counts = {
+        str(zone.get("code", "")).strip().upper(): int(zone.get("count", 0) or 0)
+        for zone in (config.get("zones") or [])
+        if str(zone.get("code", "")).strip()
+    }
+    if not zones or not any(zone_counts.values()):
+        raise HTTPException(status_code=400, detail="Konfigurasi tumpukan gudang belum tersedia")
+
+    items = await db.stack_allocations.find(
+        {"warehouse": warehouse},
+        {"_id": 0},
+    ).sort([("stackCode", 1), ("productName", 1)]).to_list(10000)
+
+    grouped: dict[str, list[dict]] = {}
+    for item in items:
+        code = str(item.get("stackCode", "")).strip().upper()
+        grouped.setdefault(code, []).append(item)
+
+    now = operational_now()
+    months = [
+        "", "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+        "Juli", "Agustus", "September", "Oktober", "November", "Desember",
+    ]
+    pulled = f"{now.day} {months[now.month]} {now.year}"
+    printed = f"{now.day} {months[now.month]} {now.year} {now.strftime('%H:%M')} WIB"
+
+    buffer = io.BytesIO()
+    page_w, page_h = landscape(A4)
+    c = canvas.Canvas(buffer, pagesize=(page_w, page_h))
+
+    # Header
+    c.setFillColor(colors.HexColor("#0F172A"))
+    c.rect(0, page_h - 31 * mm, page_w, 31 * mm, fill=1, stroke=0)
+    c.setFillColor(colors.white)
+    c.setFont("Helvetica-Bold", 18)
+    c.drawCentredString(page_w / 2, page_h - 11.5 * mm, "PETA TUMPUKAN")
+    c.setFont("Helvetica-Bold", 10)
+    warehouse_name = str(config.get("name") or (f"GBB {warehouse}" if warehouse != "MP1" else "MP1"))
+    c.drawCentredString(page_w / 2, page_h - 18 * mm, f"{warehouse_name} - Gudang Sunter Timur I & II")
+    c.setFont("Helvetica", 8)
+    c.drawCentredString(page_w / 2, page_h - 23.5 * mm, f"Tanggal penarikan data: {pulled}")
+
+    left, right = 12 * mm, page_w - 12 * mm
+    front_strip_y = page_h - 40 * mm
+    zone_header_y = page_h - 49 * mm
+    grid_top = page_h - 57 * mm
+    bottom = 24 * mm
+    zone_gap = 6 * mm
+    usable_w = right - left
+    zone_count = max(len(zones), 1)
+    col_w = (usable_w - max(zone_count - 1, 0) * zone_gap) / zone_count
+    max_rows = max(zone_counts.values())
+    row_gap = 2.2 * mm if max_rows > 4 else 3 * mm
+    usable_h = grid_top - bottom
+    row_h = (usable_h - max(max_rows - 1, 0) * row_gap) / max_rows
+
+    # Door labels get their own strip, so they cannot be covered by zone headers.
+    boundary_positions = [
+        left + (index + 1) * col_w + (index + 0.5) * zone_gap
+        for index in range(zone_count - 1)
+    ]
+    if warehouse == "MP1" and len(boundary_positions) == 1:
+        front_positions = boundary_positions
+        back_positions = boundary_positions
+    else:
+        front_positions = boundary_positions
+        back_positions = boundary_positions
+
+    for x in front_positions:
+        c.setFillColor(colors.white)
+        c.setStrokeColor(colors.HexColor("#CBD5E1"))
+        c.roundRect(x - 15 * mm, front_strip_y - 3.3 * mm, 30 * mm, 6.6 * mm, 2 * mm, fill=1, stroke=1)
+        c.setFillColor(colors.HexColor("#475569"))
+        c.setFont("Helvetica-Bold", 7.2)
+        c.drawCentredString(x, front_strip_y - 1.1 * mm, "PINTU DEPAN")
+
+    for zone_index, zone in enumerate(zones):
+        x = left + zone_index * (col_w + zone_gap)
+        c.setFillColor(colors.HexColor("#DBEAFE"))
+        c.roundRect(x, zone_header_y, col_w, 7 * mm, 2 * mm, fill=1, stroke=0)
+        c.setFillColor(colors.HexColor("#1D4ED8"))
+        c.setFont("Helvetica-Bold", 10)
+        c.drawCentredString(x + col_w / 2, zone_header_y + 2.4 * mm, f"TUMPUKAN {zone}")
+
+        for row_index in range(zone_counts.get(zone, 0)):
+            code = f"{warehouse}/{zone}{row_index + 1:02d}"
+            y = grid_top - (row_index + 1) * row_h - row_index * row_gap
+            stack_items = grouped.get(code, [])
+            c.setFillColor(colors.HexColor("#F0FDF4") if stack_items else colors.HexColor("#F8FAFC"))
+            c.setStrokeColor(colors.HexColor("#86EFAC") if stack_items else colors.HexColor("#CBD5E1"))
+            c.roundRect(x, y, col_w, row_h, 2.2 * mm, fill=1, stroke=1)
+
+            c.setFillColor(colors.HexColor("#0F172A"))
+            code_font = 8.1 if max_rows > 4 else 9
+            c.setFont("Helvetica-Bold", code_font)
+            c.drawString(x + 3 * mm, y + row_h - 4.7 * mm, code)
+
+            if not stack_items:
+                c.setFillColor(colors.HexColor("#94A3B8"))
+                c.setFont("Helvetica-Oblique", 7 if max_rows > 4 else 8)
+                c.drawCentredString(x + col_w / 2, y + row_h / 2 - 1 * mm, "KOSONG")
+                continue
+
+            visible_items = stack_items[:3]
+            hidden_count = max(len(stack_items) - len(visible_items), 0)
+            compact = max_rows > 4 or len(visible_items) > 1
+            sku_size = 4.4 if compact else 6.3
+            name_size = 4.5 if compact else 6.6
+            body_size = 4.15 if compact else 5.9
+            step = 1.95 * mm if compact else 3.0 * mm
+            cursor_y = y + row_h - (7.6 * mm if compact else 9.2 * mm)
+
+            for item_index, item in enumerate(visible_items):
+                if item_index:
+                    c.setStrokeColor(colors.HexColor("#CBD5E1"))
+                    c.line(x + 3 * mm, cursor_y + 0.45 * mm, x + col_w - 3 * mm, cursor_y + 0.45 * mm)
+                    cursor_y -= 1.0 * mm
+
+                c.setFillColor(colors.HexColor("#475569"))
+                c.setFont("Helvetica-Bold", sku_size)
+                c.drawString(x + 3 * mm, cursor_y, f"SKU: {item.get('sku', '-') or '-'}")
+                cursor_y -= step
+
+                c.setFillColor(colors.HexColor("#0F172A"))
+                c.setFont("Helvetica-Bold", name_size)
+                name_lines = _stack_map_wrap(
+                    str(item.get("productName", "") or "-"),
+                    "Helvetica-Bold",
+                    name_size,
+                    col_w - 6 * mm,
+                )[: 1 if compact else 2]
+                for line in name_lines:
+                    c.drawString(x + 3 * mm, cursor_y, line)
+                    cursor_y -= step
+
+                c.setFillColor(colors.HexColor("#1D4ED8"))
+                c.setFont("Helvetica", body_size)
+                calculation = _stack_map_calculation(item)
+                calc_lines = _stack_map_wrap(calculation, "Helvetica", body_size, col_w - 6 * mm)[:1]
+                c.drawString(x + 3 * mm, cursor_y, calc_lines[0] if calc_lines else calculation)
+                cursor_y -= step
+
+                qty = float(item.get("primaryQty", 0) or 0)
+                unit = str(item.get("unit", "") or "unit")
+                c.setFillColor(colors.HexColor("#166534"))
+                c.setFont("Helvetica-Bold", body_size)
+                c.drawString(x + 3 * mm, cursor_y, f"Total: {qty:g} {unit}")
+                cursor_y -= step
+
+                measure_per_unit = float(item.get("weight", 0) or 0)
+                measure_total = qty * measure_per_unit
+                measure_unit = str(item.get("measureUnit", "kg") or "kg").strip().lower()
+                is_oil = "MINYAK" in str(item.get("productName", "")).upper()
+                c.setFillColor(colors.HexColor("#334155"))
+                c.setFont("Helvetica", body_size)
+                if measure_total > 0:
+                    if measure_unit in {"liter", "litre", "l"} or is_oil:
+                        c.drawString(x + 3 * mm, cursor_y, f"Liter: {measure_total:g} liter")
+                    else:
+                        c.drawString(x + 3 * mm, cursor_y, f"Berat: {measure_total:g} {item.get('measureUnit', 'kg') or 'kg'}")
+                    cursor_y -= step
+
+            if hidden_count > 0:
+                c.setFillColor(colors.HexColor("#64748B"))
+                c.setFont("Helvetica-Oblique", 4.2 if compact else 5.4)
+                c.drawString(x + 3 * mm, max(y + 2.2 * mm, cursor_y), f"+ {hidden_count} komoditi lain")
+
+    back_y = 16 * mm
+    for x in back_positions:
+        c.setFillColor(colors.white)
+        c.setStrokeColor(colors.HexColor("#CBD5E1"))
+        c.roundRect(x - 15 * mm, back_y - 3.3 * mm, 30 * mm, 6.6 * mm, 2 * mm, fill=1, stroke=1)
+        c.setFillColor(colors.HexColor("#475569"))
+        c.setFont("Helvetica-Bold", 7.2)
+        c.drawCentredString(x, back_y - 1.1 * mm, "PINTU BELAKANG")
+
+    c.setFillColor(colors.HexColor("#94A3B8"))
+    c.setFont("Helvetica", 6.5)
+    c.drawRightString(right, 6.5 * mm, f"Dicetak: {printed}")
+    c.save()
+    buffer.seek(0)
+
+    filename = f"peta_tumpukan_{warehouse}.pdf"
+    return StreamingResponse(
+        buffer,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/export/stack-card.xlsx")
