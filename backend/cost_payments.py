@@ -24,10 +24,13 @@ def unloading_total(transactions: list[dict], recipient: str, group: str = "") -
     target_group = normalize_unloading_group(group) if group else ""
     total = 0.0
     for row in transactions:
+        fee = row.get("unloading_cost") or {}
+        if str(fee.get("mode") or "").strip().upper() == "TERMASUK" or bool(fee.get("settlementExcluded", False)):
+            continue
         row_group = normalize_unloading_group(row.get("unloading_group", ""))
         if target_group and row_group != target_group:
             continue
-        total += float((row.get("unloading_cost") or {}).get(key, 0) or 0)
+        total += float(fee.get(key, 0) or 0)
     return total
 
 
