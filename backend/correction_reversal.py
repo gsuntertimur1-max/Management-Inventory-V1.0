@@ -257,4 +257,31 @@ async def void_receipt_operation(operation_id: str, body: CorrectionReasonInput,
             except Exception:
                 pass
 
+        # Jika penerimaan berasal dari satu kendaraan PO, sinkronkan jejak
+        # kendaraan tanpa mengubah status historis "Selesai". Koreksi tetap
+        # menjadi satu-satunya cara membatalkan penerimaan yang sudah selesai.
+        try:
+            reversal_event = {
+                "time": correction_time,
+                "status": "Direversal",
+                "by": user.get("name", ""),
+                "note": body.reason.strip(),
+            }
+            await db.inbound_loads.update_one(
+                {"operationId": operation_id, "status": "Selesai"},
+                {
+                    "$set": {
+                        "reversedAt": correction_time,
+                        "reversedBy": user.get("name", ""),
+                        "reversalReason": body.reason.strip(),
+                        "correctionId": correction_id,
+                    },
+                    "$push": {"history": reversal_event},
+                },
+            )
+        except Exception:
+            # Reversal stok/PO sudah sah; metadata kendaraan bersifat audit
+            # tambahan dan tidak boleh membuat koreksi inti tampak gagal.
+            pass
+
         return {"correctionId": correction_id, "operationId": operation_id, "message": "Penerimaan berhasil dibatalkan melalui transaksi koreksi"}
