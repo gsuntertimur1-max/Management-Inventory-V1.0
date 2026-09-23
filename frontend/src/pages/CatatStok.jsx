@@ -691,7 +691,7 @@ const CatatStok = ({ panel = '' }) => {
             <div className="text-sm font-semibold">Penagihan biaya {type === 'MASUK' ? 'bongkar' : 'muat'}</div>
             
             <select value={feeChargeMode} onChange={(e) => setFeeChargeMode(e.target.value)} className="w-full mt-3 bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm">
-              {type === 'MASUK' ? <><option value="PENGIRIM">Ditagihkan kepada pengirim</option><option value="TERMASUK">Tidak ditagihkan — sudah termasuk biaya dokumen</option></> : <><option value="PENGAMBIL">Ditagihkan kepada pengambil</option><option value="TERMASUK">Tidak ditagihkan — sudah termasuk biaya SO</option></>}
+              {type === 'MASUK' ? <><option value="PENGIRIM">Masuk flow pembayaran — ditagihkan kepada pengirim</option><option value="TERMASUK">Sudah dibayar langsung / termasuk dokumen — tidak masuk rekap Buruh/UH</option></> : <><option value="PENGAMBIL">Masuk flow pembayaran — ditagihkan kepada pengambil</option><option value="TERMASUK">Sudah dibayar langsung / termasuk SO — tidak masuk rekap Buruh/UH</option></>}
             </select>
           </div>
 
