@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from backend.server import app
 import backend.role_four_config  # noqa: F401 - consolidates legacy roles into warehouse roles
 from backend.inventory_flow import router as inventory_flow_router
-from backend.inbound_vehicle_flow import router as inbound_vehicle_flow_router
+from backend.inbound_vehicle_flow import router as inbound_vehicle_flow_router, ensure_inbound_load_indexes
 from backend.master_products import router as master_products_router
 from backend.outbound_flow import router as outbound_flow_router
 from backend.outbound_reservation_view import router as outbound_reservation_view_router
@@ -145,6 +145,7 @@ async def hardened_lifespan(application):
     async with _original_lifespan(application):
         await ensure_performance_indexes()
         await ensure_operational_guard_indexes()
+        await ensure_inbound_load_indexes()
         await ensure_stack_lot_indexes()
         await ensure_consignment_operation_indexes()
         await ensure_consignment_damaged_indexes()
