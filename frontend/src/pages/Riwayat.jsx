@@ -43,6 +43,11 @@ const unloadingUhLabel = (group) => ({
   'MANDOR 2 - MP1/GBB 21-24': 'UH 2 - MP1/GBB 21-24',
 }[group] || group || 'UH');
 
+const settlementEligibleFee = (fee) => {
+  const row = fee || {};
+  return String(row.mode || '').trim().toUpperCase() !== 'TERMASUK' && !row.settlementExcluded;
+};
+
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;',
 }[char]));
@@ -108,7 +113,7 @@ const Riwayat = () => {
   const unloadingDays = useMemo(() => {
     const days = {};
     transactions
-      .filter((t) => t.type === 'MASUK' && !t.voided && Number(t.unloading_cost?.total || 0) > 0)
+      .filter((t) => t.type === 'MASUK' && !t.voided && settlementEligibleFee(t.unloading_cost) && Number(t.unloading_cost?.total || 0) > 0)
       .forEach((t) => {
         const group = normalizeUnloadingGroup(t.unloading_group);
         if (!group) return;
@@ -137,8 +142,17 @@ const Riwayat = () => {
   const loadingDays = useMemo(() => {
     const days = {};
     (outboundLoads || [])
-      .filter((load) => load.status === 'Selesai' && Number(load.loading_cost?.total || 0) > 0)
+      .filter((load) => load.status === 'Selesai')
       .forEach((load) => {
+        const eligibleItems = (load.items || []).filter((item) => settlementEligibleFee(item.loadingFee));
+        const eligibleCost = Object.fromEntries(
+          ['labor', 'daily', 'warehouse', 'total', 'chargeable'].map((key) => [
+            key,
+            eligibleItems.reduce((sum, item) => sum + Number(item.loadingFee?.[key] || 0), 0),
+          ]),
+        );
+        if (Number(eligibleCost.total || 0) <= 0) return;
+
         const date = load.operational_date || String(load.completed_at || load.created_at || '').slice(0, 10) || '-';
         const day = days[date] || {
           date,
@@ -149,12 +163,13 @@ const Riwayat = () => {
         };
 
         ['labor', 'daily', 'warehouse', 'total', 'chargeable'].forEach((key) => {
-          day.totals[key] += Number(load.loading_cost?.[key] || 0);
+          day.totals[key] += Number(eligibleCost[key] || 0);
         });
-        day.totals.collected += Number(load.loading_fee_payment_total || 0);
-        day.totals.outstanding += Math.max(Number(load.loading_cost?.chargeable || 0) - Number(load.loading_fee_payment_total || 0), 0);
+        const collected = Math.min(Number(load.loading_fee_payment_total || 0), Number(eligibleCost.chargeable || 0));
+        day.totals.collected += collected;
+        day.totals.outstanding += Math.max(Number(eligibleCost.chargeable || 0) - collected, 0);
 
-        (load.items || []).forEach((item, index) => {
+        eligibleItems.forEach((item, index) => {
           const group = item.crewGroup || 'TANPA GRUP BIAYA';
           const fee = item.loadingFee || {};
           const groupTotals = day.groups[group] || { labor: 0, daily: 0, warehouse: 0, total: 0, chargeable: 0 };
@@ -178,8 +193,8 @@ const Riwayat = () => {
             fee,
             work: item.loadingWork || {},
             pengambil: load.pengambil || load.party || '',
-            paymentStatus: load.loading_fee_payment_status || (Number(load.loading_cost?.chargeable || 0) > 0 ? 'BELUM_DIBAYAR' : 'TIDAK_DITAGIH'),
-            outstanding: Math.max(Number(load.loading_cost?.chargeable || 0) - Number(load.loading_fee_payment_total || 0), 0),
+            paymentStatus: load.loading_fee_payment_status || (Number(eligibleCost.chargeable || 0) > 0 ? 'BELUM_DIBAYAR' : 'TIDAK_DITAGIH'),
+            outstanding: Math.max(Number(eligibleCost.chargeable || 0) - Number(load.loading_fee_payment_total || 0), 0),
             payments: load.loading_fee_payments || [],
             isFirstLoadItem: index === 0,
           });
