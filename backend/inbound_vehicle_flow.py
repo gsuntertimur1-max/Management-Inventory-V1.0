@@ -23,6 +23,13 @@ EPS = 1e-9
 ACTIVE_STATUSES = ["Menunggu Bongkar", "Sedang Bongkar"]
 
 
+async def ensure_inbound_load_indexes() -> None:
+    await db.inbound_loads.create_index("id", unique=True)
+    await db.inbound_loads.create_index("loadNo", unique=True)
+    await db.inbound_loads.create_index([("poId", 1), ("status", 1)])
+    await db.inbound_loads.create_index([("createdAt", -1)])
+
+
 class InboundPlanItem(BaseModel):
     productId: str
     qty: float = Field(gt=0)
