@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { CalendarDays, DoorOpen, Edit3, Minus, PackagePlus, Plus, Printer, ShieldCheck, Trash2, Warehouse } from 'lucide-react';
+import { CalendarDays, DoorOpen, Download, Edit3, Minus, PackagePlus, Plus, Printer, ShieldCheck, Trash2, Warehouse } from 'lucide-react';
 import { toast } from 'sonner';
 import { useData } from '../context/DataContext';
 import { apiError, downloadApiFile } from '../lib/api';
@@ -91,7 +91,7 @@ const TumpukanStok = () => {
 
     <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_390px] gap-5">
       <section className="card-surface p-4 md:p-5">
-        <div className="flex justify-between mb-4"><div><h2 className="font-display text-xl font-bold">{warehouseConfig?.name}</h2><p className="text-xs text-[#6b7688] mt-1">{warehouseConfig?.length} × {warehouseConfig?.width} meter · {warehouseConfig?.type === 'MP' ? 'pintu utama depan dan belakang' : 'dua posisi pintu'} · Klik tumpukan untuk melihat isinya.</p></div><span className="hidden sm:flex items-center gap-2 text-xs text-[#6b7688]"><DoorOpen size={16} />Pintu depan</span></div>
+        <div className="flex justify-between mb-4"><div><div className="flex flex-wrap items-center gap-2"><h2 className="font-display text-xl font-bold">{warehouseConfig?.name}</h2><button type="button" title="Download peta tumpukan PDF" onClick={() => downloadApiFile(`/export/warehouse-stack-map.pdf?warehouse=${encodeURIComponent(warehouse)}`, `peta_tumpukan_${warehouse}.pdf`).catch((e) => toast.error(apiError(e)))} className="inline-flex items-center gap-1.5 rounded-lg border border-[#294263] px-2.5 py-1.5 text-[11px] font-semibold text-[#93c5fd] hover:bg-[#2563eb]/10"><Download size={13} />Download Peta PDF</button></div><p className="text-xs text-[#6b7688] mt-1">{warehouseConfig?.length} × {warehouseConfig?.width} meter · {warehouseConfig?.type === 'MP' ? 'pintu utama depan dan belakang' : 'dua posisi pintu'} · Klik tumpukan untuk melihat isinya.</p></div><span className="hidden sm:flex items-center gap-2 text-xs text-[#6b7688]"><DoorOpen size={16} />Pintu depan</span></div>
         {warehouseConfig?.type !== 'MP' && <div className="mb-2 rounded-lg border border-dashed border-[#35445b] bg-[#0b0f17] py-2 text-center text-[11px] text-[#8b93a1]">Lorong / jalan keliling GBB · batas antar-tumpukan</div>}
         <div className={`grid ${warehouseConfig?.type === 'MP' ? 'grid-cols-2' : ''} gap-2 md:gap-3`} style={warehouseConfig?.type === 'MP' ? undefined : { gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>{zones.map((zone) => <div key={zone} className="space-y-2 min-w-0"><div className="text-center text-sm font-bold text-[#93c5fd] py-2 rounded-lg bg-[#0d1728]">Tumpukan {zone}</div>{codesFor(warehouse).filter((code) => code.includes(`/${zone}`)).map((code) => {
           const items = grouped[code] || [];
