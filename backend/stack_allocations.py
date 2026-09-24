@@ -464,7 +464,16 @@ async def export_warehouse_stack_map_pdf(warehouse: str, user: dict = Depends(ge
     if not config:
         raise HTTPException(status_code=404, detail="Gudang tidak ditemukan")
 
-    zones = [str(zone.get("code", "")).strip().upper() for zone in (config.get("zones") or []) if str(zone.get("code", "")).strip()]
+    # Samakan orientasi PDF dengan tampilan web/arah pandang dari pintu depan:
+    # saat masuk gudang, A di kiri, B di tengah, C di kanan.
+    # Master zona lama tersimpan dalam urutan kebalikan untuk kebutuhan tampilan,
+    # sehingga PDF perlu memakai urutan visual yang sama seperti web.
+    raw_zones = [
+        str(zone.get("code", "")).strip().upper()
+        for zone in (config.get("zones") or [])
+        if str(zone.get("code", "")).strip()
+    ]
+    zones = list(reversed(raw_zones))
     zone_counts = {
         str(zone.get("code", "")).strip().upper(): int(zone.get("count", 0) or 0)
         for zone in (config.get("zones") or [])
