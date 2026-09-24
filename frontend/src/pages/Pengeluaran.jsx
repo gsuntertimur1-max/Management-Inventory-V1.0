@@ -126,7 +126,9 @@ const Pengeluaran = () => {
     const remaining = mode === 'SO_RETUR' ? salesReturnRemaining(load, item, sourceDocumentNo) : remainingQty(load, item, sourceDocumentNo);
     return { productId: item.productId, name: item.name, unit: item.unit, goodQty: 0, stackCode: item.location || '', placements: [{ goodQty: 0, stackCode: item.location || '' }], damagedQty: 0, remaining };
   });
-  const soSourceRowsFor = (anchorLoad) => outboundLoads
+  const soSourceRowsFor = (anchorLoad) => {
+    const anchorSourceDocument = (anchorLoad.documents || [anchorLoad.ref])[0] || anchorLoad.ref || '';
+    return outboundLoads
     .filter((load) => load.status === 'Selesai' && load.document_type === anchorLoad.document_type)
     .flatMap((load) => (load.documents || [load.ref]).flatMap((sourceDocumentNo) => sourceItemsFor(load, sourceDocumentNo).map((item) => ({
       loadId: load.id,
@@ -136,10 +138,11 @@ const Pengeluaran = () => {
       unit: item.unit,
       party: load.party || '',
       remaining: remainingQty(load, item, sourceDocumentNo),
-      qty: load.id === anchorLoad.id ? remainingQty(load, item, sourceDocumentNo) : 0,
-      isCurrent: load.id === anchorLoad.id,
+      qty: load.id === anchorLoad.id && sourceDocumentNo === anchorSourceDocument ? remainingQty(load, item, sourceDocumentNo) : 0,
+      isCurrent: load.id === anchorLoad.id && sourceDocumentNo === anchorSourceDocument,
     })).filter((row) => row.remaining > 0)))
     .sort((a, b) => Number(b.isCurrent) - Number(a.isCurrent) || a.sourceDocumentNo.localeCompare(b.sourceDocumentNo) || a.name.localeCompare(b.name));
+  };
 
   const openLinkedDocument = (load, mode) => {
     const documents = load.documents || [load.ref];
