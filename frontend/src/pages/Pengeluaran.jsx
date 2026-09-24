@@ -64,7 +64,7 @@ const loadingCutoffStatus = (startedAt) => {
 };
 
 const Pengeluaran = () => {
-  const { user, outboundLoads, suratJalan, settings, startOutboundLoad, completeOutboundLoad, createConsignmentReturn, createSalesReturn, settleOutboundDocument, cancelOutboundLoad, editOutboundLoad, refreshOutboundLoads } = useData();
+  const { user, outboundLoads, suratJalan, settings, startOutboundLoad, completeOutboundLoad, createConsignmentReturn, createSalesReturn, settleOutboundDocument, settleOutboundDocuments, cancelOutboundLoad, editOutboundLoad, refreshOutboundLoads } = useData();
   const STACKS = stackCodes(settings?.warehouses);
   const navigate = useNavigate();
   const [filter, setFilter] = useState('Semua Status');
@@ -90,6 +90,13 @@ const Pengeluaran = () => {
   const printWeighingForm = (load) => printApiFile(`/export/weighing-form/outbound/${load.id}.pdf`).catch((e) => toast.error(apiError(e)));
   const sourceDocumentFor = (load, item) => item.documentNo || load.ref || '';
   const linkedUsageFor = (load, sourceDocumentNo, productId) => (load.document_links || []).reduce((total, link) => {
+    if (link.type === 'SO' && Array.isArray(link.sources)) {
+      return total + link.sources
+        .filter((allocation) => allocation.sourceDocumentNo === sourceDocumentNo)
+        .reduce((sourceTotal, allocation) => sourceTotal + (allocation.items || [])
+          .filter((item) => item.productId === productId)
+          .reduce((sum, item) => sum + Number(item.qty || 0), 0), 0);
+    }
     const linkSource = link.sourceDocumentNo || load.ref || '';
     if (linkSource !== sourceDocumentNo) return total;
     return total + (link.items || []).filter((item) => item.productId === productId).reduce((sum, item) => sum + (['CR', 'RETUR'].includes(link.type) ? Number(item.goodQty || 0) + Number(item.damagedQty || 0) : Number(item.qty || 0)), 0);
@@ -119,22 +126,59 @@ const Pengeluaran = () => {
     const remaining = mode === 'SO_RETUR' ? salesReturnRemaining(load, item, sourceDocumentNo) : remainingQty(load, item, sourceDocumentNo);
     return { productId: item.productId, name: item.name, unit: item.unit, goodQty: 0, stackCode: item.location || '', placements: [{ goodQty: 0, stackCode: item.location || '' }], damagedQty: 0, remaining };
   });
+  const soSourceRowsFor = (anchorLoad) => outboundLoads
+    .filter((load) => load.status === 'Selesai' && load.document_type === anchorLoad.document_type)
+    .flatMap((load) => (load.documents || [load.ref]).flatMap((sourceDocumentNo) => sourceItemsFor(load, sourceDocumentNo).map((item) => ({
+      loadId: load.id,
+      sourceDocumentNo,
+      productId: item.productId,
+      name: item.name,
+      unit: item.unit,
+      party: load.party || '',
+      remaining: remainingQty(load, item, sourceDocumentNo),
+      qty: load.id === anchorLoad.id ? remainingQty(load, item, sourceDocumentNo) : 0,
+      isCurrent: load.id === anchorLoad.id,
+    })).filter((row) => row.remaining > 0)))
+    .sort((a, b) => Number(b.isCurrent) - Number(a.isCurrent) || a.sourceDocumentNo.localeCompare(b.sourceDocumentNo) || a.name.localeCompare(b.name));
+
   const openLinkedDocument = (load, mode) => {
     const documents = load.documents || [load.ref];
     const sourceDocumentNo = documents[0] || '';
-    const sourceItems = sourceItemsFor(load, sourceDocumentNo);
-    setDocumentModal({ load, mode, documentNo: '', note: '', sourceDocumentNo, items: isReturnMode(mode) ? returnItemsFor(load, mode, sourceDocumentNo) : sourceItems.map((item) => ({ productId: item.productId, name: item.name, unit: item.unit, qty: remainingQty(load, item, sourceDocumentNo), remaining: remainingQty(load, item, sourceDocumentNo) })) });
+    if (mode === 'SO') {
+      setDocumentModal({ load, mode, documentNo: '', note: '', sources: soSourceRowsFor(load) });
+      return;
+    }
+    setDocumentModal({ load, mode, documentNo: '', note: '', sourceDocumentNo, items: returnItemsFor(load, mode, sourceDocumentNo) });
   };
   const updateDocumentItem = (index, patch) => setDocumentModal((prev) => ({ ...prev, items: prev.items.map((item, i) => i === index ? { ...item, ...patch } : item) }));
+  const updateSettlementSource = (index, patch) => setDocumentModal((prev) => ({ ...prev, sources: prev.sources.map((item, i) => i === index ? { ...item, ...patch } : item) }));
   const updateReturnPlacement = (itemIndex, placementIndex, patch) => updateDocumentItem(itemIndex, { placements: documentModal.items[itemIndex].placements.map((placement, index) => index === placementIndex ? { ...placement, ...patch } : placement) });
   const saveLinkedDocument = async () => {
     if (!documentModal?.documentNo.trim()) return toast.error(`Isi nomor dokumen ${documentModal?.mode}`);
     setBusyId(documentModal.load.id);
     try {
-      const payload = { documentNo: documentModal.documentNo, sourceDocumentNo: documentModal.sourceDocumentNo, note: documentModal.note, returnType: documentModal.mode, items: documentModal.items.map((item) => isReturnMode(documentModal.mode) ? { productId: item.productId, goodQty: Number(item.goodQty || 0), damagedQty: Number(item.damagedQty || 0), stackCode: item.stackCode || '', placements: (item.placements || []).map((placement) => ({ goodQty: Number(placement.goodQty || 0), stackCode: placement.stackCode || '' })).filter((placement) => placement.goodQty > 0) } : { productId: item.productId, qty: Number(item.qty || 0) }).filter((item) => isReturnMode(documentModal.mode) ? item.placements.reduce((total, placement) => total + placement.goodQty, 0) + item.goodQty + item.damagedQty > 0 : item.qty > 0) };
-      if (documentModal.mode === 'SO_RETUR') await createSalesReturn(documentModal.load.id, { ...payload, sourceDocumentNo: documentModal.sourceDocumentNo });
-      else if (isReturnMode(documentModal.mode)) await createConsignmentReturn(documentModal.load.id, payload);
-      else await settleOutboundDocument(documentModal.load.id, payload);
+      if (documentModal.mode === 'SO') {
+        const selected = (documentModal.sources || []).filter((row) => Number(row.qty || 0) > 0);
+        if (!selected.length) return toast.error('Isi alokasi kuantum SO pada minimal satu dokumen sumber');
+        const invalid = selected.find((row) => Number(row.qty || 0) > Number(row.remaining || 0) + 1e-9);
+        if (invalid) return toast.error(`Alokasi ${invalid.sourceDocumentNo} melebihi sisa dokumen`);
+
+        const grouped = {};
+        selected.forEach((row) => {
+          const key = `${row.loadId}|${row.sourceDocumentNo}`;
+          grouped[key] = grouped[key] || { loadId: row.loadId, sourceDocumentNo: row.sourceDocumentNo, items: [] };
+          grouped[key].items.push({ productId: row.productId, qty: Number(row.qty) });
+        });
+        await settleOutboundDocuments({
+          documentNo: documentModal.documentNo,
+          note: documentModal.note,
+          sources: Object.values(grouped),
+        });
+      } else {
+        const payload = { documentNo: documentModal.documentNo, sourceDocumentNo: documentModal.sourceDocumentNo, note: documentModal.note, returnType: documentModal.mode, items: documentModal.items.map((item) => ({ productId: item.productId, goodQty: Number(item.goodQty || 0), damagedQty: Number(item.damagedQty || 0), stackCode: item.stackCode || '', placements: (item.placements || []).map((placement) => ({ goodQty: Number(placement.goodQty || 0), stackCode: placement.stackCode || '' })).filter((placement) => placement.goodQty > 0) })).filter((item) => item.placements.reduce((total, placement) => total + placement.goodQty, 0) + item.goodQty + item.damagedQty > 0) };
+        if (documentModal.mode === 'SO_RETUR') await createSalesReturn(documentModal.load.id, { ...payload, sourceDocumentNo: documentModal.sourceDocumentNo });
+        else await createConsignmentReturn(documentModal.load.id, payload);
+      }
       toast.success(`Dokumen ${documentModal.mode === 'SO_RETUR' ? 'Retur SO' : documentModal.mode} berhasil ditautkan`); setDocumentModal(null);
     } catch (e) { toast.error(e?.response?.data?.detail || 'Gagal menyimpan dokumen'); } finally { setBusyId(''); }
   };
