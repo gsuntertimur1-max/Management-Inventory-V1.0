@@ -212,28 +212,29 @@ async def create_inbound_load(body: InboundLoadCreate, user: dict = Depends(requ
 @router.post("/inbound-loads/{load_id}/start")
 async def start_inbound_load(load_id: str, user: dict = Depends(require_write)):
     user_key = _unloading_user_key(user)
-    async with operation_guard([f"inbound-load:{load_id}", f"unloading-user:{user_key}"]):
+    # Lock hanya kendaraan yang sedang diubah. Jangan lock per akun: di lapangan
+    # satu operator dapat mengawasi beberapa kendaraan bongkar secara paralel.
+    async with operation_guard([f"inbound-load:{load_id}"]):
         load = await db.inbound_loads.find_one({"id": load_id}, {"_id": 0})
         if not load:
             raise HTTPException(status_code=404, detail="Kendaraan penerimaan tidak ditemukan")
         if load.get("status") != "Menunggu Bongkar":
             raise HTTPException(status_code=409, detail="Kendaraan tidak lagi berstatus Menunggu Bongkar")
 
-        active = await db.unloading_sessions.find_one(
-            {"startedByKey": user_key, "status": "BERJALAN"},
-            {"_id": 0},
-        )
-        if active:
-            raise HTTPException(status_code=409, detail="Masih ada sesi bongkar aktif pada akun ini. Selesaikan atau batalkan terlebih dahulu.")
-
         started = operational_now()
         session_id = new_id()
+        vehicle_session_key = f"inbound-vehicle:{load_id}:{user_key}"
         session = {
             "id": session_id,
             "status": "BERJALAN",
             "startedAt": started.isoformat(),
             "startedBy": user.get("name", ""),
-            "startedByKey": user_key,
+            # Kunci sesi dibuat unik per kendaraan agar sesi bongkar kendaraan
+            # tidak dianggap sebagai sesi bongkar manual milik akun yang sama.
+            "startedByKey": vehicle_session_key,
+            "startedByUserKey": user_key,
+            "vehicleSessionKey": vehicle_session_key,
+            "sessionType": "INBOUND_VEHICLE",
             "createdAt": now_iso(),
             "inboundLoadId": load_id,
         }
@@ -381,6 +382,19 @@ async def complete_inbound_load(load_id: str, body: InboundLoadComplete, user: d
         session_id = str(load.get("unloadingSessionId") or "")
         if not session_id:
             raise HTTPException(status_code=409, detail="Sesi bongkar kendaraan tidak ditemukan")
+        session = await db.unloading_sessions.find_one(
+            {"id": session_id, "status": "BERJALAN"},
+            {"_id": 0},
+        )
+        if not session:
+            raise HTTPException(status_code=409, detail="Sesi bongkar kendaraan tidak aktif")
+        original_session_key = str(
+            session.get("vehicleSessionKey")
+            or session.get("startedByKey")
+            or f"inbound-vehicle:{load_id}:{_unloading_user_key(user)}"
+        )
+        # receive_stock tetap memakai validasi kepemilikan sesi. Kunci sesi
+        # dipinjam hanya selama penyelesaian transaksi lalu otomatis ditutup.
         await db.unloading_sessions.update_one(
             {"id": session_id, "status": "BERJALAN"},
             {"$set": {"startedByKey": _unloading_user_key(user)}},
@@ -400,9 +414,18 @@ async def complete_inbound_load(load_id: str, body: InboundLoadComplete, user: d
             unloadingFeeChargeMode=str(load.get("unloadingFeeChargeMode") or "PENGIRIM"),
             unloadingSessionId=session_id,
         )
-        result = await receive_stock(receipt_body, user)
-        result = await enrich_receipt_result(receipt_body, result)
-        await record_receipt_lots(receipt_body, result)
+        try:
+            result = await receive_stock(receipt_body, user)
+            result = await enrich_receipt_result(receipt_body, result)
+            await record_receipt_lots(receipt_body, result)
+        except Exception:
+            # Jika validasi/penyimpanan gagal, kembalikan identitas sesi ke
+            # kendaraan agar tidak mengunci sesi bongkar manual akun tersebut.
+            await db.unloading_sessions.update_one(
+                {"id": session_id, "status": "BERJALAN"},
+                {"$set": {"startedByKey": original_session_key}},
+            )
+            raise
 
         cost_keys = ("labor", "daily", "warehouse", "total", "chargeable", "baseTotal", "overtimeTotal", "holidayTotal", "holidayOvertimeTotal")
         unloading_cost = {key: 0.0 for key in cost_keys}
