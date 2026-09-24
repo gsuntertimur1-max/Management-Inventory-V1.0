@@ -32,6 +32,19 @@ const normalizeUnloadingGroup = (value) => {
   return '';
 };
 
+const normalizeLoadingGroup = (value) => {
+  const text = String(value || '').trim().toUpperCase();
+  if (!text) return '';
+  if (text.includes('RTR') || text.includes('GRUP 3')) return 'GRUP 3 - RTR';
+  if (text.includes('GRUP 2') || text.includes('MP1') || /21\s*[-/]\s*24/.test(text) || /\b(21|22|23|24)\b/.test(text)) {
+    return 'GRUP 2 - MP1/21-24';
+  }
+  if (text.includes('GRUP 1') || /17\s*-\s*20/.test(text) || /\b(17|18|19|20)\b/.test(text)) {
+    return 'GRUP 1 - GBB 17-20';
+  }
+  return text;
+};
+
 const loadingUhLabel = (group) => ({
   'GRUP 1 - GBB 17-20': 'UH 1 - GBB 17-20',
   'GRUP 2 - MP1/21-24': 'UH 2 - MP1/21-24',
@@ -212,14 +225,20 @@ const Riwayat = () => {
     const index = { loading: {}, unloading: {} };
     ['loading', 'unloading'].forEach((kind) => {
       (costSettlements[kind] || []).forEach((row) => {
-        index[kind][`${row.date}:${row.recipient}:${row.group || ''}`] = row;
+        const canonicalGroup = kind === 'loading'
+          ? normalizeLoadingGroup(row.group)
+          : normalizeUnloadingGroup(row.group);
+        index[kind][`${row.date}:${row.recipient}:${canonicalGroup}`] = row;
       });
     });
     return index;
   }, [costSettlements]);
 
   const getSettlementInfo = (kind, date, recipient, total, group = '') => {
-    const row = settlementIndex[kind]?.[`${date}:${recipient}:${group}`] || null;
+    const canonicalGroup = kind === 'loading'
+      ? normalizeLoadingGroup(group)
+      : normalizeUnloadingGroup(group);
+    const row = settlementIndex[kind]?.[`${date}:${recipient}:${canonicalGroup}`] || null;
     const paid = Math.min(Number(row?.amount || 0), Number(total || 0));
     const outstanding = Math.max(Number(total || 0) - paid, 0);
     return { row, paid, outstanding, settled: Number(total || 0) > 0 && outstanding <= 1e-9 };
@@ -294,11 +313,32 @@ const Riwayat = () => {
     setSavingPayment(true);
     try {
       const prefix = settlementModal.kind === 'loading' ? 'loading-costs' : 'unloading-costs';
-      await api.post(`/${prefix}/${settlementModal.date}/settle`, {
+      const { data: savedSettlement } = await api.post(`/${prefix}/${settlementModal.date}/settle`, {
         recipient: settlementModal.recipient,
         group: settlementModal.group || '',
         note: settlementModal.note || '',
       });
+      // Perbarui UI langsung dari respons POST yang authoritative. Ini mencegah
+      // status tetap merah bila nama grup dari backend memakai format/alias berbeda.
+      if (savedSettlement) {
+        setCostSettlements((prev) => {
+          const rows = [...(prev[settlementModal.kind] || [])];
+          const canonicalSavedGroup = settlementModal.kind === 'loading'
+            ? normalizeLoadingGroup(savedSettlement.group)
+            : normalizeUnloadingGroup(savedSettlement.group);
+          const existingIndex = rows.findIndex((row) => {
+            const canonicalRowGroup = settlementModal.kind === 'loading'
+              ? normalizeLoadingGroup(row.group)
+              : normalizeUnloadingGroup(row.group);
+            return row.date === savedSettlement.date
+              && row.recipient === savedSettlement.recipient
+              && canonicalRowGroup === canonicalSavedGroup;
+          });
+          if (existingIndex >= 0) rows[existingIndex] = savedSettlement;
+          else rows.push(savedSettlement);
+          return { ...prev, [settlementModal.kind]: rows };
+        });
+      }
       await loadCostSettlements();
       toast.success(`Pembayaran ${settlementModal.label} · ${settlementModal.group || 'semua grup'} tanggal ${settlementModal.date} ditandai sudah dibayar`);
       setSettlementModal(null);
