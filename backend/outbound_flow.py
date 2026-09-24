@@ -300,7 +300,17 @@ async def _prepare_so_documents(
             {"documentNo": document_no, "documentType": "SO"},
             {"_id": 0},
         )
-        if current and str(current.get("party") or "").strip() and party.strip() and str(current.get("party") or "").strip() != party.strip():
+        current_party = str((current or {}).get("party") or "").strip()
+        party_summary = party.strip()
+        # Pada multi-SO, satu kendaraan dapat membawa beberapa SO untuk penerima
+        # berbeda. Penerima pada load hanyalah ringkasan kendaraan; master SO
+        # yang sudah ada tetap menjadi sumber penerima per dokumen.
+        if (
+            len(refs) == 1
+            and current_party
+            and party_summary
+            and current_party != party_summary
+        ):
             raise HTTPException(
                 status_code=409,
                 detail=f"SO {document_no} sudah terdaftar untuk penerima {current.get('party', '')}.",
@@ -715,6 +725,7 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
 
     so_documents = []
     so_progress = {}
+    so_document_parties = {}
     if body.documentType == "SO":
         so_documents, so_progress = await _prepare_so_documents(
             refs=refs,
@@ -722,6 +733,11 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
             products=products,
             party=party,
         )
+        so_document_parties = {
+            str(doc.get("documentNo") or ""): str(doc.get("party") or "").strip()
+            for doc in so_documents
+            if str(doc.get("documentNo") or "").strip()
+        }
 
     multi_source = len(refs) > 1 or len(body.items) > 1
     load_items = []
@@ -833,6 +849,7 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         "weighing_entries": _weighing_entries(float(body.grossWeight), float(body.grossMin), float(body.grossMax)) if body.weighingForm else [],
         "document_links": [],
         "so_document_progress": so_progress if body.documentType == "SO" else {},
+        "so_document_parties": so_document_parties if body.documentType == "SO" else {},
         "document_status": "Menunggu Pemuatan",
         "loading_cost": loading_cost,
         "loading_fee_payments": [],
