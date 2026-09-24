@@ -70,6 +70,17 @@ class InboundCancelInput(BaseModel):
     reason: str = Field(min_length=3, max_length=500)
 
 
+def _normalize_unloading_fee_mode(value: str) -> str:
+    """Inbound hanya memakai PENGIRIM atau TERMASUK.
+
+    Beberapa antrian lama sempat tersimpan sebagai PENGAMBIL karena state form
+    keluar terbawa saat membuka mode masuk. Perlakukan nilai legacy/invalid
+    sebagai PENGIRIM agar antrian tersebut tetap dapat diselesaikan.
+    """
+    mode = str(value or "").strip().upper()
+    return "TERMASUK" if mode == "TERMASUK" else "PENGIRIM"
+
+
 async def _active_reserved(po_id: str, exclude_id: str = "") -> dict[str, float]:
     query = {"poId": po_id, "status": {"$in": ACTIVE_STATUSES}}
     if exclude_id:
@@ -195,7 +206,7 @@ async def create_inbound_load(body: InboundLoadCreate, user: dict = Depends(requ
             "grossWeight": float(body.grossWeight or 0),
             "grossMin": float(body.grossMin or 0),
             "grossMax": float(body.grossMax or 0),
-            "unloadingFeeChargeMode": body.unloadingFeeChargeMode or "PENGIRIM",
+            "unloadingFeeChargeMode": _normalize_unloading_fee_mode(body.unloadingFeeChargeMode),
             "createdAt": now,
             "createdBy": user.get("name", ""),
             "history": [{
@@ -411,7 +422,7 @@ async def complete_inbound_load(load_id: str, body: InboundLoadComplete, user: d
             grossWeight=float(load.get("grossWeight", 0) or 0),
             grossMin=float(load.get("grossMin", 0) or 0),
             grossMax=float(load.get("grossMax", 0) or 0),
-            unloadingFeeChargeMode=str(load.get("unloadingFeeChargeMode") or "PENGIRIM"),
+            unloadingFeeChargeMode=_normalize_unloading_fee_mode(load.get("unloadingFeeChargeMode")),
             unloadingSessionId=session_id,
         )
         try:
