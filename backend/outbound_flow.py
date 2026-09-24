@@ -119,11 +119,24 @@ class DailyLoadingSettlementInput(BaseModel):
 
 
 def _crew_group(unit_loading: str) -> str:
-    """Compatibility helper only; unknown locations never fall back to Grup 1."""
+    """Normalize canonical group labels and physical loading locations.
+
+    A non-empty but unknown label must never silently become the all-groups bucket.
+    """
     text = str(unit_loading or "").strip().upper()
-    if "RTR" in text:
+    if not text:
+        return ""
+
+    # Canonical/legacy group labels from the UI.
+    if "GRUP 3" in text or "RTR" in text:
         return "GRUP 3 - RTR"
-    if "MP1" in text or any(re.search(rf"(?:UNIT\\s*)?{x}(?:/|\\b)", text) for x in ("21", "22", "23", "24")):
+    if "GRUP 2" in text or "MP1" in text or "21-24" in text or "21/24" in text:
+        return "GRUP 2 - MP1/21-24"
+    if "GRUP 1" in text or "17-20" in text or "17/20" in text:
+        return "GRUP 1 - GBB 17-20"
+
+    # Physical stack/location compatibility.
+    if any(re.search(rf"(?:UNIT\\s*)?{x}(?:/|\\b)", text) for x in ("21", "22", "23", "24")):
         return "GRUP 2 - MP1/21-24"
     if any(re.search(rf"(?:UNIT\\s*)?{x}(?:/|\\b)", text) for x in ("17", "18", "19", "20")):
         return "GRUP 1 - GBB 17-20"
@@ -966,7 +979,10 @@ async def settle_loading_cost(date: str, body: DailyLoadingSettlementInput, user
         },
         {"_id": 0, "loading_cost": 1, "items": 1},
     ).to_list(5000)
-    group = _crew_group(body.group) if body.group.strip() else ""
+    raw_group = body.group.strip()
+    group = _crew_group(raw_group) if raw_group else ""
+    if raw_group and not group:
+        raise HTTPException(status_code=400, detail="Grup pemuatan tidak dikenali. Pilih Grup 1, Grup 2, atau Grup 3.")
     amount = 0.0
     for load in loads:
         if group:
