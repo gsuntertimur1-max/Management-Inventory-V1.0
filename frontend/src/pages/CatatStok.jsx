@@ -64,7 +64,7 @@ const CatatStok = ({ panel = '' }) => {
   const [grossMax, setGrossMax] = useState('');
   const [damageForm, setDamageForm] = useState(null);
   const [supplierClaimForm, setSupplierClaimForm] = useState(null);
-  const [feeChargeMode, setFeeChargeMode] = useState('PENGAMBIL');
+  const [feeChargeMode, setFeeChargeMode] = useState(initialType === 'MASUK' ? 'PENGIRIM' : 'PENGAMBIL');
   const [fefoGuides, setFefoGuides] = useState({});
   const [soBalances, setSoBalances] = useState({});
   const [inboundReservations, setInboundReservations] = useState({});
