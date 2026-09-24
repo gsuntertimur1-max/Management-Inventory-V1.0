@@ -351,6 +351,7 @@ export const DataProvider = ({ children }) => {
   const createConsignmentReturn = async (id, payload) => { const { data } = await api.post(`/outbound-loads/${id}/return`, payload); await refreshOutboundFlow(); return data; };
   const createSalesReturn = async (id, payload) => { const { data } = await api.post(`/outbound-loads/${id}/sales-return`, payload); await refreshOutboundFlow(); return data; };
   const settleOutboundDocument = async (id, payload) => { const { data } = await api.post(`/outbound-loads/${id}/settle`, payload); await refreshOutboundFlow(); return data; };
+  const settleOutboundDocuments = async (payload) => { const { data } = await api.post('/outbound-settlements/so', payload); await refreshOutboundFlow(); return data; };
 
   const updateSJStatus = async (id, status) => { await api.put(`/surat-jalan/${id}/status`, { status }); await refreshSuratJalan(); };
   const cancelOutboundLoad = async (id, payload) => { const { data } = await api.post(`/outbound-loads/${id}/cancel`, payload); await refreshOutboundLoads(); return data; };
@@ -425,7 +426,7 @@ export const DataProvider = ({ children }) => {
       consignmentLastSync, consignmentSyncing,
       login, logout, ...state, fetchAll,
       addProduct, updateProduct, deleteProduct, addTransaction, addReceipt, recordStockDamage, createSupplierReturn, receiveSupplierReplacement,
-      createOutboundLoad, refreshOutboundLoads, startOutboundLoad, completeOutboundLoad, createConsignmentReturn, createSalesReturn, settleOutboundDocument, updateSJStatus, cancelOutboundLoad, editOutboundLoad, cancelPurchaseOrder,
+      createOutboundLoad, refreshOutboundLoads, startOutboundLoad, completeOutboundLoad, createConsignmentReturn, createSalesReturn, settleOutboundDocument, settleOutboundDocuments, updateSJStatus, cancelOutboundLoad, editOutboundLoad, cancelPurchaseOrder,
       addSupplier, addPO, addUser, updateUser, deleteUser, changeUserPassword, updateSettings, resetData, importCsv,
       addStackAllocation, updateStackAllocation, deleteStackAllocation,
       addStackTreatment,

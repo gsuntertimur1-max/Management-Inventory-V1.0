@@ -268,12 +268,17 @@ const Penerimaan = () => {
         const normal = Math.max(actual - overtime, 0);
         return <div key={row.productId} className="rounded-xl border border-[#243044] p-4">
           <div className="flex flex-wrap justify-between gap-2"><div><div className="font-semibold">{row.name}</div><div className="text-[10px] text-[#8b93a1]">{row.sku} · Rencana {formatNum(row.plannedQty)} {row.unit}</div></div><div className="text-xs font-mono text-[#93c5fd]">Normal {formatNum(normal)} · Lembur {formatNum(overtime)} {row.unit}</div></div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2 mt-3">
-            <div><label className="text-[10px] text-[#22c55e]">Baik ({row.unit})</label><input type="number" min="0" max={row.plannedQty} step="any" value={row.goodQty} onChange={(e) => setCompleteRow(index,{goodQty:e.target.value})} className="w-full mt-1 bg-[#0b0f17] border border-[#166534] rounded-lg px-3 py-2"/></div>
-            <div><label className="text-[10px] text-[#f59e0b]">Rusak ({row.unit})</label><input type="number" min="0" max={row.plannedQty} step="any" value={row.damagedQty} onChange={(e) => setCompleteRow(index,{damagedQty:e.target.value})} className="w-full mt-1 bg-[#0b0f17] border border-[#92400e] rounded-lg px-3 py-2"/></div>
-            <div><label className="text-[10px] text-[#fbbf24]">Setelah 16.00</label><input type="number" min="0" max={actual} step="any" disabled={completion.fullOvertime || !completion.crossesCutoff} value={completion.fullOvertime ? actual : row.overtimeQty} onChange={(e) => setCompleteRow(index,{overtimeQty:e.target.value})} className="w-full mt-1 bg-[#0b0f17] border border-[#7c5a1f] rounded-lg px-3 py-2 disabled:opacity-60"/></div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3">
             <div><label className="text-[10px] text-[#8b93a1]">Tumpukan barang baik</label><select value={row.stackCode} onChange={(e) => setCompleteRow(index,{stackCode:e.target.value})} className="w-full mt-1 bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2"><option value="">Pilih...</option>{STACKS.map((code)=><option key={code}>{code}</option>)}</select></div>
             <div><label className="text-[10px] text-[#8b93a1]">Kedaluwarsa</label><input type="date" value={row.exp} onChange={(e) => setCompleteRow(index,{exp:e.target.value})} className="w-full mt-1 bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2 py-2"/></div>
+            <div><label className="text-[10px] text-[#fbbf24]">Setelah 16.00</label><input type="number" min="0" max={actual} step="any" disabled={completion.fullOvertime || !completion.crossesCutoff} value={completion.fullOvertime ? actual : row.overtimeQty} onChange={(e) => setCompleteRow(index,{overtimeQty:e.target.value})} className="w-full mt-1 bg-[#0b0f17] border border-[#7c5a1f] rounded-lg px-3 py-2 disabled:opacity-60"/></div>
+          </div>
+          <div className="mt-3 rounded-lg border border-[#263244] bg-[#0a0f17] p-3">
+            <div className="text-[10px] uppercase tracking-wide text-[#8b93a1] mb-2">Kuantum aktual hasil bongkar</div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div><label className="text-xs font-semibold text-[#22c55e]">Baik ({row.unit})</label><input type="number" min="0" max={row.plannedQty} step="any" value={row.goodQty} onChange={(e) => setCompleteRow(index,{goodQty:e.target.value})} className="w-full mt-1 bg-[#0b0f17] border border-[#166534] rounded-lg px-3 py-2.5 font-mono"/></div>
+              <div><label className="text-xs font-semibold text-[#f59e0b]">Rusak ({row.unit})</label><input type="number" min="0" max={row.plannedQty} step="any" value={row.damagedQty} onChange={(e) => setCompleteRow(index,{damagedQty:e.target.value})} className="w-full mt-1 bg-[#0b0f17] border border-[#92400e] rounded-lg px-3 py-2.5 font-mono"/></div>
+            </div>
           </div>
         </div>;
       })}</div>
