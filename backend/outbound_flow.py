@@ -200,6 +200,18 @@ class SettlementInput(BaseModel):
     note: str = ""
 
 
+class MultiSettlementSourceInput(BaseModel):
+    loadId: str
+    sourceDocumentNo: str
+    items: List[SettlementItemInput] = Field(min_length=1)
+
+
+class MultiSettlementInput(BaseModel):
+    documentNo: str
+    sources: List[MultiSettlementSourceInput] = Field(min_length=1, max_length=100)
+    note: str = ""
+
+
 def _doc_key(value: str) -> str:
     return str(value or "").strip().upper()
 
@@ -1453,6 +1465,18 @@ def _linked_totals(load: dict, product_id: str, source_document_no: str = "") ->
     target = str(source_document_no or load.get("ref") or "").strip()
     returned = sold = 0.0
     for link in load.get("document_links", []):
+        # SO baru dapat merealisasikan lebih dari satu dokumen sumber sekaligus.
+        # Struktur legacy (sourceDocumentNo + items) tetap dibaca agar data lama aman.
+        if link.get("type") == "SO" and isinstance(link.get("sources"), list):
+            for allocation in link.get("sources", []):
+                allocation_source = str(allocation.get("sourceDocumentNo") or "").strip()
+                if target and allocation_source != target:
+                    continue
+                for item in allocation.get("items", []):
+                    if item.get("productId") == product_id:
+                        sold += float(item.get("qty", 0) or 0)
+            continue
+
         link_source = str(link.get("sourceDocumentNo") or load.get("ref") or "").strip()
         if target and link_source != target:
             continue
@@ -1643,6 +1667,173 @@ async def create_sales_return(load_id: str, body: SalesReturnInput, user: dict =
                 pass
         for product_id, field, qty, channel in reversed(reversals):
             await db.products.update_one({"id": product_id}, {"$inc": {field: -qty, f"channelStock.{channel}.{field}": -qty}})
+        raise
+
+
+@router.post("/outbound-settlements/so")
+async def settle_outbound_documents(body: MultiSettlementInput, user: dict = Depends(require_write)):
+    """Tautkan satu nomor SO ke satu atau beberapa ND/Memo/CT sekaligus.
+
+    Setiap sumber menyimpan alokasi kuantumnya sendiri. Perubahan lintas beberapa
+    outbound load dikompensasi/di-rollback bila salah satu update gagal.
+    """
+    document_no = body.documentNo.strip()
+    if not document_no.upper().startswith("SO/"):
+        raise HTTPException(status_code=400, detail="Nomor penyelesaian harus berupa dokumen SO")
+    if await db.outbound_loads.find_one({"$or": [{"ref": document_no}, {"document_links.no": document_no}]}):
+        raise HTTPException(status_code=409, detail="Nomor SO sudah digunakan")
+
+    source_keys = set()
+    resolved = []
+    document_types = set()
+    loads_by_id = {}
+
+    for allocation in body.sources:
+        source_key = (allocation.loadId.strip(), allocation.sourceDocumentNo.strip())
+        if source_key in source_keys:
+            raise HTTPException(status_code=400, detail="Dokumen sumber yang sama tidak boleh diulang")
+        source_keys.add(source_key)
+
+        load = await db.outbound_loads.find_one({"id": allocation.loadId.strip()}, {"_id": 0})
+        if not load or load.get("document_type") not in {"CT", "MEMO", "ND"} or load.get("status") != "Selesai":
+            raise HTTPException(status_code=400, detail="Semua sumber SO harus berasal dari CT, Memo, atau ND yang sudah selesai dimuat")
+
+        document_types.add(load.get("document_type"))
+        source_document = _resolve_source_document(load, allocation.sourceDocumentNo)
+        original = _source_product_totals(load, source_document)
+        if not original:
+            raise HTTPException(status_code=400, detail=f"{source_document} tidak memiliki komoditas yang dapat diselesaikan")
+        if len({item.productId for item in allocation.items}) != len(allocation.items):
+            raise HTTPException(status_code=400, detail=f"Produk pada {source_document} tidak boleh dicatat lebih dari satu baris")
+
+        items = []
+        for item in allocation.items:
+            source = original.get(item.productId)
+            if not source:
+                raise HTTPException(status_code=400, detail=f"Produk SO tidak terdapat pada dokumen sumber {source_document}")
+            returned, sold = _linked_totals(load, item.productId, source_document)
+            remaining = max(float(source.get("qty", 0) or 0) - returned - sold, 0)
+            qty = float(item.qty)
+            if qty > remaining + 1e-9:
+                raise HTTPException(status_code=400, detail=f"Jumlah SO {source.get('name', '')} melebihi sisa {source_document}")
+            items.append({
+                "productId": item.productId,
+                "name": source.get("name", ""),
+                "unit": source.get("unit", ""),
+                "channel": source.get("channel", ""),
+                "qty": qty,
+            })
+
+        if items:
+            resolved.append({
+                "loadId": load["id"],
+                "sourceDocumentNo": source_document,
+                "items": items,
+                "load": load,
+            })
+            loads_by_id[load["id"]] = load
+
+    if not resolved:
+        raise HTTPException(status_code=400, detail="Isi alokasi kuantum SO pada minimal satu dokumen sumber")
+    if len(document_types) > 1:
+        raise HTTPException(status_code=400, detail="Satu SO harus menggunakan jenis dokumen sumber yang sama (ND dengan ND, Memo dengan Memo, atau CT dengan CT)")
+
+    batch_id = new_id()
+    timestamp = now_iso()
+    allocations_by_load = defaultdict(list)
+    for allocation in resolved:
+        allocations_by_load[allocation["loadId"]].append(allocation)
+
+    applied = []
+    transactions = []
+    try:
+        for load_id, allocations in allocations_by_load.items():
+            load = loads_by_id[load_id]
+            aggregate = {}
+            source_payloads = []
+            for allocation in allocations:
+                source_items = [dict(item) for item in allocation["items"]]
+                source_payloads.append({
+                    "sourceDocumentNo": allocation["sourceDocumentNo"],
+                    "items": source_items,
+                })
+                for item in source_items:
+                    row = aggregate.setdefault(item["productId"], {**item, "qty": 0.0})
+                    row["qty"] += float(item["qty"])
+                    transactions.append({
+                        "id": new_id(),
+                        "load_id": load_id,
+                        "settlement_batch_id": batch_id,
+                        "time": timestamp,
+                        "ref": document_no,
+                        "type": "DOKUMEN",
+                        "kondisi": "—",
+                        "document_type": "SO",
+                        "parent_document": allocation["sourceDocumentNo"],
+                        "product": item["name"],
+                        "change": 0,
+                        "settled_qty": item["qty"],
+                        "unit": item["unit"],
+                        "channel": item.get("channel", ""),
+                        "penerima": load.get("party", ""),
+                        "operator": user.get("name", ""),
+                        "keterangan": body.note.strip(),
+                    })
+
+            source_numbers = [row["sourceDocumentNo"] for row in source_payloads]
+            link = {
+                "id": new_id(),
+                "settlementBatchId": batch_id,
+                "type": "SO",
+                "no": document_no,
+                "sourceDocumentNo": source_numbers[0] if len(source_numbers) == 1 else "",
+                "sourceDocumentNos": source_numbers,
+                "sources": source_payloads,
+                "time": timestamp,
+                "items": list(aggregate.values()),
+                "note": body.note.strip(),
+                "operator": user.get("name", ""),
+            }
+            prospective = {**load, "document_links": [*load.get("document_links", []), link]}
+            next_status = "Selesai Dokumen" if _all_source_documents_settled(prospective) else "SO Sebagian · Belum Selesai"
+            result = await db.outbound_loads.update_one(
+                {"id": load_id},
+                {"$push": {"document_links": link}, "$set": {"document_status": next_status}},
+            )
+            if not result.modified_count:
+                raise HTTPException(status_code=409, detail="Dokumen sumber berubah saat SO disimpan. Muat ulang lalu coba lagi.")
+            applied.append({
+                "loadId": load_id,
+                "linkId": link["id"],
+                "previousStatus": load.get("document_status", "Selesai"),
+            })
+
+        if transactions:
+            await db.transactions.insert_many(transactions)
+
+        return {
+            "documentNo": document_no,
+            "settlementBatchId": batch_id,
+            "sources": [
+                {
+                    "loadId": row["loadId"],
+                    "sourceDocumentNo": row["sourceDocumentNo"],
+                    "items": row["items"],
+                }
+                for row in resolved
+            ],
+            "affectedLoads": list(allocations_by_load.keys()),
+        }
+    except Exception:
+        await db.transactions.delete_many({"settlement_batch_id": batch_id})
+        for row in reversed(applied):
+            await db.outbound_loads.update_one(
+                {"id": row["loadId"]},
+                {
+                    "$pull": {"document_links": {"id": row["linkId"]}},
+                    "$set": {"document_status": row["previousStatus"]},
+                },
+            )
         raise
 
 
