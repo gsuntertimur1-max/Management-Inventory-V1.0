@@ -661,7 +661,7 @@ def _draw_sj_half(
         c.drawCentredString(right_sig, y + 4 * mm, "Yang Menyerahkan,")
         c.setFont("Helvetica-Bold", 6.4)
         c.drawCentredString(right_sig, y, warehouse_name)
-        y -= 20 * mm
+        y -= 19 * mm
         c.setFont("Helvetica-Bold", 7.1)
         c.drawCentredString(left_sig, y, str(sj.get("pengambil") or "-"))
         c.drawCentredString(right_sig, y, warehouse_head)
@@ -702,7 +702,7 @@ async def export_surat_jalan_multi_pdf(sj_id: str, user: dict = Depends(get_curr
     # Batas bawah area produk dihitung dari geometri aktual.
     # Dengan tanda tangan, produk harus berhenti sekitar 49 mm agar catatan,
     # ruang tanda tangan, nama penandatangan, dan footer tidak bertabrakan.
-    signature_bottom_limit = 49 * mm
+    signature_bottom_limit = 48 * mm
     # Tanpa tanda tangan, detail boleh turun mendekati footer tetap 15 mm.
     detail_bottom_limit = 21 * mm
 
