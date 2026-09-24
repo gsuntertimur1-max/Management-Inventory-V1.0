@@ -404,6 +404,47 @@ def _sj_row_height(item: dict, product_width: float) -> float:
     return max(12 * mm, (len(product_lines) * 3.7 + 4.5) * mm)
 
 
+def _sj_detail_height(rows_by_doc: list[tuple[str, list[dict]]], product_width: float) -> float:
+    group_header_h = 5.5 * mm
+    total = 0.0
+    for _, rows in rows_by_doc:
+        if rows:
+            total += group_header_h
+        total += sum(_sj_row_height(item, product_width) for item in rows)
+    return total
+
+
+def _sj_detail_top(sj: dict, content_width: float) -> float:
+    """Y awal area detail produk, mengikuti geometri aktual _draw_sj_half."""
+    _, page_h = landscape(A4)
+    y = page_h - 10.2 * mm
+    y -= 8 * mm
+    y -= 2.8 * mm
+    y -= 6.5 * mm
+    y -= 8 * mm
+
+    penerima = str(sj.get("penerima") or "-")
+    penerima_lines = _sj_wrap(penerima, "Helvetica", 8.0, content_width - 27 * mm)[:3]
+    y -= (10 + max(0, len(penerima_lines) - 1) * 3.8) * mm
+
+    y -= 5 * mm
+    y -= 9 * mm
+
+    documents = [
+        str(value or "").strip()
+        for value in (sj.get("documents") or [sj.get("ref", "")])
+        if str(value or "").strip()
+    ]
+    y -= 1.6 * mm
+    y -= 4.2 * mm
+    y -= len(documents) * 4.4 * mm
+    y -= 4.0 * mm
+
+    # Header tabel Produk/Kuantitas/Kuantum.
+    y -= 4.6 * mm
+    return y
+
+
 def _sj_paginate(grouped: OrderedDict, product_width: float, max_detail_height: float) -> list[list[tuple[str, list[dict]]]]:
     pages = []
     current = []
@@ -443,6 +484,7 @@ def _draw_sj_half(
     x0: float,
     page_no: int,
     total_pages: int,
+    show_signature: bool = True,
 ):
     page_w, page_h = landscape(A4)
     half_w = page_w / 2
@@ -479,9 +521,8 @@ def _draw_sj_half(
 
     c.setFont("Helvetica", 8)
     c.drawCentredString(center, y, str(sj.get("no") or sj.get("ref") or "-"))
-    if total_pages > 1:
-        c.setFont("Helvetica", 5.2)
-        c.drawRightString(right, y, f"Hal. {page_no}/{total_pages}")
+    c.setFont("Helvetica", 5.2)
+    c.drawRightString(right, y, f"Hal. {page_no}/{total_pages}")
     y -= 8 * mm
 
     c.setFont("Helvetica-Bold", 7.5)
@@ -601,28 +642,30 @@ def _draw_sj_half(
 
             y = row_bottom
 
-    y -= 4.2 * mm
-    note = " / ".join(value for value in [str(sj.get("pengambil") or "").strip(), str(sj.get("polisi") or "").strip()] if value) or "-"
-    c.setFont("Helvetica", 6.9)
-    c.drawString(left, y, "Catatan/Nopol/No Kontainer :")
-    note_font = 7.2
-    while note_font > 6.0 and stringWidth(note, "Helvetica", note_font) > (width - 62 * mm):
-        note_font -= 0.2
-    c.setFont("Helvetica", note_font)
-    c.drawString(left + 60 * mm, y, note)
-    y -= 9 * mm
+    if show_signature:
+        y -= 4.2 * mm
+        note = " / ".join(value for value in [str(sj.get("pengambil") or "").strip(), str(sj.get("polisi") or "").strip()] if value) or "-"
+        c.setFont("Helvetica", 6.9)
+        c.drawString(left, y, "Catatan/Nopol/No Kontainer :")
+        note_font = 7.2
+        while note_font > 6.0 and stringWidth(note, "Helvetica", note_font) > (width - 62 * mm):
+            note_font -= 0.2
+        c.setFont("Helvetica", note_font)
+        c.drawString(left + 60 * mm, y, note)
+        y -= 9 * mm
 
-    left_sig = left + 22 * mm
-    right_sig = right - 36 * mm
-    c.setFont("Helvetica", 7)
-    c.drawCentredString(left_sig, y, "Pengangkut,")
-    c.drawCentredString(right_sig, y + 4 * mm, "Yang Menyerahkan,")
-    c.setFont("Helvetica-Bold", 6.4)
-    c.drawCentredString(right_sig, y, warehouse_name)
-    y -= 20 * mm
-    c.setFont("Helvetica-Bold", 7.1)
-    c.drawCentredString(left_sig, y, str(sj.get("pengambil") or "-"))
-    c.drawCentredString(right_sig, y, warehouse_head)
+        left_sig = left + 22 * mm
+        right_sig = right - 36 * mm
+        c.setFont("Helvetica", 7)
+        c.drawCentredString(left_sig, y, "Pengangkut,")
+        c.drawCentredString(right_sig, y + 4 * mm, "Yang Menyerahkan,")
+        c.setFont("Helvetica-Bold", 6.4)
+        c.drawCentredString(right_sig, y, warehouse_name)
+        y -= 20 * mm
+        c.setFont("Helvetica-Bold", 7.1)
+        c.drawCentredString(left_sig, y, str(sj.get("pengambil") or "-"))
+        c.drawCentredString(right_sig, y, warehouse_head)
+
     # Delivery Tracking dijadikan footer tetap agar tidak berubah posisi saat item bertambah.
     footer_top = 15 * mm
     c.setLineWidth(0.35)
@@ -644,26 +687,52 @@ async def export_surat_jalan_multi_pdf(sj_id: str, user: dict = Depends(get_curr
     warehouse_head = settings.get("warehouseHead") or "Irsa Maulian Nugraha"
     grouped = _sj_item_rows(sj)
 
-    # Setengah A4 hanya punya tinggi efektif terbatas. Saat produk banyak,
-    # tambahkan halaman A4 landscape berikutnya, tetap dua copy per halaman.
+    # Layout adaptif:
+    # 1) Usahakan seluruh SO/komoditas + tanda tangan muat dalam 1 halaman.
+    # 2) Jika tidak muat, halaman detail memakai ruang maksimal tanpa tanda tangan.
+    # 3) Tanda tangan hanya dicetak di halaman terakhir. Bila halaman detail
+    #    terakhir masih penuh, tambahkan halaman lanjutan khusus tanda tangan.
     page_w, page_h = landscape(A4)
     half_w = page_w / 2
     content_width = half_w - 9 * mm
     product_width = 66 * mm
 
-    document_count = max(1, len(sj.get("documents") or [sj.get("ref", "")]))
-    fixed_height = (94 + max(document_count - 1, 0) * 4.4) * mm
-    bottom_reserved = 58 * mm
-    detail_height = max(35 * mm, page_h - fixed_height - bottom_reserved)
-    pages = _sj_paginate(grouped, product_width, detail_height)
+    detail_top = _sj_detail_top(sj, content_width)
+
+    # Batas bawah area produk dihitung dari geometri aktual.
+    # Dengan tanda tangan, produk harus berhenti sekitar 49 mm agar catatan,
+    # ruang tanda tangan, nama penandatangan, dan footer tidak bertabrakan.
+    signature_bottom_limit = 49 * mm
+    # Tanpa tanda tangan, detail boleh turun mendekati footer tetap 15 mm.
+    detail_bottom_limit = 21 * mm
+
+    signature_capacity = max(24 * mm, detail_top - signature_bottom_limit)
+    detail_capacity = max(signature_capacity, detail_top - detail_bottom_limit)
+    all_rows = list(grouped.items())
+    all_detail_height = _sj_detail_height(all_rows, product_width)
+
+    if all_detail_height <= signature_capacity + 0.1 * mm:
+        pages = [all_rows]
+        signature_page = 1
+    else:
+        pages = _sj_paginate(grouped, product_width, detail_capacity)
+        last_detail_height = _sj_detail_height(pages[-1], product_width)
+        if last_detail_height <= signature_capacity + 0.1 * mm:
+            signature_page = len(pages)
+        else:
+            # Halaman terakhir sudah penuh barang; tanda tangan pindah ke
+            # halaman berikutnya tanpa memaksa font/tabel diperkecil.
+            pages.append([])
+            signature_page = len(pages)
 
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=landscape(A4))
     total_pages = len(pages)
 
     for page_index, page_rows in enumerate(pages, 1):
-        _draw_sj_half(c, sj, page_rows, warehouse_head, 0, page_index, total_pages)
-        _draw_sj_half(c, sj, page_rows, warehouse_head, half_w, page_index, total_pages)
+        show_signature = page_index == signature_page
+        _draw_sj_half(c, sj, page_rows, warehouse_head, 0, page_index, total_pages, show_signature=show_signature)
+        _draw_sj_half(c, sj, page_rows, warehouse_head, half_w, page_index, total_pages, show_signature=show_signature)
 
         c.showPage()
 
