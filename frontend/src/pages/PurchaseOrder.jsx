@@ -8,6 +8,7 @@ import { formatRp, formatDate, formatNum } from '../mock';
 import { toast } from 'sonner';
 import { packagingText, quantityFromInput, quantityIsValid, totalWeight } from '../lib/packaging';
 import SearchableProductSelect from '../components/SearchableProductSelect';
+import PaginationControls from '../components/PaginationControls';
 
 const STATUS = {
   'Belum Diterima': '#eab308',
@@ -30,6 +31,7 @@ const PurchaseOrder = () => {
   const [modal, setModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ supplier: '', no: '', items: [newRow()] });
+  const [page, setPage] = useState(1);
 
   const setItem = (index, patch) => {
     setForm((prev) => ({
@@ -55,6 +57,13 @@ const PurchaseOrder = () => {
   })), [form.items, products]);
 
   const total = selectedItems.reduce((sum, item) => sum + (item.product?.cost || 0) * Number(item.qty || 0), 0);
+  const pageSize = 10;
+  const paginatedPurchaseOrders = purchaseOrders.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(purchaseOrders.length / pageSize));
+    if (page > maxPage) setPage(maxPage);
+  }, [purchaseOrders.length, page]);
 
   const cancelRemaining = async (po) => {
     const reason = window.prompt(`Alasan pembatalan sisa PO ${po.no}:`);
@@ -121,7 +130,7 @@ const PurchaseOrder = () => {
           <table className="w-full text-sm tbl">
             <thead><tr className="text-left border-b border-[#1a222e]">{['No. PO', 'Tanggal', 'Supplier', 'Barang Dipesan', 'Progres Penerimaan', 'Total Nilai', 'Status', ...((canManageMasterData || canInbound) ? ['Aksi'] : [])].map((h) => <th key={h} className="py-2.5 pr-4 font-semibold whitespace-nowrap">{h}</th>)}</tr></thead>
             <tbody>
-              {purchaseOrders.length === 0 ? <tr><td colSpan={(canManageMasterData || canInbound) ? 8 : 7} className="py-8 text-center text-[#6b7688]">Belum ada PO. Buat PO baru untuk mencatat rencana pengadaan.</td></tr> : purchaseOrders.map((po) => {
+              {purchaseOrders.length === 0 ? <tr><td colSpan={(canManageMasterData || canInbound) ? 8 : 7} className="py-8 text-center text-[#6b7688]">Belum ada PO. Buat PO baru untuk mencatat rencana pengadaan.</td></tr> : paginatedPurchaseOrders.map((po) => {
                 const ordered = (po.items || []).reduce((a, it) => a + Number(it.qty || 0), 0);
                 const received = (po.items || []).reduce((a, it) => a + Number(it.receivedQty || 0), 0);
                 const pct = ordered > 0 ? Math.min((received / ordered) * 100, 100) : 0;
@@ -154,6 +163,7 @@ const PurchaseOrder = () => {
             </tbody>
           </table>
         </div>
+        <PaginationControls page={page} totalItems={purchaseOrders.length} pageSize={pageSize} onChange={setPage} label="purchase order" />
       </div>
 
       {modal && createPortal(
