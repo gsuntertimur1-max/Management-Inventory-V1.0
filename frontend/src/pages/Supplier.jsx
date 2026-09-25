@@ -4,6 +4,7 @@ import { Plus, X, Phone, Mail, MapPin, User } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { catColor, formatNum, DEFAULT_CATEGORIES } from '../mock';
 import { toast } from 'sonner';
+import PaginationControls from '../components/PaginationControls';
 
 const Supplier = () => {
   const { suppliers, products, settings, addSupplier, canManageMasterData } = useData();
@@ -11,6 +12,9 @@ const Supplier = () => {
   const [modal, setModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ name: '', pic: '', phone: '', email: '', address: '', category: 'Beras' });
+  const [page, setPage] = useState(1);
+  const pageSize = 9;
+  const paginatedSuppliers = suppliers.slice((page - 1) * pageSize, page * pageSize);
 
   const productCountBySupplier = useMemo(() => {
     const counts = new Map();
@@ -62,7 +66,7 @@ const Supplier = () => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {suppliers.map((supplier) => {
+        {paginatedSuppliers.map((supplier) => {
           const count = productCountBySupplier.get(supplier.name) || 0;
           return (
             <div key={supplier.id} className="card-surface stat-card p-5">
@@ -89,6 +93,7 @@ const Supplier = () => {
           );
         })}
       </div>
+      <PaginationControls page={page} totalItems={suppliers.length} pageSize={pageSize} onChange={setPage} label="supplier" />
 
       {modal && createPortal(
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 sm:p-6 overflow-y-auto">
