@@ -4,6 +4,7 @@ import api, { apiError } from '../lib/api';
 import { toast } from 'sonner';
 import { useData } from '../context/DataContext';
 import { roleDestination } from '../lib/permissions';
+import PaginationControls from '../components/PaginationControls';
 
 const inputCls = 'w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]';
 
@@ -52,6 +53,7 @@ const RiwayatConsignment = () => {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [page, setPage] = useState(1);
   const [filters, setFilters] = useState({
     destination: scopedDestination || '',
     startDate: monthStart(),
@@ -111,6 +113,17 @@ const RiwayatConsignment = () => {
   };
 
   const totalItems = rows.reduce((sum, row) => sum + Math.max((row.items || []).length, 1), 0);
+  const pageSize = 10;
+  const paginatedRows = rows.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(rows.length / pageSize));
+    if (page > maxPage) setPage(maxPage);
+  }, [rows.length, page]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [filters.destination, filters.startDate, filters.endDate, filters.eventType, filters.search]);
 
   return <div className="space-y-6">
     <div>
@@ -165,7 +178,7 @@ const RiwayatConsignment = () => {
             <th className="px-4 py-3">Petugas</th><th className="px-4 py-3">Keterangan</th>
           </tr></thead>
           <tbody>
-            {rows.map((row) => <tr key={row.id} className="border-b border-[#171f2b] align-top">
+            {paginatedRows.map((row) => <tr key={row.id} className="border-b border-[#171f2b] align-top">
               <td className="px-4 py-3 whitespace-nowrap">{row.time ? new Date(row.time).toLocaleString('id-ID') : '—'}</td>
               <td className="px-4 py-3">{row.destination === 'Gudang Bazar' ? 'Bazar' : 'E-commerce'}</td>
               <td className="px-4 py-3"><span className="text-xs px-2 py-1 rounded-md bg-[#2563eb]/10 text-[#93c5fd]">{EVENT_LABELS[row.eventType] || row.eventType}</span></td>
@@ -182,6 +195,9 @@ const RiwayatConsignment = () => {
           </tbody>
         </table>
         {!loading && rows.length === 0 && <div className="py-10 text-center text-sm text-[#8b93a1]">Tidak ada history pada filter yang dipilih.</div>}
+      </div>
+      <div className="px-5 pb-5">
+        <PaginationControls page={page} totalItems={rows.length} pageSize={pageSize} onChange={setPage} label="transaksi" />
       </div>
     </section>
   </div>;
