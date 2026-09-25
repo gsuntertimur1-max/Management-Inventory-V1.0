@@ -596,8 +596,8 @@ def _draw_sj_half(
         c.rect(left, y - group_h, width, group_h, fill=1, stroke=0)
         c.setFillColor(colors.black)
         c.setFont("Helvetica-Bold", 6.5)
-        document_parties = sj.get("so_document_parties") or {}
-        document_party = str(document_parties.get(document_no) or "").strip()
+        document_parties = sj.get("document_parties") or sj.get("so_document_parties") or {}
+        document_party = str(document_parties.get(document_no) or document_parties.get(str(document_no).upper()) or "").strip()
         group_text = f"Dokumen: {document_no}" + (f" · Penerima: {document_party}" if document_party else "")
         group_font = 6.5
         while group_font > 5.5 and stringWidth(group_text, "Helvetica-Bold", group_font) > (width - 4 * mm):
