@@ -6,6 +6,7 @@ import api, { apiError, printApiFile } from '../lib/api';
 import { useData } from '../context/DataContext';
 import { formatNum, formatRp } from '../mock';
 import { stackCodes } from '../lib/warehouses';
+import PaginationControls from '../components/PaginationControls';
 
 const displayTime = (value) => value
   ? new Date(value).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', dateStyle: 'medium', timeStyle: 'short' })
@@ -45,6 +46,7 @@ const Penerimaan = () => {
   const [busy, setBusy] = useState('');
   const [completion, setCompletion] = useState(null);
   const [cancelModal, setCancelModal] = useState(null);
+  const [historyPage, setHistoryPage] = useState(1);
 
   const loadAll = useCallback(async () => {
     try {
@@ -67,6 +69,13 @@ const Penerimaan = () => {
     () => loads.filter((row) => ['Selesai', 'Dibatalkan'].includes(row.status)),
     [loads],
   );
+  const historyPageSize = 10;
+  const paginatedHistory = history.slice((historyPage - 1) * historyPageSize, historyPage * historyPageSize);
+
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(history.length / historyPageSize));
+    if (historyPage > maxPage) setHistoryPage(maxPage);
+  }, [history.length, historyPage]);
 
   const startLoad = async (load) => {
     if (busy) return;
@@ -254,7 +263,11 @@ const Penerimaan = () => {
 
     {loading ? <div className="card-surface p-10 text-center text-[#8b93a1]">Memuat kendaraan...</div> : <>
       <section><div className="flex items-center gap-2 mb-3"><Clock3 size={17}/><h2 className="font-display text-xl font-bold">Kendaraan Aktif</h2></div><div className="space-y-3">{active.length ? active.map(renderLoad) : <div className="card-surface p-8 text-center text-[#6b7688]">Tidak ada kendaraan menunggu bongkar.</div>}</div></section>
-      <section><div className="flex items-center gap-2 mb-3"><RotateCcw size={17}/><h2 className="font-display text-xl font-bold">Riwayat Kendaraan</h2></div><div className="space-y-3">{history.slice(0,50).map(renderLoad)}</div></section>
+      <section>
+        <div className="flex items-center gap-2 mb-3"><RotateCcw size={17}/><h2 className="font-display text-xl font-bold">Riwayat Kendaraan</h2></div>
+        <div className="space-y-3">{paginatedHistory.map(renderLoad)}</div>
+        <PaginationControls page={historyPage} totalItems={history.length} pageSize={historyPageSize} onChange={setHistoryPage} label="transaksi penerimaan" />
+      </section>
     </>}
 
     {completion && <div className="fixed inset-0 z-[90] bg-black/75 flex items-center justify-center p-4"><div className="card-surface w-full max-w-4xl max-h-[92vh] overflow-y-auto p-6">
