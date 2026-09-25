@@ -6,6 +6,7 @@ import api, { apiError, downloadApiFile, printApiFile } from '../lib/api';
 import { formatNum, formatDate, formatRp } from '../mock';
 import { toast } from 'sonner';
 import { packagingText, totalWeight } from '../lib/packaging';
+import PaginationControls from '../components/PaginationControls';
 
 const typeBadge = (type) => {
   if (type === 'MASUK') return { background: 'rgba(34,197,94,.15)', color: '#22c55e' };
@@ -78,6 +79,7 @@ const Riwayat = () => {
   const [feePayment, setFeePayment] = useState(null);
   const [settlementModal, setSettlementModal] = useState(null);
   const [savingPayment, setSavingPayment] = useState(false);
+  const [page, setPage] = useState(1);
 
   const printInboundWeighing = async (transaction) => {
     if (!transaction?.operation_id || !transaction?.weighing_form) {
@@ -119,6 +121,18 @@ const Riwayat = () => {
         || (t.correction_reason || '').toLowerCase().includes(query)
       );
   });
+  const pageSize = 10;
+  const paginatedTransactions = filtered.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [q, type, kondisi, channel]);
+
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(filtered.length / pageSize));
+    if (page > maxPage) setPage(maxPage);
+  }, [filtered.length, page]);
+
   const totalIn = transactions.filter((t) => t.type === 'MASUK' && !t.voided).reduce((a, t) => a + Number(t.change || 0), 0);
   const totalOut = transactions.filter((t) => t.type === 'KELUAR' && !t.voided).reduce((a, t) => a + Number(t.change || 0), 0);
   const totalCorrections = transactions.filter((t) => t.type === 'KOREKSI').length;
@@ -425,7 +439,7 @@ const Riwayat = () => {
           <table className="w-full text-sm tbl">
             <thead><tr className="text-left border-b border-[#1a222e]">{['Waktu', 'No. Referensi', 'Saluran', 'Rangkaian Dokumen', 'No. PO', 'Antrian', 'Tipe', 'Kondisi', 'Produk', 'Perubahan', 'Kadaluarsa', 'Pihak Terkait', 'Dicatat Oleh', 'Bukti Timbang'].map((h) => <th key={h} className="py-2.5 pr-4 font-semibold whitespace-nowrap">{h}</th>)}</tr></thead>
             <tbody>
-              {filtered.length === 0 ? <tr><td colSpan={14} className="py-8 text-center text-[#6b7688]">Belum ada transaksi yang sesuai filter.</td></tr> : filtered.map((t, rowIndex) => {
+              {filtered.length === 0 ? <tr><td colSpan={14} className="py-8 text-center text-[#6b7688]">Belum ada transaksi yang sesuai filter.</td></tr> : paginatedTransactions.map((t, rowIndex) => {
                 const auditChannel = transactionChannel(t);
                 const badge = typeBadge(t.type);
                 return (
@@ -444,7 +458,7 @@ const Riwayat = () => {
                     <td className="py-3 pr-4 text-[#c7d0dc]">{t.penerima || '—'}</td>
                     <td className="py-3 pr-4 text-[#8b93a1] text-xs">{t.operator || '—'}</td>
                     <td className="py-3 pr-4 whitespace-nowrap">
-                      {t.type === 'MASUK' && t.weighing_form && t.operation_id && filtered.findIndex((row) => row.operation_id === t.operation_id) === rowIndex
+                      {t.type === 'MASUK' && t.weighing_form && t.operation_id && paginatedTransactions.findIndex((row) => row.operation_id === t.operation_id) === rowIndex
                         ? <button type="button" onClick={() => printInboundWeighing(t)} className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1.5 rounded-lg border border-[#294263] text-[#93c5fd] hover:bg-[#2563eb]/10"><Printer size={12} /> Cetak Ulang</button>
                         : <span className="text-[#4b5563]">—</span>}
                     </td>
@@ -454,6 +468,7 @@ const Riwayat = () => {
             </tbody>
           </table>
         </div>
+        <PaginationControls page={page} totalItems={filtered.length} pageSize={pageSize} onChange={setPage} label="transaksi" />
       </div>
 
       {loadingOpen && createPortal(
