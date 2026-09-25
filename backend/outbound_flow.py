@@ -64,8 +64,8 @@ class OutboundCreateInput(BaseModel):
     documentType: Literal["SO", "TM", "CT", "ND", "MEMO"] = "SO"
     transferScope: Literal["", "LOKAL", "REGIONAL", "NASIONAL"] = ""
     documents: List[str] = Field(default_factory=list, max_length=20)
-    # Penerima/Tujuan melekat pada masing-masing nomor SO. party tetap dipertahankan
-    # sebagai ringkasan kendaraan dan kompatibilitas dokumen non-SO/arsip lama.
+    # Penerima/Tujuan melekat pada masing-masing nomor dokumen outbound.
+    # party tetap dipertahankan sebagai ringkasan kendaraan/kompatibilitas data lama.
     documentParties: dict[str, str] = Field(default_factory=dict)
     requestDocument: str = ""
     dispatchPurpose: Literal["BAZAR", "ECOMMERCE", "PEMINJAMAN", "LAINNYA"] = "LAINNYA"
@@ -661,8 +661,6 @@ async def list_outbound_loads(user: dict = Depends(get_current_user)):
 @router.post("/outbound-loads")
 async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(require_write)):
     party = body.party.strip()
-    if body.documentType != "SO" and not party:
-        raise HTTPException(status_code=400, detail="Penerima barang wajib diisi")
     if body.weighingForm and (body.grossWeight <= 0 or body.grossMin <= 0 or body.grossMax <= 0):
         raise HTTPException(status_code=400, detail="Rata-rata bruto serta rentang timbang harus diisi")
     if body.weighingForm and not body.grossMin <= body.grossWeight <= body.grossMax:
@@ -675,34 +673,38 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
     if not refs:
         raise HTTPException(status_code=400, detail=f"Nomor dokumen {body.documentType} wajib diisi")
 
+    supplied_parties = {
+        _doc_key(key): str(value or "").strip()
+        for key, value in (body.documentParties or {}).items()
+        if _doc_key(key)
+    }
     resolved_document_parties: dict[str, str] = {}
-    if body.documentType == "SO":
-        supplied_parties = {
-            _doc_key(key): str(value or "").strip()
-            for key, value in (body.documentParties or {}).items()
-            if _doc_key(key)
-        }
-        recipient_summary: list[str] = []
-        for ref_value in refs:
-            document_key = _doc_key(ref_value)
+    recipient_summary: list[str] = []
+    for ref_value in refs:
+        document_key = _doc_key(ref_value)
+        current_party = ""
+        if body.documentType == "SO":
             master = await db.outbound_documents.find_one(
                 {"documentNo": document_key, "documentType": "SO"},
                 {"_id": 0, "party": 1},
             )
             current_party = str((master or {}).get("party") or "").strip()
-            supplied_party = supplied_parties.get(document_key, "")
-            if current_party and supplied_party and current_party != supplied_party:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"SO {document_key} sudah terdaftar untuk penerima {current_party}.",
-                )
-            resolved_party = current_party or supplied_party or (party if len(refs) == 1 else "")
-            if not resolved_party:
-                raise HTTPException(status_code=400, detail=f"Penerima/Tujuan untuk SO {document_key} wajib diisi.")
-            resolved_document_parties[document_key] = resolved_party
-            if resolved_party not in recipient_summary:
-                recipient_summary.append(resolved_party)
-        party = " / ".join(recipient_summary)
+        supplied_party = supplied_parties.get(document_key, "")
+        if current_party and supplied_party and current_party != supplied_party:
+            raise HTTPException(
+                status_code=409,
+                detail=f"SO {document_key} sudah terdaftar untuk penerima {current_party}.",
+            )
+        resolved_party = current_party or supplied_party or (party if len(refs) == 1 else "")
+        if not resolved_party:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Penerima/Tujuan untuk {body.documentType} {document_key} wajib diisi.",
+            )
+        resolved_document_parties[document_key] = resolved_party
+        if resolved_party not in recipient_summary:
+            recipient_summary.append(resolved_party)
+    party = " / ".join(recipient_summary)
 
     expected = {"SO": "SO/", "TM": "TM", "CT": "CT", "ND": "ND", "MEMO": "MEMO"}[body.documentType]
     if any(not ref.upper().startswith(expected) for ref in refs):
@@ -916,6 +918,7 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         "weighing_entries": _weighing_entries(float(body.grossWeight), float(body.grossMin), float(body.grossMax)) if body.weighingForm else [],
         "document_links": [],
         "so_document_progress": so_progress if body.documentType == "SO" else {},
+        "document_parties": resolved_document_parties,
         "so_document_parties": so_document_parties if body.documentType == "SO" else {},
         "document_status": "Menunggu Pemuatan",
         "loading_cost": loading_cost,
@@ -1361,10 +1364,10 @@ async def complete_outbound_load(load_id: str, body: LoadingCompletionInput | No
                 "secondary": product.get("secondary", ""),
                 "secondaryQty": float(product.get("secondaryQty", 0) or 0),
                 "channel": channel,
-                "penerima": (load.get("so_document_parties") or {}).get(
-                    item.get("documentNo") or load.get("ref", ""),
+                "penerima": (load.get("document_parties") or load.get("so_document_parties") or {}).get(
+                    _doc_key(item.get("documentNo") or load.get("ref", "")),
                     load.get("party", "-"),
-                ) if load.get("document_type") == "SO" else load.get("party", "-"),
+                ),
                 "pengambil": load.get("pengambil", ""),
                 "polisi": load.get("polisi", ""),
                 "operator": user.get("name", ""),
@@ -1398,6 +1401,7 @@ async def complete_outbound_load(load_id: str, body: LoadingCompletionInput | No
             "operational_date": load.get("operational_date", op_now.strftime("%Y-%m-%d")),
             "time": completed_at,
             "penerima": load.get("party", "-"),
+            "document_parties": load.get("document_parties", {}),
             "so_document_parties": load.get("so_document_parties", {}),
             "pengambil": load.get("pengambil", ""),
             "polisi": load.get("polisi", ""),
