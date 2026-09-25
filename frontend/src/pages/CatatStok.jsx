@@ -452,8 +452,8 @@ const CatatStok = ({ panel = '' }) => {
       toast.error('Rata-rata bruto harus berada di dalam rentang timbang');
       return;
     }
-    if (!party.trim() && !(type === 'KELUAR' && documentType === 'SO')) {
-      toast.error(type === 'MASUK' ? 'Pilih supplier pengirim' : 'Isi penerima barang');
+    if (!party.trim() && type === 'MASUK') {
+      toast.error('Pilih supplier pengirim');
       return;
     }
     if (type === 'MASUK' && !selectedPO) {
@@ -485,7 +485,7 @@ const CatatStok = ({ panel = '' }) => {
       toast.error('Nomor dokumen tidak boleh sama');
       return;
     }
-    if (type === 'KELUAR' && documentType === 'SO') {
+    if (type === 'KELUAR') {
       const missingRecipient = documentRefs.findIndex((doc, index) => doc.trim() && !String(documentParties[index] || '').trim());
       if (missingRecipient >= 0) {
         toast.error(`Isi Penerima/Tujuan untuk ${documentRefs[missingRecipient]}`);
@@ -622,18 +622,14 @@ const CatatStok = ({ panel = '' }) => {
           navigate('/riwayat');
         }
       } else {
-        const soPartyMap = documentType === 'SO'
-          ? Object.fromEntries(documentRefs
-            .map((doc, index) => [String(doc || '').trim().toUpperCase(), String(documentParties[index] || '').trim()])
-            .filter(([doc, recipient]) => doc && recipient))
-          : {};
-        const outboundParty = documentType === 'SO'
-          ? [...new Set(Object.values(soPartyMap))].join(' / ')
-          : party.trim();
+        const documentPartyMap = Object.fromEntries(documentRefs
+          .map((doc, index) => [String(doc || '').trim().toUpperCase(), String(documentParties[index] || '').trim()])
+          .filter(([doc, recipient]) => doc && recipient));
+        const outboundParty = [...new Set(Object.values(documentPartyMap))].join(' / ');
         const load = await createOutboundLoad({
           items: chosen.map((row) => ({ productId: row.productId, qty: Number(row.qty), documentNo: row.documentNo || documentRefs[0], documentQty: documentType === 'SO' ? soTotalFor(row) : 0, stackCode: kondisi === 'RUSAK' ? '' : (row.stackCode || ''), channel: row.channel || row.product.channel || 'KOM', fefoExceptionReason: kondisi === 'BAIK' ? String(row.fefoExceptionReason || '').trim() : '' })),
           party: outboundParty,
-          documentParties: soPartyMap,
+          documentParties: documentPartyMap,
           ref: documentRefs[0],
           polisi,
           pengambil,
@@ -708,21 +704,21 @@ const CatatStok = ({ panel = '' }) => {
           {type === 'KELUAR' && (
             <div className="mb-5 p-4 rounded-xl border border-[#5a3b15] bg-[#1a1208]">
               <div className="flex gap-3"><Truck size={18} className="text-[#f59e0b] shrink-0 mt-0.5" /><div><div className="text-sm font-semibold text-[#fbbf24]">Tahap Persiapan Pemuatan</div></div></div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4"><div><label className="text-xs text-[#a99675] block mb-1">Jenis Dokumen</label><select value={documentType} onChange={(e) => { const next = e.target.value; setDocumentType(next); if (next !== 'TM') setTransferScope(''); if (next !== 'SO') setDocumentParties(documentRefs.map(() => '')); if (!['MEMO', 'ND'].includes(next)) { setConsignmentDestination(''); setConsignmentZone(''); setDispatchPurpose('LAINNYA'); } }} className="w-full bg-[#0b0f17] border border-[#59431f] rounded-lg px-3 py-2.5 text-sm"><option value="SO">SO — Penjualan</option><option value="TM">TM — Transfer Move</option><option value="CT">CT — Konsinyasi</option><option value="ND">ND — Nota Dinas</option><option value="MEMO">Memo — Pengeluaran Memo</option></select></div>{documentType === 'TM' && <div><label className="text-xs text-[#a99675] block mb-1">Cakupan Transfer</label><select value={transferScope} onChange={(e) => setTransferScope(e.target.value)} className="w-full bg-[#0b0f17] border border-[#59431f] rounded-lg px-3 py-2.5 text-sm"><option value="">Pilih cakupan...</option><option value="LOKAL">Antar Gudang Lokal</option><option value="REGIONAL">Regional</option><option value="NASIONAL">Nasional</option></select></div>}</div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4"><div><label className="text-xs text-[#a99675] block mb-1">Jenis Dokumen</label><select value={documentType} onChange={(e) => { const next = e.target.value; setDocumentType(next); if (next !== 'TM') setTransferScope(''); setDocumentParties(documentRefs.map(() => '')); if (!['MEMO', 'ND'].includes(next)) { setConsignmentDestination(''); setConsignmentZone(''); setDispatchPurpose('LAINNYA'); } }} className="w-full bg-[#0b0f17] border border-[#59431f] rounded-lg px-3 py-2.5 text-sm"><option value="SO">SO — Penjualan</option><option value="TM">TM — Transfer Move</option><option value="CT">CT — Konsinyasi</option><option value="ND">ND — Nota Dinas</option><option value="MEMO">Memo — Pengeluaran Memo</option></select></div>{documentType === 'TM' && <div><label className="text-xs text-[#a99675] block mb-1">Cakupan Transfer</label><select value={transferScope} onChange={(e) => setTransferScope(e.target.value)} className="w-full bg-[#0b0f17] border border-[#59431f] rounded-lg px-3 py-2.5 text-sm"><option value="">Pilih cakupan...</option><option value="LOKAL">Antar Gudang Lokal</option><option value="REGIONAL">Regional</option><option value="NASIONAL">Nasional</option></select></div>}</div>
               <div className="mt-3">
                 <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs text-[#a99675]">{documentType === 'SO' ? 'Nomor SO & Penerima/Tujuan' : 'Nomor Dokumen (satu kendaraan dapat membawa beberapa dokumen)'}</label>
+                  <label className="text-xs text-[#a99675]">Nomor {documentType} & Penerima/Tujuan</label>
                   <button type="button" onClick={() => { setDocumentRefs((prev) => [...prev, '']); setDocumentParties((prev) => [...prev, '']); }} className="text-xs text-[#60a5fa]">+ Tambah dokumen</button>
                 </div>
-                {documentRefs.map((doc, index) => <div key={index} className={`${documentType === 'SO' ? 'grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto]' : 'flex'} gap-2 mt-2`}>
+                {documentRefs.map((doc, index) => <div key={index} className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2 mt-2">
                   <input value={doc} onChange={(e) => { const next = [...documentRefs]; next[index] = e.target.value; setDocumentRefs(next); }} placeholder={documentType === 'SO' ? 'SO/xxxx/mm/09001' : `${documentType}/...`} className="min-w-0 flex-1 bg-[#0b0f17] border border-[#59431f] rounded-lg px-3 py-2.5 text-sm" />
-                  {documentType === 'SO' && <input value={documentParties[index] || ''} onChange={(e) => { const next = [...documentParties]; next[index] = e.target.value; setDocumentParties(next); }} placeholder="Penerima / Tujuan SO ini" className="min-w-0 bg-[#0b0f17] border border-[#294263] rounded-lg px-3 py-2.5 text-sm" />}
+                  <input value={documentParties[index] || ''} onChange={(e) => { const next = [...documentParties]; next[index] = e.target.value; setDocumentParties(next); }} placeholder={`Penerima / Tujuan ${documentType} ini`} className="min-w-0 bg-[#0b0f17] border border-[#294263] rounded-lg px-3 py-2.5 text-sm" />
                   {documentRefs.length > 1 && <button type="button" onClick={() => { const removed = doc.trim(); setDocumentRefs((prev) => prev.filter((_, i) => i !== index)); setDocumentParties((prev) => prev.filter((_, i) => i !== index)); if (removed) setRows((prev) => prev.map((row) => row.documentNo === removed ? { ...row, documentNo: '' } : row)); }} className="px-3 rounded-lg border border-[#59431f] text-[#f59e0b]">×</button>}
                 </div>)}
-                <p className="text-[11px] text-[#a99675] mt-2">{documentType === 'SO' ? 'Setiap nomor SO memiliki Penerima/Tujuan sendiri. Untuk multi-SO dalam satu kendaraan, nama tujuan boleh berbeda.' : 'Bila ada lebih dari satu nomor dokumen, pilih dokumen sumber pada setiap baris komoditas. Setiap dokumen harus memiliki minimal satu komoditas.'}</p>
+                <p className="text-[11px] text-[#a99675] mt-2">Setiap nomor {documentType} memiliki Penerima/Tujuan sendiri. Bila ada lebih dari satu dokumen dalam satu kendaraan, tujuan boleh berbeda dan setiap dokumen harus memiliki minimal satu komoditas.</p>
                 {documentType === 'SO' && outboundDocumentRefs.map((doc) => { const balance = soBalances[doc.toUpperCase()]; if (!balance?.exists) return null; return <div key={doc} className="mt-2 rounded-lg border border-[#1f3657] bg-[#0d1728] px-3 py-2 text-[11px] text-[#93c5fd]"><b>{balance.documentNo}</b> · Penerima {balance.party || '—'} · Status {String(balance.status || '').replaceAll('_', ' ')}{(balance.items || []).map((item) => <div key={item.productId} className="mt-1 text-[#8fb8ef]">{item.name}: Total {formatNum(item.orderedQty)} · Selesai {formatNum(item.completedQty)} · Reservasi {formatNum(item.reservedQty)} · <b>Sisa {formatNum(item.remainingQty)} {item.unit}</b></div>)}</div>; })}
               </div>
-          {['MEMO', 'ND'].includes(documentType) && <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-lg border border-[#1f3657] bg-[#0d1728] p-3"><div><label className="text-xs text-[#93c5fd] block mb-1">Keperluan {documentType}</label><select value={dispatchPurpose} onChange={(e) => { const purpose = e.target.value; const destination = purpose === 'BAZAR' ? 'Gudang Bazar' : purpose === 'ECOMMERCE' ? 'Gudang E-commerce' : ''; setDispatchPurpose(purpose); setConsignmentDestination(destination); setConsignmentZone(''); if (destination) setParty(destination); }} className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm"><option value="BAZAR">Gudang Bazar</option><option value="ECOMMERCE">Gudang E-commerce</option><option value="PEMINJAMAN">Peminjaman</option><option value="LAINNYA">Keperluan lain</option></select></div><div><label className="text-xs text-[#93c5fd] block mb-1">Tumpukan tujuan Unit 18</label><select value={consignmentZone} onChange={(e) => setConsignmentZone(e.target.value)} disabled={!consignmentDestination} className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm disabled:opacity-50"><option value="">{consignmentDestination ? 'Pilih tumpukan tujuan...' : 'Tidak diperlukan'}</option>{consignmentZoneOptions.map((zone) => <option key={zone} value={zone}>{zone}</option>)}</select>{consignmentDestination && <div className="text-[10px] text-[#8fb8ef] mt-1">Area: {consignmentAreaLabel(consignmentDestination)}</div>}</div></div>}
+          {['MEMO', 'ND'].includes(documentType) && <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-lg border border-[#1f3657] bg-[#0d1728] p-3"><div><label className="text-xs text-[#93c5fd] block mb-1">Keperluan {documentType}</label><select value={dispatchPurpose} onChange={(e) => { const purpose = e.target.value; const destination = purpose === 'BAZAR' ? 'Gudang Bazar' : purpose === 'ECOMMERCE' ? 'Gudang E-commerce' : ''; setDispatchPurpose(purpose); setConsignmentDestination(destination); setConsignmentZone(''); setDocumentParties((prev) => prev.map(() => destination)); }} className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm"><option value="BAZAR">Gudang Bazar</option><option value="ECOMMERCE">Gudang E-commerce</option><option value="PEMINJAMAN">Peminjaman</option><option value="LAINNYA">Keperluan lain</option></select></div><div><label className="text-xs text-[#93c5fd] block mb-1">Tumpukan tujuan Unit 18</label><select value={consignmentZone} onChange={(e) => setConsignmentZone(e.target.value)} disabled={!consignmentDestination} className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm disabled:opacity-50"><option value="">{consignmentDestination ? 'Pilih tumpukan tujuan...' : 'Tidak diperlukan'}</option>{consignmentZoneOptions.map((zone) => <option key={zone} value={zone}>{zone}</option>)}</select>{consignmentDestination && <div className="text-[10px] text-[#8fb8ef] mt-1">Area: {consignmentAreaLabel(consignmentDestination)}</div>}</div></div>}
             </div>
           )}
 
@@ -842,7 +838,7 @@ const CatatStok = ({ panel = '' }) => {
           {!selectedPO && <button onClick={addRow} className="inline-flex items-center gap-2 text-sm text-[#60a5fa] mb-5"><Plus size={15} /> Tambah Barang</button>}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {!(type === 'KELUAR' && documentType === 'SO') && <div><label className="text-sm font-medium mb-1.5 block">{type === 'MASUK' ? 'Supplier Pengirim' : 'Penerima / Tujuan'}</label>{type === 'MASUK' ? <select value={party} disabled={Boolean(selectedPO)} onChange={(e) => setParty(e.target.value)} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm"><option value="">Pilih supplier...</option>{suppliers.map((supplier) => <option key={supplier.id}>{supplier.name}</option>)}</select> : <input value={party} onChange={(e) => setParty(e.target.value)} placeholder="Nama penerima / tujuan" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm" />}</div>}
+            {type === 'MASUK' && <div><label className="text-sm font-medium mb-1.5 block">Supplier Pengirim</label><select value={party} disabled={Boolean(selectedPO)} onChange={(e) => setParty(e.target.value)} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm"><option value="">Pilih supplier...</option>{suppliers.map((supplier) => <option key={supplier.id}>{supplier.name}</option>)}</select></div>}
             <div><label className="text-sm font-medium mb-1.5 block">{type === 'MASUK' ? 'No. Referensi' : 'Dokumen Utama'}</label><input value={type === 'KELUAR' ? (documentRefs.filter(Boolean).join(', ') || 'Diisi pada daftar dokumen di atas') : ref} readOnly={type === 'KELUAR' || Boolean(selectedPO)} onChange={(e) => setRef(e.target.value)} placeholder="DO / BAST / referensi lain" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm read-only:opacity-70" /></div>
             <div><label className="text-sm font-medium mb-1.5 block">Nomor Plat Kendaraan</label><input value={polisi} onChange={(e) => setPolisi(e.target.value)} placeholder="B 1441 PQF" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm" /></div>
             {type === 'KELUAR' ? (
