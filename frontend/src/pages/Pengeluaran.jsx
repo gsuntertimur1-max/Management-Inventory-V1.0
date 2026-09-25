@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Printer, MonitorSmartphone, Play, CheckCircle2, RotateCcw, Link2, Search } from 'lucide-react';
 import { useData } from '../context/DataContext';
@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import api, { apiError, downloadApiFile, printApiFile } from '../lib/api';
 import { stackCodes } from '../lib/warehouses';
 import { hasPermission } from '../lib/permissions';
+import PaginationControls from '../components/PaginationControls';
 
 
 const STATUS = {
@@ -64,7 +65,7 @@ const loadingCutoffStatus = (startedAt) => {
 };
 
 const Pengeluaran = () => {
-  const { user, outboundLoads, suratJalan, settings, startOutboundLoad, completeOutboundLoad, createConsignmentReturn, createSalesReturn, settleOutboundDocument, settleOutboundDocuments, cancelOutboundLoad, editOutboundLoad, refreshOutboundLoads } = useData();
+  const { user, outboundLoads, suratJalan, settings, startOutboundLoad, completeOutboundLoad, createConsignmentReturn, createSalesReturn, settleOutboundDocument, settleOutboundDocuments, cancelOutboundLoad, editOutboundLoad, refreshOutboundLoads, refreshOutboundSnapshot } = useData();
   const STACKS = stackCodes(settings?.warehouses);
   const navigate = useNavigate();
   const [filter, setFilter] = useState('Semua Status');
@@ -76,6 +77,8 @@ const Pengeluaran = () => {
   const [cancelModal, setCancelModal] = useState(null);
   const [editModal, setEditModal] = useState(null);
   const [loadingCompletionModal, setLoadingCompletionModal] = useState(null);
+  const [page, setPage] = useState(1);
+  const outboundSyncInFlight = useRef(false);
   const isSuperadmin = user?.role === 'Administrator' || user?.role === 'Superadmin';
   const canOperateOutbound = hasPermission(user?.role, 'outbound');
 
@@ -84,6 +87,60 @@ const Pengeluaran = () => {
     const searchable = [load.ref, ...(load.documents || []), load.document_type, load.party, ...(load.document_links || []).flatMap((link) => [link.no, link.type]), ...(load.items || []).flatMap((item) => [item.name, item.sku, item.documentNo])].filter(Boolean).join(' ').toLowerCase();
     return (filter === 'Semua Status' || load.status === filter) && (!needle || searchable.includes(needle));
   });
+  const pageSize = 10;
+  const paginatedList = list.slice((page - 1) * pageSize, page * pageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [filter, query]);
+
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(list.length / pageSize));
+    if (page > maxPage) setPage(maxPage);
+  }, [list.length, page]);
+
+  useEffect(() => {
+    if (!refreshOutboundSnapshot) return undefined;
+    let timerId = null;
+
+    const syncIfVisible = async () => {
+      if (document.visibilityState !== 'visible' || !navigator.onLine || outboundSyncInFlight.current) return;
+      outboundSyncInFlight.current = true;
+      try {
+        await refreshOutboundSnapshot();
+      } catch (error) {
+        if (process.env.NODE_ENV !== 'production') console.debug('outbound auto-sync skipped', error);
+      } finally {
+        outboundSyncInFlight.current = false;
+      }
+    };
+
+    const startTimer = () => {
+      if (timerId) window.clearInterval(timerId);
+      timerId = window.setInterval(syncIfVisible, 5000);
+    };
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        syncIfVisible();
+        startTimer();
+      } else if (timerId) {
+        window.clearInterval(timerId);
+        timerId = null;
+      }
+    };
+
+    syncIfVisible();
+    startTimer();
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('online', syncIfVisible);
+    return () => {
+      if (timerId) window.clearInterval(timerId);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('online', syncIfVisible);
+    };
+  }, [refreshOutboundSnapshot]);
+
   const findFinalSJ = (load) => suratJalan.find((sj) => sj.id === load.surat_jalan_id || sj.load_id === load.id);
   const printBon = (load) => printApiFile(`/export/bon-muat-v2/${load.id}.pdf`).catch((e) => toast.error(apiError(e)));
   const printSuratJalan = (sj) => sj ? printApiFile(`/export/surat-jalan/${sj.id}.pdf`).catch((e) => toast.error(apiError(e))) : toast.error('Surat Jalan belum tersedia');
@@ -462,7 +519,7 @@ const Pengeluaran = () => {
           <table className="w-full text-sm tbl">
             <thead><tr className="text-left border-b border-[#1a222e]">{['Antrian', 'Bon Muat', 'Waktu', 'Tujuan', 'Pengambil', 'No. Polisi', 'Barang', 'Pemuatan', 'Status', 'Dokumen & Rangkaian', 'Aksi'].map((h) => <th key={h} className="py-2.5 pr-4 font-semibold whitespace-nowrap">{h}</th>)}</tr></thead>
             <tbody>
-              {list.length === 0 ? <tr><td colSpan={11} className="py-8 text-center text-[#6b7688]">Belum ada antrian pengeluaran.</td></tr> : list.map((load) => {
+              {list.length === 0 ? <tr><td colSpan={11} className="py-8 text-center text-[#6b7688]">Belum ada antrian pengeluaran.</td></tr> : paginatedList.map((load) => {
                 const sj = findFinalSJ(load);
                 const st = STATUS[load.status] || STATUS.Menunggu;
                 return (
@@ -488,6 +545,7 @@ const Pengeluaran = () => {
             </tbody>
           </table>
         </div>
+        <PaginationControls page={page} totalItems={list.length} pageSize={pageSize} onChange={setPage} label="pengeluaran" />
       </div>
       <Dialog open={Boolean(loadingCompletionModal)} onOpenChange={(open) => { if (!open && !busyId) setLoadingCompletionModal(null); }}>
         <DialogContent className="max-w-xl border-[#242f3d] bg-[#0d121b] text-[#e7ebf2]">
