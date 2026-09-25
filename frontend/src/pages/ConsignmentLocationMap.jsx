@@ -193,11 +193,13 @@ const ConsignmentLocationMap = ({ destination }) => {
       <div className="card-surface p-4"><div className="label-mono">Terpetakan di Tumpukan</div><div className="font-display text-2xl font-bold mt-2">{formatNum(totalAllocated)}</div></div>
     </div>
 
-    {canEdit && <section className="card-surface p-4 md:p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
-        <div><h2 className="font-display text-xl font-bold">{form.editingId ? 'Ubah Perkalian Tumpukan' : 'Input Perkalian Tumpukan'}</h2></div>
-        {form.editingId && <button onClick={resetForm} className="inline-flex items-center gap-1 text-xs px-3 py-2 rounded-lg border border-[#334155] text-[#cbd5e1]"><X size={13}/> Batal Edit</button>}
-      </div>
+    {canEdit && <details className="card-surface group">
+      <summary className="cursor-pointer list-none p-4 md:p-5 flex flex-wrap items-center justify-between gap-3 select-none">
+        <div><div className="label-mono text-[10px] text-[#93c5fd]">{label}</div><h2 className="font-display text-xl font-bold mt-1">{form.editingId ? 'Ubah Perkalian Tumpukan' : 'Input Perkalian Tumpukan'}</h2></div>
+        <div className="flex items-center gap-2 text-xs text-[#93c5fd]"><span>{layouts.length} perkalian tersimpan</span><span className="text-lg transition-transform group-open:rotate-180">⌄</span></div>
+      </summary>
+      <div className="border-t border-[#26364c] p-4 md:p-5">
+        {form.editingId && <div className="flex justify-end mb-4"><button onClick={resetForm} className="inline-flex items-center gap-1 text-xs px-3 py-2 rounded-lg border border-[#334155] text-[#cbd5e1]"><X size={13}/> Batal Edit</button></div>}
       <div className="grid grid-cols-1 md:grid-cols-[180px_1fr] gap-3">
         <div>
           <label className="text-xs text-[#8b93a1] block mb-1">Kode Tumpukan Fisik</label>
@@ -229,13 +231,15 @@ const ConsignmentLocationMap = ({ destination }) => {
         <div><label className="text-xs text-[#8b93a1] block mb-1">Catatan</label><input className={inputCls} value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder="Opsional"/></div>
       </div>
       <button disabled={saving} onClick={save} className="btn-primary mt-4 inline-flex items-center gap-2 px-5 py-2.5 rounded-lg font-semibold disabled:opacity-50"><Save size={16}/>{saving ? 'Menyimpan…' : 'Simpan Perkalian'}</button>
-    </section>}
-
-    <section className="card-surface p-4 md:p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
-        <div><h2 className="font-display text-xl font-bold">Tumpukan Persediaan {label}</h2></div>
-        <div className="inline-flex items-center gap-2 rounded-lg border border-[#334155] px-3 py-2 text-xs text-[#93c5fd]"><Warehouse size={15} />Sub-ledger mandiri {label}</div>
       </div>
+    </details>}
+
+    <details className="card-surface group">
+      <summary className="cursor-pointer list-none p-4 md:p-5 flex flex-wrap items-center justify-between gap-3 select-none">
+        <div><div className="label-mono text-[10px] text-[#93c5fd]">Sub-ledger mandiri {label}</div><h2 className="font-display text-xl font-bold mt-1">Kartu Stok & Perkalian {label}</h2></div>
+        <div className="flex items-center gap-2 text-xs text-[#93c5fd]"><Warehouse size={15}/><span>{stacks.length} tumpukan</span><span className="text-lg transition-transform group-open:rotate-180">⌄</span></div>
+      </summary>
+      <div className="border-t border-[#26364c] p-4 md:p-5">
 
       {rows.length === 0 ? <div className="rounded-xl border border-dashed border-[#334155] p-10 text-center text-sm text-[#8b93a1]"><PackageSearch size={28} className="mx-auto mb-3 opacity-60" />Belum ada stok aktif di {destination}.</div> : <>
         {stacks.length === 0 && <div className="rounded-xl border border-dashed border-[#334155] p-6 text-center text-sm text-[#8b93a1]">Belum ada perkalian tumpukan. {canEdit ? `Mulai dari ${defaultConsignmentStack(destination)} di formulir di atas.` : 'Petugas operasional belum mencatat perkalian.'}</div>}
@@ -268,7 +272,8 @@ const ConsignmentLocationMap = ({ destination }) => {
           {rows.filter((item) => Math.max(Number(item.qty || 0) - Number(allocatedByProduct[item.productId] || 0), 0) > 1e-9).map((item) => <div key={item.productId} className="rounded-lg border border-[#8a5a16] bg-[#f59e0b]/5 p-3 text-xs"><div className="font-semibold">{item.name}</div><div className="text-[#fbbf24] mt-1">Belum terpetakan: {formatNum(Math.max(Number(item.qty || 0) - Number(allocatedByProduct[item.productId] || 0), 0))} {item.unit}</div></div>)}
         </div>
       </>}
-    </section>
+      </div>
+    </details>
   </div>;
 };
 
