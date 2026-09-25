@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import api, { apiError } from '../lib/api';
 import { useData } from '../context/DataContext';
 import { formatNum } from '../mock';
+import PaginationControls from '../components/PaginationControls';
 
 const displayDate = (value) => {
   if (!value) return '—';
@@ -30,6 +31,8 @@ const KoreksiOperasional = () => {
   const [receiptCorrection, setReceiptCorrection] = useState(null);
   const [receiptReason, setReceiptReason] = useState('');
   const [outboundCorrection, setOutboundCorrection] = useState(null);
+  const [receiptPage, setReceiptPage] = useState(1);
+  const [outboundPage, setOutboundPage] = useState(1);
 
   const loadCorrections = useCallback(async () => {
     setLoading(true);
@@ -62,6 +65,22 @@ const KoreksiOperasional = () => {
     return outbound.filter((row) => [row.bonNo, row.antrian, row.party, row.polisi, row.pengambil, ...(row.documents || []), ...(row.items || []).flatMap((item) => [item.name, item.sku, item.stackCode])]
       .some((value) => String(value || '').toLowerCase().includes(text)));
   }, [outbound, query]);
+
+  const pageSize = 10;
+  const paginatedReceipts = filteredReceipts.slice((receiptPage - 1) * pageSize, receiptPage * pageSize);
+  const paginatedOutbound = filteredOutbound.slice((outboundPage - 1) * pageSize, outboundPage * pageSize);
+
+  useEffect(() => {
+    setReceiptPage(1);
+    setOutboundPage(1);
+  }, [query, tab]);
+
+  useEffect(() => {
+    const receiptMax = Math.max(1, Math.ceil(filteredReceipts.length / pageSize));
+    const outboundMax = Math.max(1, Math.ceil(filteredOutbound.length / pageSize));
+    if (receiptPage > receiptMax) setReceiptPage(receiptMax);
+    if (outboundPage > outboundMax) setOutboundPage(outboundMax);
+  }, [filteredReceipts.length, filteredOutbound.length, receiptPage, outboundPage]);
 
   const openOutboundCorrection = (row) => setOutboundCorrection({
     row,
@@ -143,7 +162,7 @@ const KoreksiOperasional = () => {
       {loading ? <div className="card-surface p-10 text-center text-[#8b93a1]">Memuat data koreksi...</div> : tab === 'receipt' ? (
         <div className="space-y-3">
           {filteredReceipts.length === 0 && <div className="card-surface p-10 text-center text-[#6b7688]">Tidak ada penerimaan yang cocok.</div>}
-          {filteredReceipts.map((row) => (
+          {paginatedReceipts.map((row) => (
             <div key={row.operationId} className="card-surface p-5">
               <div className="flex flex-wrap justify-between gap-4">
                 <div>
@@ -159,11 +178,12 @@ const KoreksiOperasional = () => {
               {row.voidReason && <div className="mt-3 text-xs text-[#8b93a1]">Alasan koreksi: {row.voidReason} · {row.voidedBy || '—'} · {displayDate(row.voidedAt)}</div>}
             </div>
           ))}
+          <PaginationControls page={receiptPage} totalItems={filteredReceipts.length} pageSize={pageSize} onChange={setReceiptPage} label="koreksi penerimaan" />
         </div>
       ) : (
         <div className="space-y-3">
           {filteredOutbound.length === 0 && <div className="card-surface p-10 text-center text-[#6b7688]">Tidak ada pengeluaran selesai yang cocok.</div>}
-          {filteredOutbound.map((row) => (
+          {paginatedOutbound.map((row) => (
             <div key={row.id} className="card-surface p-5">
               <div className="flex flex-wrap justify-between gap-4">
                 <div><div className="flex flex-wrap gap-2 items-center"><span className="font-mono text-sm text-[#93c5fd]">{row.bonNo || 'Bon Muat —'}</span><span className="text-[10px] font-mono px-2 py-1 rounded bg-[#22c55e]/15 text-[#4ade80]">SELESAI</span></div><div className="text-xs text-[#8b93a1] mt-1">{(row.documents || []).join(' · ')} · Antrian {row.antrian || '—'} · {displayDate(row.completedAt)}</div></div>
@@ -173,6 +193,7 @@ const KoreksiOperasional = () => {
               {(row.correctionHistory || []).length > 0 && <div className="mt-3 text-xs text-[#f59e0b]">Sudah dikoreksi {row.correctionHistory.length} kali. Riwayat lama tetap disimpan.</div>}
             </div>
           ))}
+          <PaginationControls page={outboundPage} totalItems={filteredOutbound.length} pageSize={pageSize} onChange={setOutboundPage} label="koreksi pengeluaran" />
         </div>
       )}
 
