@@ -14,31 +14,39 @@ const badgeClass = (severity) => severity === 'ERROR'
 const IssuePanel = ({ title, subtitle, rows = [], category = 'Kontrol Konsinyasi' }) => {
   if (!rows.length) return null;
   return (
-    <div className="card-surface p-5">
-      <div className="mb-4">
-        <div className="label-mono text-[10px] text-[#fbbf24]">{category}</div>
-        <h2 className="font-display text-xl font-bold mt-1">{title}</h2>
-        {subtitle && <p className="text-xs text-[#8b93a1] mt-1">{subtitle}</p>}
-      </div>
-      <div className="space-y-2">
-        {rows.map((row, index) => (
-          <div key={row.code || row.orderId || row.opnameId || row.ndId || `${row.productId || 'issue'}-${index}`} className={`rounded-xl border px-4 py-3 text-sm ${badgeClass(row.severity || 'WARNING')}`}>
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <div>
-                <div className="font-semibold">{row.code || row.issue || 'Temuan Integritas'}</div>
-                <div className="text-xs opacity-90 mt-1">{row.issue}</div>
+    <details className="card-surface group">
+      <summary className="cursor-pointer list-none p-5 flex flex-wrap items-center justify-between gap-3 select-none">
+        <div>
+          <div className="label-mono text-[10px] text-[#fbbf24]">{category}</div>
+          <h2 className="font-display text-xl font-bold mt-1">{title}</h2>
+        </div>
+        <div className="flex items-center gap-2 text-xs text-[#93c5fd]">
+          <span>{rows.length} temuan</span>
+          <span className="text-lg transition-transform group-open:rotate-180">⌄</span>
+        </div>
+      </summary>
+      <div className="border-t border-[#26364c] p-5">
+        {subtitle && <p className="text-xs text-[#8b93a1] mb-4">{subtitle}</p>}
+        <div className="space-y-2">
+          {rows.map((row, index) => (
+            <div key={row.code || row.orderId || row.opnameId || row.ndId || `${row.productId || 'issue'}-${index}`} className={`rounded-xl border px-4 py-3 text-sm ${badgeClass(row.severity || 'WARNING')}`}>
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <div className="font-semibold">{row.code || row.issue || 'Temuan Integritas'}</div>
+                  <div className="text-xs opacity-90 mt-1">{row.issue}</div>
+                </div>
+                <div className="font-mono text-[10px] opacity-80">
+                  {row.destination || row.ndNo || row.orderNo || row.opnameNo || row.referenceNo || row.packageCode || ''}
+                </div>
               </div>
-              <div className="font-mono text-[10px] opacity-80">
-                {row.destination || row.ndNo || row.orderNo || row.opnameNo || row.referenceNo || row.packageCode || ''}
-              </div>
+              {(row.name || row.sku || row.productId) && <div className="mt-2 text-xs opacity-80">{row.name || row.sku || row.productId}</div>}
+              {row.overBy !== undefined && <div className="mt-1 text-xs font-mono">Lebih: {formatNum(row.overBy)}</div>}
+              {row.difference !== undefined && <div className="mt-1 text-xs font-mono">Selisih: {formatNum(row.difference)}</div>}
             </div>
-            {(row.name || row.sku || row.productId) && <div className="mt-2 text-xs opacity-80">{row.name || row.sku || row.productId}</div>}
-            {row.overBy !== undefined && <div className="mt-1 text-xs font-mono">Lebih: {formatNum(row.overBy)}</div>}
-            {row.difference !== undefined && <div className="mt-1 text-xs font-mono">Selisih: {formatNum(row.difference)}</div>}
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
-    </div>
+    </details>
   );
 };
 
