@@ -64,6 +64,9 @@ class OutboundCreateInput(BaseModel):
     documentType: Literal["SO", "TM", "CT", "ND", "MEMO"] = "SO"
     transferScope: Literal["", "LOKAL", "REGIONAL", "NASIONAL"] = ""
     documents: List[str] = Field(default_factory=list, max_length=20)
+    # Penerima/Tujuan melekat pada masing-masing nomor SO. party tetap dipertahankan
+    # sebagai ringkasan kendaraan dan kompatibilitas dokumen non-SO/arsip lama.
+    documentParties: dict[str, str] = Field(default_factory=dict)
     requestDocument: str = ""
     dispatchPurpose: Literal["BAZAR", "ECOMMERCE", "PEMINJAMAN", "LAINNYA"] = "LAINNYA"
     consignmentDestination: str = ""
@@ -209,6 +212,7 @@ class SettlementItemInput(BaseModel):
 class SettlementInput(BaseModel):
     documentNo: str
     sourceDocumentNo: str = ""
+    party: str = ""
     items: List[SettlementItemInput] = Field(min_length=1)
     note: str = ""
 
@@ -221,6 +225,7 @@ class MultiSettlementSourceInput(BaseModel):
 
 class MultiSettlementInput(BaseModel):
     documentNo: str
+    party: str = ""
     sources: List[MultiSettlementSourceInput] = Field(min_length=1, max_length=100)
     note: str = ""
 
@@ -303,6 +308,7 @@ async def _prepare_so_documents(
     body_items: list[OutboundItemInput],
     products: dict[str, dict],
     party: str,
+    document_parties: dict[str, str] | None = None,
     exclude_load_id: str = "",
 ) -> tuple[list[dict], dict[str, list[dict]]]:
     """Validate SO capacity and build master documents without mutating DB."""
@@ -326,20 +332,25 @@ async def _prepare_so_documents(
             {"_id": 0},
         )
         current_party = str((current or {}).get("party") or "").strip()
-        party_summary = party.strip()
-        # Pada multi-SO, satu kendaraan dapat membawa beberapa SO untuk penerima
-        # berbeda. Penerima pada load hanyalah ringkasan kendaraan; master SO
-        # yang sudah ada tetap menjadi sumber penerima per dokumen.
-        if (
-            len(refs) == 1
-            and current_party
-            and party_summary
-            and current_party != party_summary
-        ):
+        normalized_parties = {
+            _doc_key(key): str(value or "").strip()
+            for key, value in (document_parties or {}).items()
+            if _doc_key(key)
+        }
+        requested_party = normalized_parties.get(document_no, "") or (party.strip() if len(refs) == 1 else "")
+        # Identitas penerima melekat pada nomor SO, bukan pada kendaraan. Master
+        # SO yang sudah ada selalu menjadi sumber kebenaran untuk penerimanya.
+        if current_party and requested_party and current_party != requested_party:
             raise HTTPException(
                 status_code=409,
                 detail=f"SO {document_no} sudah terdaftar untuk penerima {current.get('party', '')}.",
             )
+        if not current_party and not requested_party:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Penerima/Tujuan untuk SO {document_no} wajib diisi.",
+            )
+        resolved_party = current_party or requested_party
 
         usage = await _so_usage(document_no, exclude_load_id=exclude_load_id)
         existing_items = {
@@ -422,7 +433,7 @@ async def _prepare_so_documents(
                 "id": new_id(),
                 "documentNo": document_no,
                 "documentType": "SO",
-                "party": party.strip(),
+                "party": resolved_party,
                 "items": [],
                 "createdAt": now,
                 "createdBy": "",
@@ -432,7 +443,7 @@ async def _prepare_so_documents(
             **current,
             "documentNo": document_no,
             "documentType": "SO",
-            "party": str(current.get("party") or party).strip(),
+            "party": resolved_party,
             "items": list(existing_items.values()),
             "updatedAt": now_iso(),
         }
@@ -650,7 +661,7 @@ async def list_outbound_loads(user: dict = Depends(get_current_user)):
 @router.post("/outbound-loads")
 async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(require_write)):
     party = body.party.strip()
-    if not party:
+    if body.documentType != "SO" and not party:
         raise HTTPException(status_code=400, detail="Penerima barang wajib diisi")
     if body.weighingForm and (body.grossWeight <= 0 or body.grossMin <= 0 or body.grossMax <= 0):
         raise HTTPException(status_code=400, detail="Rata-rata bruto serta rentang timbang harus diisi")
@@ -663,6 +674,36 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
             refs.append(value)
     if not refs:
         raise HTTPException(status_code=400, detail=f"Nomor dokumen {body.documentType} wajib diisi")
+
+    resolved_document_parties: dict[str, str] = {}
+    if body.documentType == "SO":
+        supplied_parties = {
+            _doc_key(key): str(value or "").strip()
+            for key, value in (body.documentParties or {}).items()
+            if _doc_key(key)
+        }
+        recipient_summary: list[str] = []
+        for ref_value in refs:
+            document_key = _doc_key(ref_value)
+            master = await db.outbound_documents.find_one(
+                {"documentNo": document_key, "documentType": "SO"},
+                {"_id": 0, "party": 1},
+            )
+            current_party = str((master or {}).get("party") or "").strip()
+            supplied_party = supplied_parties.get(document_key, "")
+            if current_party and supplied_party and current_party != supplied_party:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"SO {document_key} sudah terdaftar untuk penerima {current_party}.",
+                )
+            resolved_party = current_party or supplied_party or (party if len(refs) == 1 else "")
+            if not resolved_party:
+                raise HTTPException(status_code=400, detail=f"Penerima/Tujuan untuk SO {document_key} wajib diisi.")
+            resolved_document_parties[document_key] = resolved_party
+            if resolved_party not in recipient_summary:
+                recipient_summary.append(resolved_party)
+        party = " / ".join(recipient_summary)
+
     expected = {"SO": "SO/", "TM": "TM", "CT": "CT", "ND": "ND", "MEMO": "MEMO"}[body.documentType]
     if any(not ref.upper().startswith(expected) for ref in refs):
         raise HTTPException(status_code=400, detail=f"Nomor dokumen tidak sesuai jenis {body.documentType}")
@@ -757,6 +798,7 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
             body_items=body.items,
             products=products,
             party=party,
+            document_parties=resolved_document_parties,
         )
         so_document_parties = {
             str(doc.get("documentNo") or ""): str(doc.get("party") or "").strip()
@@ -1319,7 +1361,10 @@ async def complete_outbound_load(load_id: str, body: LoadingCompletionInput | No
                 "secondary": product.get("secondary", ""),
                 "secondaryQty": float(product.get("secondaryQty", 0) or 0),
                 "channel": channel,
-                "penerima": load.get("party", "-"),
+                "penerima": (load.get("so_document_parties") or {}).get(
+                    item.get("documentNo") or load.get("ref", ""),
+                    load.get("party", "-"),
+                ) if load.get("document_type") == "SO" else load.get("party", "-"),
                 "pengambil": load.get("pengambil", ""),
                 "polisi": load.get("polisi", ""),
                 "operator": user.get("name", ""),
@@ -1353,6 +1398,7 @@ async def complete_outbound_load(load_id: str, body: LoadingCompletionInput | No
             "operational_date": load.get("operational_date", op_now.strftime("%Y-%m-%d")),
             "time": completed_at,
             "penerima": load.get("party", "-"),
+            "so_document_parties": load.get("so_document_parties", {}),
             "pengambil": load.get("pengambil", ""),
             "polisi": load.get("polisi", ""),
             "unit_loading": load.get("unit_loading", ""),
@@ -1694,8 +1740,11 @@ async def settle_outbound_documents(body: MultiSettlementInput, user: dict = Dep
     outbound load dikompensasi/di-rollback bila salah satu update gagal.
     """
     document_no = body.documentNo.strip()
+    party = body.party.strip()
     if not document_no.upper().startswith("SO/"):
         raise HTTPException(status_code=400, detail="Nomor penyelesaian harus berupa dokumen SO")
+    if not party:
+        raise HTTPException(status_code=400, detail="Penerima/Tujuan SO wajib diisi")
     if await db.outbound_loads.find_one({"$or": [{"ref": document_no}, {"document_links.no": document_no}]}):
         raise HTTPException(status_code=409, detail="Nomor SO sudah digunakan")
 
@@ -1791,7 +1840,9 @@ async def settle_outbound_documents(body: MultiSettlementInput, user: dict = Dep
                         "settled_qty": item["qty"],
                         "unit": item["unit"],
                         "channel": item.get("channel", ""),
-                        "penerima": load.get("party", ""),
+                        "penerima": party,
+                        "pengambil": load.get("pengambil", ""),
+                        "polisi": load.get("polisi", ""),
                         "operator": user.get("name", ""),
                         "keterangan": body.note.strip(),
                     })
@@ -1806,6 +1857,7 @@ async def settle_outbound_documents(body: MultiSettlementInput, user: dict = Dep
                 "sourceDocumentNos": source_numbers,
                 "sources": source_payloads,
                 "time": timestamp,
+                "party": party,
                 "items": list(aggregate.values()),
                 "note": body.note.strip(),
                 "operator": user.get("name", ""),
@@ -1829,6 +1881,7 @@ async def settle_outbound_documents(body: MultiSettlementInput, user: dict = Dep
 
         return {
             "documentNo": document_no,
+            "party": party,
             "settlementBatchId": batch_id,
             "sources": [
                 {
@@ -1859,8 +1912,11 @@ async def settle_outbound_document(load_id: str, body: SettlementInput, user: di
     if not load or load.get("document_type") not in {"CT", "MEMO", "ND"} or load.get("status") != "Selesai":
         raise HTTPException(status_code=400, detail="SO lanjutan hanya dapat dibuat dari CT, Memo, atau ND yang selesai")
     document_no = body.documentNo.strip()
+    party = body.party.strip()
     if not document_no.upper().startswith("SO/"):
         raise HTTPException(status_code=400, detail="Nomor penyelesaian harus berupa dokumen SO")
+    if not party:
+        raise HTTPException(status_code=400, detail="Penerima/Tujuan SO wajib diisi")
     if await db.outbound_loads.find_one({"$or": [{"ref": document_no}, {"document_links.no": document_no}]}):
         raise HTTPException(status_code=409, detail="Nomor SO sudah digunakan")
     if len({item.productId for item in body.items}) != len(body.items):
@@ -1878,11 +1934,11 @@ async def settle_outbound_document(load_id: str, body: SettlementInput, user: di
         if float(item.qty) > float(source.get("qty", 0) or 0) - returned - sold + 1e-9:
             raise HTTPException(status_code=400, detail=f"Jumlah SO {source.get('name', '')} melebihi sisa dokumen sumber")
         items.append({"productId": item.productId, "name": source.get("name", ""), "unit": source.get("unit", ""), "channel": source.get("channel", ""), "qty": float(item.qty)})
-    link = {"id": new_id(), "type": "SO", "no": document_no, "sourceDocumentNo": source_document, "time": now_iso(), "items": items, "note": body.note.strip(), "operator": user.get("name", "")}
+    link = {"id": new_id(), "type": "SO", "no": document_no, "party": party, "sourceDocumentNo": source_document, "time": now_iso(), "items": items, "note": body.note.strip(), "operator": user.get("name", "")}
     prospective = {**load, "document_links": [*load.get("document_links", []), link]}
     try:
         await db.outbound_loads.update_one({"id": load_id}, {"$push": {"document_links": link}, "$set": {"document_status": "Selesai Dokumen" if _all_source_documents_settled(prospective) else "SO Sebagian · Belum Selesai"}})
-        await db.transactions.insert_many([{"id": new_id(), "load_id": load_id, "time": link["time"], "ref": document_no, "type": "DOKUMEN", "kondisi": "—", "document_type": "SO", "parent_document": source_document, "product": item["name"], "change": 0, "settled_qty": item["qty"], "unit": item["unit"], "channel": item.get("channel", ""), "penerima": load.get("party", ""), "operator": user.get("name", ""), "keterangan": body.note.strip()} for item in items])
+        await db.transactions.insert_many([{"id": new_id(), "load_id": load_id, "time": link["time"], "ref": document_no, "type": "DOKUMEN", "kondisi": "—", "document_type": "SO", "parent_document": source_document, "product": item["name"], "change": 0, "settled_qty": item["qty"], "unit": item["unit"], "channel": item.get("channel", ""), "penerima": party, "pengambil": load.get("pengambil", ""), "polisi": load.get("polisi", ""), "operator": user.get("name", ""), "keterangan": body.note.strip()} for item in items])
         return link
     except Exception:
         await db.transactions.delete_many({"load_id": load_id, "ref": document_no, "document_type": "SO"})
