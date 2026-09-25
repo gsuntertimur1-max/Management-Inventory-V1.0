@@ -205,7 +205,7 @@ const Pengeluaran = () => {
       productId: item.productId,
       name: item.name,
       unit: item.unit,
-      party: load.party || '',
+      party: (load.document_parties || load.so_document_parties || {})[String(sourceDocumentNo || '').trim().toUpperCase()] || load.party || '',
       remaining: remainingQty(load, item, sourceDocumentNo),
       qty: 0,
       isCurrent: load.id === anchorLoad.id && sourceDocumentNo === anchorSourceDocument,
@@ -309,7 +309,7 @@ const Pengeluaran = () => {
 
       <div class="rule"></div>
       <div class="grid"><div class="k">Dokumen ${escapeHtml(load.document_type || 'SO')}:</div><div class="v">${escapeHtml((load.documents || [load.ref]).join(', ') || '-')}</div></div>
-      <div class="field"><div class="field-name">Tujuan / A.N:</div><div class="field-value">${escapeHtml(load.party || '-')}</div></div>
+      <div class="field"><div class="field-name">Penerima / Tujuan:</div><div class="field-value">${Object.entries(load.document_parties || load.so_document_parties || {}).length ? Object.entries(load.document_parties || load.so_document_parties || {}).map(([doc, recipient]) => `${escapeHtml(doc)} → ${escapeHtml(recipient || '-')}`).join('<br/>') : escapeHtml(load.party || '-')}</div></div>
       <div class="grid"><div class="k">No. Plat:</div><div class="v">${escapeHtml(load.polisi || '-')}</div></div>
       <div class="grid"><div class="k">Pengambil:</div><div class="v">${escapeHtml(load.pengambil || '-')}</div></div>
 
@@ -549,7 +549,7 @@ const Pengeluaran = () => {
                     <td className="py-3 pr-4"><span className="text-xs px-2.5 py-1 rounded-full font-medium whitespace-nowrap" style={{ background: st.bg, color: st.c }}>{load.status}</span></td>
                     <td className="py-3 pr-4 text-xs min-w-[260px]">
                       <div className="font-mono font-semibold text-[#93c5fd]">{load.document_type || 'SO'} · {load.ref || '—'}</div>
-                      {load.document_type === 'SO' && Object.entries(load.so_document_parties || {}).map(([doc, recipient]) => <div key={doc} className="font-mono mt-1 text-[#c7d2fe]">↳ {doc} → {recipient || '—'}</div>)}
+                      {Object.entries(load.document_parties || load.so_document_parties || {}).map(([doc, recipient]) => <div key={doc} className="font-mono mt-1 text-[#c7d2fe]">↳ {doc} → {recipient || '—'}</div>)}
                       {load.request_document && <div className="font-mono mt-1 text-[#fbbf24]">↳ Dasar: {load.request_document}</div>}
                       {(load.document_links || []).map((link) => <div key={link.id} className="font-mono mt-1 text-[#4ade80]">↳ {link.type} · {link.no}{link.party ? ` · ${link.party}` : ''}</div>)}
                       {['CT', 'MEMO', 'ND'].includes(load.document_type) && <details className="mt-2 rounded-lg border border-[#263244] bg-[#0b0f17]">
