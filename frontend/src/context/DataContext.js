@@ -179,6 +179,19 @@ export const DataProvider = ({ children }) => {
     return data;
   }, []);
 
+  const refreshOutboundSnapshot = useCallback(async () => {
+    const [loadsRes, sjRes] = await Promise.all([
+      api.get('/outbound-loads'),
+      api.get('/surat-jalan'),
+    ]);
+    setState((prev) => ({
+      ...prev,
+      outboundLoads: loadsRes.data,
+      suratJalan: sjRes.data,
+    }));
+    return loadsRes.data;
+  }, []);
+
   const refreshPurchaseOrders = useCallback(async () => {
     const { data } = await api.get('/purchase-orders-v2');
     setState((prev) => ({ ...prev, purchaseOrders: data }));
@@ -287,7 +300,8 @@ export const DataProvider = ({ children }) => {
       startTimer();
     };
 
-    syncIfVisible();
+    // fetchAll() sudah memuat snapshot konsinyasi saat sesi dibuka.
+    // Hindari tiga request duplikat pada startup; auto-sync pertama berjalan setelah interval.
     startTimer();
     document.addEventListener('visibilitychange', handleVisibility);
     window.addEventListener('online', handleOnline);
@@ -426,7 +440,7 @@ export const DataProvider = ({ children }) => {
       consignmentLastSync, consignmentSyncing,
       login, logout, ...state, fetchAll,
       addProduct, updateProduct, deleteProduct, addTransaction, addReceipt, recordStockDamage, createSupplierReturn, receiveSupplierReplacement,
-      createOutboundLoad, refreshOutboundLoads, startOutboundLoad, completeOutboundLoad, createConsignmentReturn, createSalesReturn, settleOutboundDocument, settleOutboundDocuments, updateSJStatus, cancelOutboundLoad, editOutboundLoad, cancelPurchaseOrder,
+      createOutboundLoad, refreshOutboundLoads, refreshOutboundSnapshot, startOutboundLoad, completeOutboundLoad, createConsignmentReturn, createSalesReturn, settleOutboundDocument, settleOutboundDocuments, updateSJStatus, cancelOutboundLoad, editOutboundLoad, cancelPurchaseOrder,
       addSupplier, addPO, addUser, updateUser, deleteUser, changeUserPassword, updateSettings, resetData, importCsv,
       addStackAllocation, updateStackAllocation, deleteStackAllocation,
       addStackTreatment,
