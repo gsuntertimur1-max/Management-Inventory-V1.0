@@ -164,6 +164,18 @@ const Pengeluaran = () => {
     return Object.values(grouped);
   };
   const remainingQty = (load, source, sourceDocumentNo = sourceDocumentFor(load, source)) => Math.max(Number(source.qty || 0) - linkedUsageFor(load, sourceDocumentNo, source.productId), 0);
+  const historyQty = (link, item) => ['CR', 'RETUR', 'SO_RETUR'].includes(link.type)
+    ? Number(item.goodQty || 0) + Number(item.damagedQty || 0)
+    : Number(item.qty || 0);
+  const historyLinksForSource = (load, sourceDocumentNo) => (load.document_links || []).flatMap((link) => {
+    if (link.type === 'SO' && Array.isArray(link.sources)) {
+      return (link.sources || [])
+        .filter((source) => source.sourceDocumentNo === sourceDocumentNo)
+        .map((source) => ({ ...link, historyItems: source.items || [] }));
+    }
+    const linkSource = link.sourceDocumentNo || load.ref || '';
+    return linkSource === sourceDocumentNo ? [{ ...link, historyItems: link.items || [] }] : [];
+  });
   const consignmentSummary = Object.values(outboundLoads.filter((load) => ['MEMO', 'ND'].includes(load.document_type) && load.consignment_destination && load.status === 'Selesai').reduce((result, load) => {
     (load.documents || [load.ref]).forEach((sourceDocumentNo) => sourceItemsFor(load, sourceDocumentNo).forEach((item) => {
       const qty = remainingQty(load, item, sourceDocumentNo);
@@ -195,7 +207,7 @@ const Pengeluaran = () => {
       unit: item.unit,
       party: load.party || '',
       remaining: remainingQty(load, item, sourceDocumentNo),
-      qty: load.id === anchorLoad.id && sourceDocumentNo === anchorSourceDocument ? remainingQty(load, item, sourceDocumentNo) : 0,
+      qty: 0,
       isCurrent: load.id === anchorLoad.id && sourceDocumentNo === anchorSourceDocument,
     })).filter((row) => row.remaining > 0)))
     .sort((a, b) => Number(b.isCurrent) - Number(a.isCurrent) || a.sourceDocumentNo.localeCompare(b.sourceDocumentNo) || a.name.localeCompare(b.name));
@@ -205,7 +217,7 @@ const Pengeluaran = () => {
     const documents = load.documents || [load.ref];
     const sourceDocumentNo = documents[0] || '';
     if (mode === 'SO') {
-      setDocumentModal({ load, mode, documentNo: '', note: '', sources: soSourceRowsFor(load) });
+      setDocumentModal({ load, mode, documentNo: '', party: '', note: '', sources: soSourceRowsFor(load) });
       return;
     }
     setDocumentModal({ load, mode, documentNo: '', note: '', sourceDocumentNo, items: returnItemsFor(load, mode, sourceDocumentNo) });
@@ -218,6 +230,7 @@ const Pengeluaran = () => {
     setBusyId(documentModal.load.id);
     try {
       if (documentModal.mode === 'SO') {
+        if (!String(documentModal.party || '').trim()) return toast.error('Isi Penerima/Tujuan SO');
         const selected = (documentModal.sources || []).filter((row) => Number(row.qty || 0) > 0);
         if (!selected.length) return toast.error('Isi alokasi kuantum SO pada minimal satu dokumen sumber');
         const invalid = selected.find((row) => Number(row.qty || 0) > Number(row.remaining || 0) + 1e-9);
@@ -231,6 +244,7 @@ const Pengeluaran = () => {
         });
         await settleOutboundDocuments({
           documentNo: documentModal.documentNo,
+          party: String(documentModal.party || '').trim(),
           note: documentModal.note,
           sources: Object.values(grouped),
         });
@@ -533,7 +547,33 @@ const Pengeluaran = () => {
                     <td className="py-3 pr-4 text-xs min-w-[250px]">{(load.items || []).map((item, i) => <div key={i} className="text-[#aab4c4]">{item.name} · {formatNum(item.qty)} {item.unit} <span className="text-[#6b7688]">({formatNum(item.berat || 0)} {item.measureUnit || 'kg'})</span></div>)}</td>
                     <td className="py-3 pr-4 whitespace-nowrap">{load.unit_loading || '—'}</td>
                     <td className="py-3 pr-4"><span className="text-xs px-2.5 py-1 rounded-full font-medium whitespace-nowrap" style={{ background: st.bg, color: st.c }}>{load.status}</span></td>
-                    <td className="py-3 pr-4 text-xs min-w-[220px]"><div className="font-mono font-semibold text-[#93c5fd]">{load.document_type || 'SO'} · {load.ref || '—'}</div>{load.request_document && <div className="font-mono mt-1 text-[#fbbf24]">↳ Dasar: {load.request_document}</div>}{(load.document_links || []).map((link) => <div key={link.id} className="font-mono mt-1 text-[#4ade80]">↳ {link.type} · {link.no}</div>)}<div className="mt-1 text-[#6b7688]">{load.document_status || (load.status === 'Selesai' ? 'Selesai' : 'Menunggu pemuatan')} · SJ {load.surat_jalan_no || 'belum terbit'}</div>{Number(load.loading_cost?.chargeable || 0) > 0 && <div className={`mt-2 font-semibold ${load.loading_fee_payment_status === 'LUNAS' ? 'text-[#4ade80]' : load.loading_fee_payment_status === 'SEBAGIAN' ? 'text-[#fbbf24]' : 'text-[#ef4444]'}`}>Biaya muat {load.loading_fee_payment_status === 'LUNAS' ? 'sudah dibayar' : load.loading_fee_payment_status === 'SEBAGIAN' ? 'dibayar sebagian' : 'belum dibayar'} · Rp {formatNum(Math.max(Number(load.loading_cost?.chargeable || 0) - Number(load.loading_fee_payment_total || 0), 0))}</div>}{load.items?.some((item) => item.loadingFee?.mode === 'TERMASUK') ? <div className="mt-2 text-[#8b93a1]">Biaya muat sudah dibayar langsung / termasuk SO · tidak masuk rekap pembayaran Buruh/UH</div> : load.loading_cost?.total > 0 && load.loading_cost?.chargeable <= 0 ? <div className="mt-2 text-[#8b93a1]">Biaya muat tidak ditagihkan</div> : null}</td>
+                    <td className="py-3 pr-4 text-xs min-w-[260px]">
+                      <div className="font-mono font-semibold text-[#93c5fd]">{load.document_type || 'SO'} · {load.ref || '—'}</div>
+                      {load.request_document && <div className="font-mono mt-1 text-[#fbbf24]">↳ Dasar: {load.request_document}</div>}
+                      {(load.document_links || []).map((link) => <div key={link.id} className="font-mono mt-1 text-[#4ade80]">↳ {link.type} · {link.no}{link.party ? ` · ${link.party}` : ''}</div>)}
+                      {['CT', 'MEMO', 'ND'].includes(load.document_type) && <details className="mt-2 rounded-lg border border-[#263244] bg-[#0b0f17]">
+                        <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-semibold text-[#93c5fd]">History Dokumen · {(load.document_links || []).length} rangkaian</summary>
+                        <div className="border-t border-[#263244] px-3 py-2 space-y-3">
+                          {(load.documents || [load.ref]).map((sourceDocumentNo) => {
+                            const sourceItems = sourceItemsFor(load, sourceDocumentNo);
+                            const historyLinks = historyLinksForSource(load, sourceDocumentNo);
+                            return <div key={sourceDocumentNo} className="rounded-md border border-[#1d2735] p-2">
+                              <div className="font-mono font-semibold text-[#c7d2fe]">{sourceDocumentNo}</div>
+                              <div className="mt-1 space-y-1">{sourceItems.map((item) => <div key={item.productId} className="text-[10px] text-[#9aa6b7]">
+                                {item.name}: Awal <b>{formatNum(item.qty)} {item.unit}</b> · Sisa <b className="text-[#fbbf24]">{formatNum(remainingQty(load, item, sourceDocumentNo))} {item.unit}</b>
+                              </div>)}</div>
+                              {historyLinks.length > 0 ? <div className="mt-2 space-y-1 border-t border-[#1d2735] pt-2">{historyLinks.map((link, linkIndex) => <div key={`${link.id || link.no}-${linkIndex}`} className="text-[10px]">
+                                <div className="font-mono text-[#4ade80]">{link.type} · {link.no}{link.party ? ` → ${link.party}` : ''}</div>
+                                {(link.historyItems || []).map((item, itemIndex) => <div key={`${item.productId || item.name}-${itemIndex}`} className="pl-2 text-[#8b93a1]">↳ {item.name || sourceItems.find((row) => row.productId === item.productId)?.name || 'Komoditi'} · {formatNum(historyQty(link, item))} {item.unit || sourceItems.find((row) => row.productId === item.productId)?.unit || ''}</div>)}
+                              </div>)}</div> : <div className="mt-2 text-[10px] text-[#6b7688]">Belum ada SO/CR/Retur yang ditautkan.</div>}
+                            </div>;
+                          })}
+                        </div>
+                      </details>}
+                      <div className="mt-1 text-[#6b7688]">{load.document_status || (load.status === 'Selesai' ? 'Selesai' : 'Menunggu pemuatan')} · SJ {load.surat_jalan_no || 'belum terbit'}</div>
+                      {Number(load.loading_cost?.chargeable || 0) > 0 && <div className={`mt-2 font-semibold ${load.loading_fee_payment_status === 'LUNAS' ? 'text-[#4ade80]' : load.loading_fee_payment_status === 'SEBAGIAN' ? 'text-[#fbbf24]' : 'text-[#ef4444]'}`}>Biaya muat {load.loading_fee_payment_status === 'LUNAS' ? 'sudah dibayar' : load.loading_fee_payment_status === 'SEBAGIAN' ? 'dibayar sebagian' : 'belum dibayar'} · Rp {formatNum(Math.max(Number(load.loading_cost?.chargeable || 0) - Number(load.loading_fee_payment_total || 0), 0))}</div>}
+                      {load.items?.some((item) => item.loadingFee?.mode === 'TERMASUK') ? <div className="mt-2 text-[#8b93a1]">Biaya muat sudah dibayar langsung / termasuk SO · tidak masuk rekap pembayaran Buruh/UH</div> : load.loading_cost?.total > 0 && load.loading_cost?.chargeable <= 0 ? <div className="mt-2 text-[#8b93a1]">Biaya muat tidak ditagihkan</div> : null}
+                    </td>
                     <td className="py-3 pr-4"><div className="flex flex-wrap gap-2 min-w-[270px]">
                       {load.status === 'Menunggu' && canOperateOutbound && <>{isSuperadmin && <button disabled={busyId === load.id} onClick={() => openEdit(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#f59e0b] text-[#fbbf24] hover:bg-[#f59e0b]/10 disabled:opacity-50">Edit</button>}<button disabled={busyId === load.id} onClick={() => startAndPrint(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#2563eb] text-[#60a5fa] hover:bg-[#2563eb]/10 disabled:opacity-50"><Play size={13} /> Mulai Muat & Cetak Bon</button>{load.weighing_form && <button onClick={() => printWeighingForm(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#294263] text-[#93c5fd]"><Printer size={13} /> Cetak Timbangan</button>}<button disabled={busyId === load.id} onClick={() => setCancelModal({ load, documentNo: '', reason: '' })} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#ef4444] text-[#f87171] hover:bg-[#ef4444]/10 disabled:opacity-50">Batalkan</button></>}
                       {load.status === 'Sedang Dimuat' && <><button onClick={() => printBon(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#242f3d] hover:bg-[#141a24]"><Printer size={13} /> Cetak Bon</button>{load.weighing_form && <button onClick={() => printWeighingForm(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#294263] text-[#93c5fd]"><Printer size={13} /> Cetak Ulang Timbangan</button>}{canOperateOutbound && <button disabled={busyId === load.id} onClick={() => finishLoading(load)} className="btn-primary inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg disabled:opacity-50"><CheckCircle2 size={13} /> Selesai Muat</button>}</>}
@@ -594,10 +634,19 @@ const Pengeluaran = () => {
               </select>
             </div>}
 
-            <div>
+            {documentModal.mode === 'SO' ? <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm block mb-1">Nomor SO</label>
+                <input value={documentModal.documentNo} onChange={(e) => setDocumentModal({ ...documentModal, documentNo: e.target.value })} placeholder="SO/xxxx/mm/09001" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5" />
+              </div>
+              <div>
+                <label className="text-sm block mb-1">Penerima / Tujuan</label>
+                <input value={documentModal.party || ''} onChange={(e) => setDocumentModal({ ...documentModal, party: e.target.value })} placeholder="Nama penerima / tujuan SO" className="w-full bg-[#0b0f17] border border-[#294263] rounded-lg px-3 py-2.5" />
+              </div>
+            </div> : <div>
               <label className="text-sm block mb-1">Nomor Dokumen {documentModal.mode === 'SO_RETUR' ? 'Retur' : documentModal.mode}</label>
               <input value={documentModal.documentNo} onChange={(e) => setDocumentModal({ ...documentModal, documentNo: e.target.value })} placeholder={documentModal.mode === 'CR' ? 'CR/...' : isReturnMode(documentModal.mode) ? 'RT/... atau RM/...' : 'SO/xxxx/mm/09001'} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5" />
-            </div>
+            </div>}
 
             {documentModal.mode === 'SO' ? <div className="space-y-3">
               <div className="rounded-lg border border-[#1d4ed8]/40 bg-[#0b1424] px-3 py-2 text-xs text-[#93c5fd]">
