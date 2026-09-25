@@ -50,14 +50,21 @@ const TumpukanWithLotStatus = () => {
   const pendingQty = stackRows.reduce((sum, row) => sum + Number(row.pendingReturnQty || 0), 0);
 
   return <div className="space-y-5">
-    <section className="card-surface p-4 border border-[#26364c]">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <details className="card-surface border border-[#26364c] group">
+      <summary className="cursor-pointer list-none p-4 flex flex-wrap items-center justify-between gap-3 select-none">
         <div>
           <div className="label-mono text-[10px] text-[#93c5fd]">Status Lot Peta Tumpukan</div>
           <h2 className="font-display text-xl font-bold mt-1">Coverage Lot per Tumpukan</h2>
-            </div>
-        <button type="button" onClick={load} disabled={loading} className="px-3 py-2 rounded-lg border border-[#294263] text-xs inline-flex gap-2 items-center disabled:opacity-50"><RefreshCcw size={14} className={loading ? 'animate-spin' : ''} /> Perbarui status</button>
-      </div>
+        </div>
+        <div className="flex items-center gap-3 text-xs text-[#93c5fd]">
+          <span>{verified} terverifikasi · {attention.length} perlu perhatian</span>
+          <span className="text-lg transition-transform group-open:rotate-180">⌄</span>
+        </div>
+      </summary>
+      <div className="border-t border-[#26364c] p-4">
+        <div className="flex justify-end">
+          <button type="button" onClick={load} disabled={loading} className="px-3 py-2 rounded-lg border border-[#294263] text-xs inline-flex gap-2 items-center disabled:opacity-50"><RefreshCcw size={14} className={loading ? 'animate-spin' : ''} /> Perbarui status</button>
+        </div>
 
       <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
         <div className="rounded-lg bg-[#0b0f17] p-3"><div className="text-[#6b7688]">Produk/Tumpukan</div><div className="font-mono text-lg font-bold mt-1">{stackRows.length}</div></div>
@@ -67,7 +74,8 @@ const TumpukanWithLotStatus = () => {
       </div>
 
       {loading ? <div className="py-4 text-center text-xs text-[#8b93a1]">Memuat status lot...</div> : attention.length === 0 ? <div className="mt-3 rounded-lg border border-[#14532d] bg-[#14532d]/15 p-3 text-xs text-[#86efac] flex items-center gap-2"><CheckCircle2 size={15} />Semua tumpukan yang memiliki stok sudah tercakup lot terverifikasi.</div> : <div className="mt-3 overflow-x-auto"><table className="w-full text-xs tbl"><thead><tr className="text-left border-b border-[#1a222e]"><th className="py-2 pr-3">Tumpukan</th><th className="py-2 pr-3">Komoditi</th><th className="py-2 pr-3">Fisik</th><th className="py-2 pr-3">Lot</th><th className="py-2 pr-3">Untracked</th><th className="py-2 pr-3">Coverage</th><th className="py-2 pr-3">Status</th></tr></thead><tbody>{attention.slice(0, 20).map((row) => <tr key={`${row.productId}-${row.stackCode}`} className="border-b border-[#131a24]"><td className="py-2.5 pr-3 font-mono font-semibold">{row.stackCode}</td><td className="py-2.5 pr-3"><div className="font-medium">{row.product}</div><div className="font-mono text-[9px] text-[#6b7688]">{row.sku}</div></td><td className="py-2.5 pr-3 font-mono">{formatNum(row.physicalQty)} {row.unit}</td><td className="py-2.5 pr-3 font-mono">{formatNum(row.trackedQty)}</td><td className="py-2.5 pr-3 font-mono text-[#fbbf24]">{formatNum(row.untrackedQty)}</td><td className="py-2.5 pr-3 font-mono">{Number(row.coveragePct || 0).toFixed(1)}%</td><td className="py-2.5 pr-3"><span className={`inline-flex items-center gap-1 border rounded-full px-2 py-0.5 text-[9px] ${badgeClass(row.coverageStatus)}`}><AlertTriangle size={10} />{badgeLabel(row.coverageStatus)}</span>{Number(row.pendingReturnQty || 0) > 0 && <div className="text-[9px] text-[#fca5a5] mt-1">Retur {formatNum(row.pendingReturnQty)} {row.unit}</div>}</td></tr>)}</tbody></table>{attention.length > 20 && <div className="text-[10px] text-[#6b7688] mt-2">Menampilkan 20 baris prioritas dari {attention.length}. Detail lengkap tersedia di Lot & FEFO.</div>}</div>}
-    </section>
+      </div>
+    </details>
 
     <TumpukanStok />
   </div>;
