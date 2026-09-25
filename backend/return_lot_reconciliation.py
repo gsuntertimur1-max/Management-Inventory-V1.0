@@ -79,7 +79,7 @@ async def list_pending_return_lot_reconciliations(user: dict = Depends(require_a
     return result
 
 
-@router.post("/return-lot-reconciliations/{movement_id}")
+@router.post("/return-lot-reconciliations/{movement_id:path}")
 async def reconcile_return_lot(
     movement_id: str,
     body: ReturnLotReconcileInput,
