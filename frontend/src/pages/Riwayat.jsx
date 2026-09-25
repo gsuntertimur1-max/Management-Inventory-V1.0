@@ -367,15 +367,39 @@ const Riwayat = () => {
     const key = recipient === 'BURUH' ? 'labor' : 'daily';
     const title = recipient === 'BURUH' ? 'REKAP UPAH BURUH PEMUATAN' : 'REKAP UH GUDANG PEMUATAN';
     const items = (day.items || []).filter((item) => item.crewGroup === group && Number(item.fee?.[key] || 0) > 0);
-    const rows = items.map((item, index) => {
-      const status = item.fee?.workStatus || item.work?.workStatus || (item.fee?.overtime ? 'LEMBUR_PENUH' : 'NORMAL');
-      const split = `Normal ${formatNum(item.fee?.regularQty ?? item.work?.regularQty ?? item.qty)} ${item.unit} · Lembur ${formatNum(item.fee?.overtimeQty ?? item.work?.overtimeQty ?? 0)} ${item.unit}`;
-      return `<tr><td>${index + 1}</td><td><b>${escapeHtml(item.product)}</b><br/><small>${escapeHtml(item.documentNo || item.bonNo || '—')} · ${escapeHtml(formatNum(item.qty))} ${escapeHtml(item.unit)} · ${escapeHtml(item.stackCode || '—')} · ${escapeHtml(status.replaceAll('_', ' '))}<br/>${escapeHtml(split)}${item.fee?.holiday ? ' · Hari Libur' : ''}</small></td><td class="r">Rp ${escapeHtml(formatNum(item.fee?.[key] || 0))}</td></tr>`;
+
+    const commodityRows = Object.values(items.reduce((result, item) => {
+      const product = item.product || 'Komoditi';
+      const unit = item.unit || '';
+      const rowKey = `${product}|${unit}`;
+      const fee = item.fee || {};
+      if (!result[rowKey]) {
+        result[rowKey] = {
+          product,
+          unit,
+          qty: 0,
+          regularQty: 0,
+          overtimeQty: 0,
+          amount: 0,
+          holiday: false,
+        };
+      }
+      result[rowKey].qty += Number(item.qty || 0);
+      result[rowKey].regularQty += Number(fee.regularQty ?? item.work?.regularQty ?? item.qty ?? 0);
+      result[rowKey].overtimeQty += Number(fee.overtimeQty ?? item.work?.overtimeQty ?? 0);
+      result[rowKey].amount += Number(fee[key] || 0);
+      result[rowKey].holiday = result[rowKey].holiday || Boolean(fee.holiday);
+      return result;
+    }, {})).sort((a, b) => String(a.product).localeCompare(String(b.product), 'id'));
+
+    const rows = commodityRows.map((item, index) => {
+      const split = `Total ${formatNum(item.qty)} ${item.unit} · Normal ${formatNum(item.regularQty)} ${item.unit} · Lembur ${formatNum(item.overtimeQty)} ${item.unit}`;
+      return `<tr><td>${index + 1}</td><td><b>${escapeHtml(item.product)}</b><br/><small>${escapeHtml(split)}${item.holiday ? ' · Hari Libur' : ''}</small></td><td class="r">Rp ${escapeHtml(formatNum(item.amount))}</td></tr>`;
     }).join('');
-    const totalAmount = items.reduce((sum, item) => sum + Number(item.fee?.[key] || 0), 0);
+    const totalAmount = commodityRows.reduce((sum, item) => sum + Number(item.amount || 0), 0);
     const w = window.open('', '_blank', 'width=460,height=720');
     if (!w) return toast.error('Izinkan popup untuk mencetak rekap thermal.');
-    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>@page{size:80mm auto;margin:3mm}*{box-sizing:border-box}body{width:74mm;margin:0 auto;color:#000;font:12px/1.35 Arial,sans-serif}.center{text-align:center}.title{font-size:15px;font-weight:900;margin:6px 0}.sub{font-size:10px;margin-bottom:8px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border-bottom:1px dashed #000;padding:6px 2px;text-align:left;vertical-align:top}.r{text-align:right;font-weight:700}.total{font-size:17px;font-weight:900;margin:12px 0}.line{border-top:1px solid #000;margin-top:38px;padding-top:5px;text-align:center;font-size:11px;font-weight:700}small{font-size:9px}</style></head><body><div class="center"><b>PERUM BULOG</b><div>Gudang Sunter Timur I & II</div><div class="title">${title}</div><div class="sub">${escapeHtml(displayGroup)}<br/>Tanggal: ${escapeHtml(day.date)}</div></div><table><thead><tr><th>No</th><th>Pemuatan</th><th class="r">Biaya</th></tr></thead><tbody>${rows || '<tr><td colspan="3">Tidak ada biaya</td></tr>'}</tbody></table><div class="total">TOTAL: Rp ${escapeHtml(formatNum(totalAmount))}</div><div class="line">Petugas Gudang</div><div class="line">Penerima ${recipient === 'BURUH' ? 'Buruh' : 'UH Gudang'}</div><script>window.onload=()=>window.print()</script></body></html>`);
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>@page{size:80mm auto;margin:3mm}*{box-sizing:border-box}body{width:74mm;margin:0 auto;color:#000;font:12px/1.35 Arial,sans-serif}.center{text-align:center}.title{font-size:15px;font-weight:900;margin:6px 0}.sub{font-size:10px;margin-bottom:8px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border-bottom:1px dashed #000;padding:6px 2px;text-align:left;vertical-align:top}.r{text-align:right;font-weight:700}.total{font-size:17px;font-weight:900;margin:12px 0}.line{border-top:1px solid #000;margin-top:38px;padding-top:5px;text-align:center;font-size:11px;font-weight:700}small{font-size:9px}</style></head><body><div class="center"><b>PERUM BULOG</b><div>Gudang Sunter Timur I & II</div><div class="title">${title}</div><div class="sub">${escapeHtml(displayGroup)}<br/>Tanggal: ${escapeHtml(day.date)}</div></div><table><thead><tr><th>No</th><th>Komoditi</th><th class="r">Biaya</th></tr></thead><tbody>${rows || '<tr><td colspan="3">Tidak ada biaya</td></tr>'}</tbody></table><div class="total">TOTAL: Rp ${escapeHtml(formatNum(totalAmount))}</div><div class="line">Petugas Gudang</div><div class="line">Penerima ${recipient === 'BURUH' ? 'Buruh' : 'UH Gudang'}</div><script>window.onload=()=>window.print()</script></body></html>`);
     w.document.close();
   };
 
@@ -383,16 +407,42 @@ const Riwayat = () => {
     const key = recipient === 'BURUH' ? 'labor' : 'daily';
     const title = recipient === 'BURUH' ? 'REKAP UPAH BURUH BONGKAR' : 'REKAP UH GUDANG BONGKAR';
     const items = (day.items || []).filter((item) => item.unloading_group === group && Number(item.unloading_cost?.[key] || 0) > 0);
-    const rows = items.map((item, index) => {
+
+    const commodityRows = Object.values(items.reduce((result, item) => {
+      const product = item.product || 'Komoditi';
       const fee = item.unloading_cost || {};
-      const status = fee.workStatus || item.unloading_work?.workStatus || (fee.overtime ? 'LEMBUR_PENUH' : 'NORMAL');
-      const split = `Normal ${formatNum(fee.regularQty ?? item.unloading_work?.regularQty ?? Math.abs(Number(item.change || 0)))} ${item.unit || ''} · Lembur ${formatNum(fee.overtimeQty ?? item.unloading_work?.overtimeQty ?? 0)} ${item.unit || ''}`;
-      return `<tr><td>${index + 1}</td><td><b>${escapeHtml(item.product)}</b><br/><small>${escapeHtml(item.ref || item.po_no || '—')} · ${escapeHtml(status.replaceAll('_', ' '))}<br/>${escapeHtml(split)}${fee.holiday ? ' · Hari Libur' : ''}</small></td><td class="r">Rp ${escapeHtml(formatNum(fee[key] || 0))}</td></tr>`;
+      const unit = item.unloading_cost_basis_unit || item.unit || '';
+      const basisQty = Number(item.unloading_cost_basis_qty || 0)
+        || Number(fee.regularQty || 0) + Number(fee.overtimeQty || 0)
+        || Math.abs(Number(item.change || 0));
+      const rowKey = `${product}|${unit}`;
+      if (!result[rowKey]) {
+        result[rowKey] = {
+          product,
+          unit,
+          qty: 0,
+          regularQty: 0,
+          overtimeQty: 0,
+          amount: 0,
+          holiday: false,
+        };
+      }
+      result[rowKey].qty += basisQty;
+      result[rowKey].regularQty += Number(fee.regularQty ?? item.unloading_work?.regularQty ?? basisQty);
+      result[rowKey].overtimeQty += Number(fee.overtimeQty ?? item.unloading_work?.overtimeQty ?? 0);
+      result[rowKey].amount += Number(fee[key] || 0);
+      result[rowKey].holiday = result[rowKey].holiday || Boolean(fee.holiday);
+      return result;
+    }, {})).sort((a, b) => String(a.product).localeCompare(String(b.product), 'id'));
+
+    const rows = commodityRows.map((item, index) => {
+      const split = `Total ${formatNum(item.qty)} ${item.unit} · Normal ${formatNum(item.regularQty)} ${item.unit} · Lembur ${formatNum(item.overtimeQty)} ${item.unit}`;
+      return `<tr><td>${index + 1}</td><td><b>${escapeHtml(item.product)}</b><br/><small>${escapeHtml(split)}${item.holiday ? ' · Hari Libur' : ''}</small></td><td class="r">Rp ${escapeHtml(formatNum(item.amount))}</td></tr>`;
     }).join('');
-    const totalAmount = items.reduce((sum, item) => sum + Number(item.unloading_cost?.[key] || 0), 0);
+    const totalAmount = commodityRows.reduce((sum, item) => sum + Number(item.amount || 0), 0);
     const w = window.open('', '_blank', 'width=460,height=720');
     if (!w) return toast.error('Izinkan popup untuk mencetak rekap thermal.');
-    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>@page{size:80mm auto;margin:3mm}*{box-sizing:border-box}body{width:74mm;margin:0 auto;color:#000;font:12px/1.35 Arial,sans-serif}.center{text-align:center}.title{font-size:15px;font-weight:900;margin:6px 0}.sub{font-size:10px;margin-bottom:8px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border-bottom:1px dashed #000;padding:6px 2px;text-align:left;vertical-align:top}.r{text-align:right;font-weight:700}.total{font-size:17px;font-weight:900;margin:12px 0}.line{border-top:1px solid #000;margin-top:38px;padding-top:5px;text-align:center;font-size:11px;font-weight:700}small{font-size:9px}</style></head><body><div class="center"><b>PERUM BULOG</b><div>Gudang Sunter Timur I & II</div><div class="title">${title}</div><div class="sub">${escapeHtml(displayGroup)}<br/>Tanggal: ${escapeHtml(day.date)}</div></div><table><thead><tr><th>No</th><th>Penerimaan</th><th class="r">Biaya</th></tr></thead><tbody>${rows || '<tr><td colspan="3">Tidak ada biaya</td></tr>'}</tbody></table><div class="total">TOTAL: Rp ${escapeHtml(formatNum(totalAmount))}</div><div class="line">Petugas Gudang</div><div class="line">Penerima ${recipient === 'BURUH' ? 'Buruh' : 'UH Gudang'}</div><script>window.onload=()=>window.print()</script></body></html>`);
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>@page{size:80mm auto;margin:3mm}*{box-sizing:border-box}body{width:74mm;margin:0 auto;color:#000;font:12px/1.35 Arial,sans-serif}.center{text-align:center}.title{font-size:15px;font-weight:900;margin:6px 0}.sub{font-size:10px;margin-bottom:8px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border-bottom:1px dashed #000;padding:6px 2px;text-align:left;vertical-align:top}.r{text-align:right;font-weight:700}.total{font-size:17px;font-weight:900;margin:12px 0}.line{border-top:1px solid #000;margin-top:38px;padding-top:5px;text-align:center;font-size:11px;font-weight:700}small{font-size:9px}</style></head><body><div class="center"><b>PERUM BULOG</b><div>Gudang Sunter Timur I & II</div><div class="title">${title}</div><div class="sub">${escapeHtml(displayGroup)}<br/>Tanggal: ${escapeHtml(day.date)}</div></div><table><thead><tr><th>No</th><th>Komoditi</th><th class="r">Biaya</th></tr></thead><tbody>${rows || '<tr><td colspan="3">Tidak ada biaya</td></tr>'}</tbody></table><div class="total">TOTAL: Rp ${escapeHtml(formatNum(totalAmount))}</div><div class="line">Petugas Gudang</div><div class="line">Penerima ${recipient === 'BURUH' ? 'Buruh' : 'UH Gudang'}</div><script>window.onload=()=>window.print()</script></body></html>`);
     w.document.close();
   };
 
