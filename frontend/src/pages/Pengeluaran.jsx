@@ -549,6 +549,7 @@ const Pengeluaran = () => {
                     <td className="py-3 pr-4"><span className="text-xs px-2.5 py-1 rounded-full font-medium whitespace-nowrap" style={{ background: st.bg, color: st.c }}>{load.status}</span></td>
                     <td className="py-3 pr-4 text-xs min-w-[260px]">
                       <div className="font-mono font-semibold text-[#93c5fd]">{load.document_type || 'SO'} · {load.ref || '—'}</div>
+                      {load.document_type === 'SO' && Object.entries(load.so_document_parties || {}).map(([doc, recipient]) => <div key={doc} className="font-mono mt-1 text-[#c7d2fe]">↳ {doc} → {recipient || '—'}</div>)}
                       {load.request_document && <div className="font-mono mt-1 text-[#fbbf24]">↳ Dasar: {load.request_document}</div>}
                       {(load.document_links || []).map((link) => <div key={link.id} className="font-mono mt-1 text-[#4ade80]">↳ {link.type} · {link.no}{link.party ? ` · ${link.party}` : ''}</div>)}
                       {['CT', 'MEMO', 'ND'].includes(load.document_type) && <details className="mt-2 rounded-lg border border-[#263244] bg-[#0b0f17]">
