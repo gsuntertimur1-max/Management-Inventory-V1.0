@@ -31,8 +31,73 @@ const timeMinutes = (value) => {
   return Number(match[1]) * 60 + Number(match[2]);
 };
 
+const normalizeSuggestionText = (value) => String(value || '').trim().replace(/\s+/g, ' ');
+
+const uniqueSuggestionValues = (values) => {
+  const seen = new Set();
+  const result = [];
+  values.flat(Infinity).forEach((value) => {
+    const text = normalizeSuggestionText(value);
+    if (!text) return;
+    const key = text.toLocaleUpperCase('id');
+    if (seen.has(key)) return;
+    seen.add(key);
+    result.push(text);
+  });
+  return result;
+};
+
+const AutoSuggestInput = ({ value, onChange, suggestions = [], placeholder = '', className = '' }) => {
+  const [open, setOpen] = useState(false);
+  const query = normalizeSuggestionText(value).toLocaleUpperCase('id');
+
+  const matches = useMemo(() => suggestions
+    .map((item, index) => {
+      const text = normalizeSuggestionText(item);
+      const key = text.toLocaleUpperCase('id');
+      return {
+        text,
+        index,
+        starts: query ? key.startsWith(query) : false,
+        contains: query ? key.includes(query) : true,
+      };
+    })
+    .filter((item) => item.text && item.contains)
+    .sort((a, b) => Number(b.starts) - Number(a.starts) || a.index - b.index)
+    .slice(0, 8), [query, suggestions]);
+
+  return (
+    <div className="relative">
+      <input
+        value={value}
+        onChange={(e) => { onChange(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => window.setTimeout(() => setOpen(false), 120)}
+        autoComplete="off"
+        placeholder={placeholder}
+        className={className}
+      />
+      {open && matches.length > 0 && (
+        <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-56 overflow-y-auto rounded-lg border border-[#294263] bg-[#0b0f17] shadow-xl">
+          {matches.map((item) => (
+            <button
+              key={item.text.toLocaleUpperCase('id')}
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => { onChange(item.text); setOpen(false); }}
+              className="block w-full px-3 py-2.5 text-left text-sm hover:bg-[#142238] focus:bg-[#142238] focus:outline-none"
+            >
+              {item.text}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const CatatStok = ({ panel = '' }) => {
-  const { products, suppliers, purchaseOrders, settings, stackAllocations, transactions, supplierReturns, addReceipt, createOutboundLoad, recordStockDamage, createSupplierReturn, receiveSupplierReplacement, canInbound, canOutbound } = useData();
+  const { products, suppliers, purchaseOrders, settings, stackAllocations, transactions, outboundLoads, supplierReturns, addReceipt, createOutboundLoad, recordStockDamage, createSupplierReturn, receiveSupplierReplacement, canInbound, canOutbound } = useData();
   const STACKS = stackCodes(settings?.warehouses);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -69,6 +134,29 @@ const CatatStok = ({ panel = '' }) => {
   const [fefoGuides, setFefoGuides] = useState({});
   const [soBalances, setSoBalances] = useState({});
   const [inboundReservations, setInboundReservations] = useState({});
+
+  const historyRows = useMemo(() => [
+    ...(outboundLoads || []),
+    ...(transactions || []),
+  ].sort((a, b) => String(b.completed_at || b.time || b.created_at || '').localeCompare(String(a.completed_at || a.time || a.created_at || ''))), [outboundLoads, transactions]);
+
+  const plateSuggestions = useMemo(
+    () => uniqueSuggestionValues(historyRows.map((row) => row.polisi)),
+    [historyRows],
+  );
+  const driverSuggestions = useMemo(
+    () => uniqueSuggestionValues(historyRows.map((row) => row.pengambil || row.driver)),
+    [historyRows],
+  );
+  const recipientSuggestions = useMemo(
+    () => uniqueSuggestionValues(historyRows.flatMap((row) => [
+      row.penerima,
+      row.party,
+      row.document_parties && typeof row.document_parties === 'object' ? Object.values(row.document_parties) : [],
+      row.so_document_parties && typeof row.so_document_parties === 'object' ? Object.values(row.so_document_parties) : [],
+    ])),
+    [historyRows],
+  );
 
   useEffect(() => {
     if (activePanel === 'damage' && !damageForm) setDamageForm({ productId: '', stackCode: '', qty: '', channel: 'KOM', cause: '', note: '', referenceNo: '' });
@@ -712,7 +800,7 @@ const CatatStok = ({ panel = '' }) => {
                 </div>
                 {documentRefs.map((doc, index) => <div key={index} className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2 mt-2">
                   <input value={doc} onChange={(e) => { const next = [...documentRefs]; next[index] = e.target.value; setDocumentRefs(next); }} placeholder={documentType === 'SO' ? 'SO/xxxx/mm/09001' : `${documentType}/...`} className="min-w-0 flex-1 bg-[#0b0f17] border border-[#59431f] rounded-lg px-3 py-2.5 text-sm" />
-                  <input value={documentParties[index] || ''} onChange={(e) => { const next = [...documentParties]; next[index] = e.target.value; setDocumentParties(next); }} placeholder={`Penerima / Tujuan ${documentType} ini`} className="min-w-0 bg-[#0b0f17] border border-[#294263] rounded-lg px-3 py-2.5 text-sm" />
+                  <AutoSuggestInput value={documentParties[index] || ''} onChange={(value) => { const next = [...documentParties]; next[index] = value; setDocumentParties(next); }} suggestions={recipientSuggestions} placeholder={`Penerima / Tujuan ${documentType} ini`} className="w-full min-w-0 bg-[#0b0f17] border border-[#294263] rounded-lg px-3 py-2.5 text-sm" />
                   {documentRefs.length > 1 && <button type="button" onClick={() => { const removed = doc.trim(); setDocumentRefs((prev) => prev.filter((_, i) => i !== index)); setDocumentParties((prev) => prev.filter((_, i) => i !== index)); if (removed) setRows((prev) => prev.map((row) => row.documentNo === removed ? { ...row, documentNo: '' } : row)); }} className="px-3 rounded-lg border border-[#59431f] text-[#f59e0b]">×</button>}
                 </div>)}
                 <p className="text-[11px] text-[#a99675] mt-2">Setiap nomor {documentType} memiliki Penerima/Tujuan sendiri. Bila ada lebih dari satu dokumen dalam satu kendaraan, tujuan boleh berbeda dan setiap dokumen harus memiliki minimal satu komoditas.</p>
@@ -840,9 +928,9 @@ const CatatStok = ({ panel = '' }) => {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {type === 'MASUK' && <div><label className="text-sm font-medium mb-1.5 block">Supplier Pengirim</label><select value={party} disabled={Boolean(selectedPO)} onChange={(e) => setParty(e.target.value)} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm"><option value="">Pilih supplier...</option>{suppliers.map((supplier) => <option key={supplier.id}>{supplier.name}</option>)}</select></div>}
             <div><label className="text-sm font-medium mb-1.5 block">{type === 'MASUK' ? 'No. Referensi' : 'Dokumen Utama'}</label><input value={type === 'KELUAR' ? (documentRefs.filter(Boolean).join(', ') || 'Diisi pada daftar dokumen di atas') : ref} readOnly={type === 'KELUAR' || Boolean(selectedPO)} onChange={(e) => setRef(e.target.value)} placeholder="DO / BAST / referensi lain" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm read-only:opacity-70" /></div>
-            <div><label className="text-sm font-medium mb-1.5 block">Nomor Plat Kendaraan</label><input value={polisi} onChange={(e) => setPolisi(e.target.value)} placeholder="B 1441 PQF" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm" /></div>
+            <div><label className="text-sm font-medium mb-1.5 block">Nomor Plat Kendaraan</label><AutoSuggestInput value={polisi} onChange={setPolisi} suggestions={plateSuggestions} placeholder="B 1441 PQF" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm" /></div>
             {type === 'KELUAR' ? (
-              <div><label className="text-sm font-medium mb-1.5 block">Nama Pengambil / Sopir</label><input value={pengambil} onChange={(e) => setPengambil(e.target.value)} placeholder="Contoh: KOYUM" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm" /></div>
+              <div><label className="text-sm font-medium mb-1.5 block">Nama Pengambil / Sopir</label><AutoSuggestInput value={pengambil} onChange={setPengambil} suggestions={driverSuggestions} placeholder="Contoh: KOYUM" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm" /></div>
             ) : <div className="rounded-lg border border-[#1f3657] bg-[#0d1728] px-3 py-2.5 text-xs text-[#8fb8ef]">{selectedPO ? <>Kuantum pada form ini adalah <b>rencana per kendaraan</b>. Baik/Rusak diisi saat Selesai Bongkar.</> : <>Isi kuantum <b>Baik</b> dan <b>Rusak</b> pada setiap komoditas.</>}</div>}
             {type === 'KELUAR' && <div><label className="text-sm font-medium mb-1.5 block">Kondisi Barang</label><select value={kondisi} onChange={(e) => { const next = e.target.value; setKondisi(next); if (next === 'RUSAK') setRows((prev) => prev.map((row) => ({ ...row, stackCode: '' }))); }} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm"><option value="BAIK">Baik (Good)</option><option value="RUSAK">Rusak (Damage)</option></select>{kondisi === 'RUSAK' && <p className="text-[10px] text-[#fca5a5] mt-1">Sumber fisik otomatis: {DAMAGED_AREA} · antrean R-xxx.</p>}</div>}
           </div>
