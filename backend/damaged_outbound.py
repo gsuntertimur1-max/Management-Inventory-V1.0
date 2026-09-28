@@ -20,6 +20,9 @@ from backend.server import (
 from backend.outbound_flow import (
     OutboundCreateInput,
     _loading_fee,
+    _doc_key,
+    _prepare_so_documents,
+    _persist_so_documents,
     _reserved_qty,
     _validate_pack_qty,
     _weighing_entries,
@@ -55,7 +58,7 @@ async def create_damaged_outbound_load(body: OutboundCreateInput, user: dict) ->
 
     refs: list[str] = []
     for candidate in [body.ref, *body.documents]:
-        value = str(candidate or "").strip()
+        value = _doc_key(candidate)
         if value and value not in refs:
             refs.append(value)
     if not refs:
@@ -70,7 +73,7 @@ async def create_damaged_outbound_load(body: OutboundCreateInput, user: dict) ->
     if body.consignmentDestination and body.consignmentDestination not in {"Gudang Bazar", "Gudang E-commerce"}:
         raise HTTPException(status_code=400, detail="Tujuan konsinyasi tidak valid")
 
-    item_document_refs = [str(item.documentNo or "").strip() for item in body.items]
+    item_document_refs = [_doc_key(item.documentNo) for item in body.items]
     if len(refs) > 1:
         if any(not item_ref for item_ref in item_document_refs):
             raise HTTPException(status_code=400, detail="Pilih nomor dokumen pada setiap komoditas untuk pemuatan multi-dokumen")
@@ -82,10 +85,6 @@ async def create_damaged_outbound_load(body: OutboundCreateInput, user: dict) ->
             raise HTTPException(status_code=400, detail=f"Dokumen belum memiliki komoditas: {', '.join(unassigned_refs)}")
     elif any(item_ref and item_ref not in refs for item_ref in item_document_refs):
         raise HTTPException(status_code=400, detail="Dokumen komoditas belum didaftarkan")
-
-    for ref in refs:
-        if await db.outbound_loads.find_one({"$or": [{"ref": ref}, {"documents": ref}, {"document_links.no": ref}]}):
-            raise HTTPException(status_code=409, detail=f"Nomor dokumen {ref} sudah digunakan")
 
     requested: dict[str, float] = defaultdict(float)
     item_order: list[str] = []
@@ -126,6 +125,13 @@ async def create_damaged_outbound_load(body: OutboundCreateInput, user: dict) ->
         if qty > available + 1e-9:
             raise HTTPException(status_code=400, detail=f"Stok rusak {channel} untuk {product.get('name', 'produk')} tidak mencukupi. Tersedia {available:g} {product.get('unit', '')}")
 
+    documents, progress = await _prepare_so_documents(
+        refs=refs, body_items=body.items, products=products,
+        party=party, document_parties=body.documentParties,
+    )
+    document_parties = {doc["documentNo"]: doc["party"] for doc in documents}
+    party = " / ".join(dict.fromkeys(document_parties.values()))
+
     damaged_location = await get_operational_location(DAMAGED_AREA, "outbound")
     damaged_crew_group = ""
     if bool(damaged_location.get("loadingCostEnabled", False)):
@@ -134,7 +140,7 @@ async def create_damaged_outbound_load(body: OutboundCreateInput, user: dict) ->
     load_items = []
     for item in body.items:
         product = products[item.productId]
-        item_ref = item.documentNo.strip() or refs[0]
+        item_ref = _doc_key(item.documentNo) or refs[0]
         if item_ref not in refs:
             raise HTTPException(status_code=400, detail=f"Dokumen komoditas {item_ref} belum didaftarkan")
         qty = float(item.qty)
@@ -147,6 +153,7 @@ async def create_damaged_outbound_load(body: OutboundCreateInput, user: dict) ->
             "name": product.get("name", ""),
             "channel": channel,
             "qty": qty,
+            "documentQty": next(row["orderedQty"] for row in progress[item_ref] if row["productId"] == item.productId),
             "unit": product.get("unit", ""),
             "weight": weight,
             "measureUnit": product.get("measureUnit", "kg") or "kg",
@@ -203,6 +210,10 @@ async def create_damaged_outbound_load(body: OutboundCreateInput, user: dict) ->
         "gross_min": float(body.grossMin) if body.weighingForm else 0,
         "gross_max": float(body.grossMax) if body.weighingForm else 0,
         "weighing_entries": _weighing_entries(float(body.grossWeight), float(body.grossMin), float(body.grossMax)) if body.weighingForm else [],
+        "document_progress": progress,
+        "document_parties": document_parties,
+        "so_document_progress": progress if body.documentType == "SO" else {},
+        "so_document_parties": document_parties if body.documentType == "SO" else {},
         "document_links": [],
         "document_status": "Menunggu Pemuatan",
         "loading_cost": loading_cost,
@@ -220,6 +231,11 @@ async def create_damaged_outbound_load(body: OutboundCreateInput, user: dict) ->
         "surat_jalan_no": "",
     }
     await db.outbound_loads.insert_one(dict(doc))
+    try:
+        await _persist_so_documents(documents, user.get("name", ""))
+    except Exception:
+        await db.outbound_loads.delete_one({"id": doc["id"]})
+        raise
     return doc
 
 

@@ -202,7 +202,7 @@ const CatatStok = ({ panel = '' }) => {
     const product = products.find((item) => item.id === next.productId);
     const qty = quantityFromInput(next.inputValue, next.inputMode, product);
     const updated = { ...next, qty };
-    if (type === 'KELUAR' && documentType === 'SO' && next.soTakeMode === 'ALL') {
+    if (type === 'KELUAR' && ['SO', 'TM', 'ND', 'MEMO', 'CT'].includes(documentType) && next.soTakeMode === 'ALL') {
       const documentNo = String(next.documentNo || documentRefs[0] || '').trim().toUpperCase();
       const master = (soBalances[documentNo]?.items || []).find((item) => item.productId === next.productId);
       if (!master) updated.documentQty = qty;
@@ -260,7 +260,7 @@ const CatatStok = ({ panel = '' }) => {
   const outboundRefsKey = documentRefs.map((item) => item.trim()).join('|');
   const sourceDocumentForRow = (row) => String(row.documentNo || outboundDocumentRefs[0] || '').trim().toUpperCase();
   const soMasterItemFor = (row) => {
-    if (documentType !== 'SO' || !row?.productId) return null;
+    if (!['SO', 'TM', 'ND', 'MEMO', 'CT'].includes(documentType) || !row?.productId) return null;
     const balance = soBalances[sourceDocumentForRow(row)];
     return (balance?.items || []).find((item) => item.productId === row.productId) || null;
   };
@@ -283,16 +283,16 @@ const CatatStok = ({ panel = '' }) => {
     const target = rows[index];
     if (!target?.productId) return toast.error('Pilih produk terlebih dahulu');
     const documentNo = sourceDocumentForRow(target);
-    if (!documentNo) return toast.error('Isi nomor SO terlebih dahulu');
+    if (!documentNo) return toast.error('Isi nomor dokumen terlebih dahulu');
     const duplicates = rows.filter((row) => row.productId === target.productId && sourceDocumentForRow(row) === documentNo).length;
     if (mode === 'ALL' && duplicates > 1) {
-      return toast.error('Ambil Semua hanya dapat digunakan bila komoditi SO berada pada satu baris. Untuk multi-tumpukan gunakan Ambil Sebagian.');
+      return toast.error('Ambil Semua hanya dapat digunakan bila komoditi dokumen berada pada satu baris. Untuk multi-tumpukan gunakan Ambil Sebagian.');
     }
     const product = products.find((item) => item.id === target.productId);
     const master = soMasterItemFor(target);
     if (mode === 'ALL' && master) {
       const qty = Number(master.remainingQty || 0);
-      if (qty <= 0) return toast.error('SO ini tidak memiliki sisa yang dapat dijadwalkan');
+      if (qty <= 0) return toast.error('Dokumen ini tidak memiliki sisa yang dapat dijadwalkan');
       const inputValue = target.inputMode === 'WEIGHT' ? totalWeight(qty, product) : qty;
       setRow(index, { soTakeMode: 'ALL', qty, inputValue });
       return;
@@ -306,11 +306,11 @@ const CatatStok = ({ panel = '' }) => {
   };
 
   useEffect(() => {
-    if (type !== 'KELUAR' || documentType !== 'SO') {
+    if (type !== 'KELUAR' || !['SO', 'TM', 'ND', 'MEMO', 'CT'].includes(documentType)) {
       setSoBalances({});
       return undefined;
     }
-    const refs = outboundRefsKey.split('|').map((item) => item.trim()).filter((item) => item.toUpperCase().startsWith('SO/'));
+    const refs = outboundRefsKey.split('|').map((item) => item.trim()).filter((item) => item.toUpperCase().startsWith(documentType === 'SO' ? 'SO/' : documentType));
     if (!refs.length) {
       setSoBalances({});
       return undefined;
@@ -344,7 +344,7 @@ const CatatStok = ({ panel = '' }) => {
   }, [type, documentType, outboundRefsKey]);
 
   useEffect(() => {
-    if (type !== 'KELUAR' || documentType !== 'SO') return;
+    if (type !== 'KELUAR' || !['SO', 'TM', 'ND', 'MEMO', 'CT'].includes(documentType)) return;
     setRows((prev) => {
       let changed = false;
       const next = prev.map((row) => {
@@ -505,7 +505,7 @@ const CatatStok = ({ panel = '' }) => {
         return;
       }
     }
-    if (type === 'KELUAR' && documentType === 'SO') {
+    if (type === 'KELUAR' && ['SO', 'TM', 'ND', 'MEMO', 'CT'].includes(documentType)) {
       const grouped = {};
       for (const row of chosen) {
         const doc = sourceDocumentForRow(row);
@@ -518,7 +518,7 @@ const CatatStok = ({ panel = '' }) => {
         const masterItem = (balance?.items || []).find((item) => item.productId === group.productId);
         const total = Number(masterItem?.orderedQty ?? soTotalFor(group.row) ?? 0);
         if (total <= 0) {
-          toast.error(`Isi Kuantum SO total untuk ${group.name} pada ${group.doc}`);
+          toast.error(`Isi Kuantum dokumen total untuk ${group.name} pada ${group.doc}`);
           return;
         }
         if (masterItem && group.qty > Number(masterItem.remainingQty || 0) + 1e-9) {
@@ -627,7 +627,7 @@ const CatatStok = ({ panel = '' }) => {
           .filter(([doc, recipient]) => doc && recipient));
         const outboundParty = [...new Set(Object.values(documentPartyMap))].join(' / ');
         const load = await createOutboundLoad({
-          items: chosen.map((row) => ({ productId: row.productId, qty: Number(row.qty), documentNo: row.documentNo || documentRefs[0], documentQty: documentType === 'SO' ? soTotalFor(row) : 0, stackCode: kondisi === 'RUSAK' ? '' : (row.stackCode || ''), channel: row.channel || row.product.channel || 'KOM', fefoExceptionReason: kondisi === 'BAIK' ? String(row.fefoExceptionReason || '').trim() : '' })),
+          items: chosen.map((row) => ({ productId: row.productId, qty: Number(row.qty), documentNo: row.documentNo || documentRefs[0], documentQty: soTotalFor(row), stackCode: kondisi === 'RUSAK' ? '' : (row.stackCode || ''), channel: row.channel || row.product.channel || 'KOM', fefoExceptionReason: kondisi === 'BAIK' ? String(row.fefoExceptionReason || '').trim() : '' })),
           party: outboundParty,
           documentParties: documentPartyMap,
           ref: documentRefs[0],
@@ -716,7 +716,7 @@ const CatatStok = ({ panel = '' }) => {
                   {documentRefs.length > 1 && <button type="button" onClick={() => { const removed = doc.trim(); setDocumentRefs((prev) => prev.filter((_, i) => i !== index)); setDocumentParties((prev) => prev.filter((_, i) => i !== index)); if (removed) setRows((prev) => prev.map((row) => row.documentNo === removed ? { ...row, documentNo: '' } : row)); }} className="px-3 rounded-lg border border-[#59431f] text-[#f59e0b]">×</button>}
                 </div>)}
                 <p className="text-[11px] text-[#a99675] mt-2">Setiap nomor {documentType} memiliki Penerima/Tujuan sendiri. Bila ada lebih dari satu dokumen dalam satu kendaraan, tujuan boleh berbeda dan setiap dokumen harus memiliki minimal satu komoditas.</p>
-                {documentType === 'SO' && outboundDocumentRefs.map((doc) => { const balance = soBalances[doc.toUpperCase()]; if (!balance?.exists) return null; return <div key={doc} className="mt-2 rounded-lg border border-[#1f3657] bg-[#0d1728] px-3 py-2 text-[11px] text-[#93c5fd]"><b>{balance.documentNo}</b> · Penerima {balance.party || '—'} · Status {String(balance.status || '').replaceAll('_', ' ')}{(balance.items || []).map((item) => <div key={item.productId} className="mt-1 text-[#8fb8ef]">{item.name}: Total {formatNum(item.orderedQty)} · Selesai {formatNum(item.completedQty)} · Reservasi {formatNum(item.reservedQty)} · <b>Sisa {formatNum(item.remainingQty)} {item.unit}</b></div>)}</div>; })}
+                {['SO', 'TM', 'ND', 'MEMO', 'CT'].includes(documentType) && outboundDocumentRefs.map((doc) => { const balance = soBalances[doc.toUpperCase()]; if (!balance?.exists) return null; return <div key={doc} className="mt-2 rounded-lg border border-[#1f3657] bg-[#0d1728] px-3 py-2 text-[11px] text-[#93c5fd]"><b>{balance.documentNo}</b> · Penerima {balance.party || '—'} · Status {String(balance.status || '').replaceAll('_', ' ')}{(balance.items || []).map((item) => <div key={item.productId} className="mt-1 text-[#8fb8ef]">{item.name}: Total {formatNum(item.orderedQty)} · Selesai {formatNum(item.completedQty)} · Reservasi {formatNum(item.reservedQty)} · <b>Sisa {formatNum(item.remainingQty)} {item.unit}</b></div>)}</div>; })}
               </div>
           {['MEMO', 'ND'].includes(documentType) && <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-lg border border-[#1f3657] bg-[#0d1728] p-3"><div><label className="text-xs text-[#93c5fd] block mb-1">Keperluan {documentType}</label><select value={dispatchPurpose} onChange={(e) => { const purpose = e.target.value; const destination = purpose === 'BAZAR' ? 'Gudang Bazar' : purpose === 'ECOMMERCE' ? 'Gudang E-commerce' : ''; setDispatchPurpose(purpose); setConsignmentDestination(destination); setConsignmentZone(''); setDocumentParties((prev) => prev.map(() => destination)); }} className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm"><option value="BAZAR">Gudang Bazar</option><option value="ECOMMERCE">Gudang E-commerce</option><option value="PEMINJAMAN">Peminjaman</option><option value="LAINNYA">Keperluan lain</option></select></div><div><label className="text-xs text-[#93c5fd] block mb-1">Tumpukan tujuan Unit 18</label><select value={consignmentZone} onChange={(e) => setConsignmentZone(e.target.value)} disabled={!consignmentDestination} className="w-full bg-[#0b0f17] border border-[#2b3b52] rounded-lg px-3 py-2.5 text-sm disabled:opacity-50"><option value="">{consignmentDestination ? 'Pilih tumpukan tujuan...' : 'Tidak diperlukan'}</option>{consignmentZoneOptions.map((zone) => <option key={zone} value={zone}>{zone}</option>)}</select>{consignmentDestination && <div className="text-[10px] text-[#8fb8ef] mt-1">Area: {consignmentAreaLabel(consignmentDestination)}</div>}</div></div>}
             </div>
@@ -785,29 +785,29 @@ const CatatStok = ({ panel = '' }) => {
                   {type === 'MASUK' && (selectedPO ? <div><label className="text-[10px] text-[#60a5fa] mb-1 block">Rencana kendaraan ({product?.unit || 'unit'})</label><input type="number" min="0" max={remaining ?? undefined} step="any" value={row.plannedQty ?? ''} onChange={(e) => setRow(index, { plannedQty: e.target.value })} placeholder="Contoh: 2000" className="w-full bg-[#0b0f17] border border-[#1f3657] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]" />{product && <div className="text-[9px] text-[#60a5fa] mt-1">Dapat dijadwalkan: {formatNum(remaining || 0)} {product.unit}{Number(row.plannedQty || 0) > 0 ? ` · ${formatNum(totalWeight(Number(row.plannedQty), product))} kg` : ''}</div>}</div> : <><div><label className="text-[10px] text-[#22c55e] mb-1 block">Baik ({product?.unit || 'unit'})</label><input type="number" min="0" step="any" value={row.goodQty ?? 0} onChange={(e) => setRow(index, { goodQty: e.target.value })} className="w-full bg-[#0b0f17] border border-[#1f6f45] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#22c55e]" /></div><div><label className="text-[10px] text-[#f59e0b] mb-1 block">Rusak ({product?.unit || 'unit'})</label><input type="number" min="0" step="any" value={row.damagedQty ?? 0} onChange={(e) => setRow(index, { damagedQty: e.target.value })} className="w-full bg-[#0b0f17] border border-[#794b1c] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#f59e0b]" />{product && receiptQty(row) > 0 && <div className="text-[9px] text-[#60a5fa] mt-1">Total {formatNum(receiptQty(row))} {product.unit} · {formatNum(totalWeight(receiptQty(row), product))} kg</div>}</div></>)}
                   {type === 'KELUAR' && <div>
                     <label className="text-[10px] text-[#6b7688] mb-1 block">{row.inputMode === 'WEIGHT' ? 'Berat (kg)' : `Jumlah (${product?.unit || 'unit'})`}</label>
-                    <input type="number" min="0.01" step="any" disabled={documentType === 'SO' && row.soTakeMode === 'ALL' && Boolean(soMasterItemFor(row))} value={row.inputValue} onChange={(e) => setTransactionInput(index, { inputValue: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb] disabled:opacity-70" />
+                    <input type="number" min="0.01" step="any" disabled={['SO', 'TM', 'ND', 'MEMO', 'CT'].includes(documentType) && row.soTakeMode === 'ALL' && Boolean(soMasterItemFor(row))} value={row.inputValue} onChange={(e) => setTransactionInput(index, { inputValue: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb] disabled:opacity-70" />
                     {product && Number(row.qty || 0) > 0 && <div className="text-[9px] text-[#60a5fa] mt-1">{formatNum(row.qty)} {product.unit} · {formatNum(totalWeight(row.qty, product))} kg{packagingText(row.qty, product, formatNum) ? ` · ${packagingText(row.qty, product, formatNum)}` : ''}</div>}
-                    {documentType === 'SO' && product && (() => {
+                    {['SO', 'TM', 'ND', 'MEMO', 'CT'].includes(documentType) && product && (() => {
                       const master = soMasterItemFor(row);
                       const doc = sourceDocumentForRow(row);
                       const legacy = soBalances[doc]?.legacyUsage?.[row.productId];
                       const mode = row.inputMode || 'QTY';
                       const totalQty = Number(master?.orderedQty ?? row.documentQty ?? 0);
                       const totalDisplay = totalQty > 0 ? (mode === 'WEIGHT' ? totalWeight(totalQty, product) : totalQty) : '';
-                      const totalLabel = mode === 'WEIGHT' ? 'Kuantum SO total (kg)' : `Kuantum SO total (${product.unit})`;
+                      const totalLabel = mode === 'WEIGHT' ? 'Kuantum dokumen total (kg)' : `Kuantum dokumen total (${product.unit})`;
                       return <div className="mt-2 pt-2 border-t border-[#1f2937]">
                         <div className="grid grid-cols-2 gap-1 mb-2">
                           <button type="button" onClick={() => setSoTakeMode(index, 'ALL')} className={`rounded px-2 py-1.5 text-[10px] border ${row.soTakeMode === 'ALL' ? 'border-[#22c55e] bg-[#14532d]/20 text-[#86efac]' : 'border-[#374151] text-[#9ca3af]'}`}>Ambil Semua</button>
                           <button type="button" onClick={() => setSoTakeMode(index, 'PARTIAL')} className={`rounded px-2 py-1.5 text-[10px] border ${row.soTakeMode !== 'ALL' ? 'border-[#f59e0b] bg-[#78350f]/20 text-[#fde68a]' : 'border-[#374151] text-[#9ca3af]'}`}>Ambil Sebagian</button>
                         </div>
                         {row.soTakeMode === 'ALL' && !master
-                          ? <div className="rounded border border-[#14532d] bg-[#14532d]/10 px-2 py-1.5 text-[9px] text-[#86efac]">Jumlah yang diinput menjadi Kuantum SO total sekaligus jumlah muat. Tidak perlu input dua kali.</div>
+                          ? <div className="rounded border border-[#14532d] bg-[#14532d]/10 px-2 py-1.5 text-[9px] text-[#86efac]">Jumlah yang diinput menjadi Kuantum dokumen total sekaligus jumlah muat. Tidak perlu input dua kali.</div>
                           : <>
                             <label className="text-[9px] text-[#fbbf24] mb-1 block">{totalLabel}</label>
-                            <input type="number" min="0.01" step="any" disabled={Boolean(master)} value={totalDisplay} onChange={(e) => setSoDocumentTotal(index, quantityFromInput(e.target.value, mode, product))} placeholder="Total pada SO, bukan jumlah muat" className="w-full bg-[#160f05] border border-[#78350f] rounded px-2 py-1.5 text-[10px] text-[#fde68a] disabled:opacity-70" />
+                            <input type="number" min="0.01" step="any" disabled={Boolean(master)} value={totalDisplay} onChange={(e) => setSoDocumentTotal(index, quantityFromInput(e.target.value, mode, product))} placeholder="Total pada dokumen, bukan jumlah muat" className="w-full bg-[#160f05] border border-[#78350f] rounded px-2 py-1.5 text-[10px] text-[#fde68a] disabled:opacity-70" />
                           </>
                         }
-                        {master ? <div className="mt-1 text-[9px] text-[#86efac]">Selesai {formatNum(master.completedQty)} · Reservasi {formatNum(master.reservedQty)} · Sisa {formatNum(master.remainingQty)} {product.unit}{mode === 'WEIGHT' ? ` · ${formatNum(totalWeight(master.remainingQty, product))} kg` : ''}</div> : legacy && Number(legacy.completedQty || 0) + Number(legacy.reservedQty || 0) > 0 ? <div className="mt-1 text-[9px] text-[#fbbf24]">SO lama: sudah tercatat {formatNum(Number(legacy.completedQty || 0) + Number(legacy.reservedQty || 0))} {product.unit}. Isi total SO asli untuk melanjutkan.</div> : row.soTakeMode !== 'ALL' ? <div className="mt-1 text-[9px] text-[#8b93a1]">Ambil Sebagian membutuhkan total SO dan jumlah yang dimuat saat ini.</div> : null}
+                        {master ? <div className="mt-1 text-[9px] text-[#86efac]">Selesai {formatNum(master.completedQty)} · Reservasi {formatNum(master.reservedQty)} · Sisa {formatNum(master.remainingQty)} {product.unit}{mode === 'WEIGHT' ? ` · ${formatNum(totalWeight(master.remainingQty, product))} kg` : ''}</div> : legacy && Number(legacy.completedQty || 0) + Number(legacy.reservedQty || 0) > 0 ? <div className="mt-1 text-[9px] text-[#fbbf24]">Dokumen lama: sudah tercatat {formatNum(Number(legacy.completedQty || 0) + Number(legacy.reservedQty || 0))} {product.unit}. Isi total dokumen asli untuk melanjutkan.</div> : row.soTakeMode !== 'ALL' ? <div className="mt-1 text-[9px] text-[#8b93a1]">Ambil Sebagian membutuhkan total dokumen dan jumlah yang dimuat saat ini.</div> : null}
                       </div>;
                     })()}
                   </div>}
