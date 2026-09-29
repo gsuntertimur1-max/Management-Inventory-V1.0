@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from backend.server import db, get_operational_location, new_id, now_iso, require_admin
 from backend.operational_guards import operation_guard, surat_jalan_with_exact_locations
-from backend.outbound_flow import _crew_group, loading_units_from_items
+from backend.outbound_flow import _crew_group, _doc_key, _document_type, loading_units_from_items
 from backend.stack_allocations import record_stack_history, valid_stack_codes
 from backend.stack_reservations import available_stack_qty
 from backend.fefo_conservative import consume_stack_lots_conservative
@@ -27,6 +27,12 @@ class OutboundMetadataCorrectionInput(BaseModel):
 class OutboundStackCorrectionInput(BaseModel):
     itemIndex: int = Field(ge=0, le=199)
     stackCode: str = Field(min_length=3, max_length=50)
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class OutboundDocumentNumberCorrectionInput(BaseModel):
+    oldDocumentNo: str = Field(min_length=2, max_length=120)
+    newDocumentNo: str = Field(min_length=2, max_length=120)
     reason: str = Field(min_length=3, max_length=500)
 
 
@@ -162,6 +168,225 @@ async def list_completed_outbound_for_correction(user: dict = Depends(require_ad
         "correctionHistory": load.get("correction_history", []),
         "items": [{"name": item.get("name", ""), "sku": item.get("sku", ""), "qty": item.get("qty", 0), "unit": item.get("unit", ""), "stackCode": item.get("stackCode", ""), "documentNo": item.get("documentNo", "")} for item in load.get("items", [])],
     } for load in loads]
+
+
+@router.put("/operational-corrections/outbound/{load_id}/document-number")
+async def correct_active_outbound_document_number(load_id: str, body: OutboundDocumentNumberCorrectionInput, user: dict = Depends(require_admin)):
+    """Rename one outbound document consistently across all active loads before stock completion."""
+    old_no = _doc_key(body.oldDocumentNo)
+    new_no = _doc_key(body.newDocumentNo)
+    if old_no == new_no:
+        raise HTTPException(status_code=400, detail="Nomor dokumen baru sama dengan nomor saat ini")
+
+    selected = await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
+    if not selected:
+        raise HTTPException(status_code=404, detail="Data pengeluaran tidak ditemukan")
+    if selected.get("status") not in {"Menunggu", "Sedang Dimuat"}:
+        raise HTTPException(status_code=400, detail="Koreksi nomor dokumen hanya tersedia sebelum Selesai Muat")
+
+    document_type = str(selected.get("document_type") or "").upper()
+    if document_type not in {"SO", "TM", "CT", "ND", "MEMO"}:
+        raise HTTPException(status_code=400, detail="Jenis dokumen pengeluaran tidak mendukung koreksi nomor")
+    try:
+        if _document_type(old_no) != document_type or _document_type(new_no) != document_type:
+            raise HTTPException(status_code=400, detail=f"Nomor lama dan baru harus sama-sama berjenis {document_type}")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Format nomor {document_type} tidak valid") from exc
+
+    selected_refs = {
+        _doc_key(selected.get("ref")),
+        *[_doc_key(value) for value in (selected.get("documents") or [])],
+        *[_doc_key(item.get("documentNo")) for item in (selected.get("items") or [])],
+    }
+    if old_no not in selected_refs:
+        raise HTTPException(status_code=400, detail="Nomor dokumen lama tidak terdapat pada pemuatan yang dipilih")
+
+    lock_keys = [f"document-number:{old_no}", f"document-number:{new_no}"]
+    async with operation_guard(lock_keys):
+        # Reject any rename after a completed stock movement exists. Completed documents
+        # require the stricter operational-correction path so historical PDFs never drift.
+        completed = await db.outbound_loads.find_one(
+            {
+                "status": "Selesai",
+                "document_type": document_type,
+                "$or": [
+                    {"ref": old_no},
+                    {"documents": old_no},
+                    {"items.documentNo": old_no},
+                ],
+            },
+            {"_id": 0, "bon_no": 1, "antrian": 1},
+        )
+        completed_tx = await db.transactions.find_one(
+            {
+                "type": "KELUAR",
+                "$or": [{"ref": old_no}, {"source_document": old_no}, {"parent_document": old_no}],
+            },
+            {"_id": 0, "bon_no": 1},
+        )
+        completed_sj = await db.surat_jalan.find_one(
+            {
+                "$or": [{"ref": old_no}, {"documents": old_no}, {"items.documentNo": old_no}],
+            },
+            {"_id": 0, "no": 1},
+        )
+        if completed or completed_tx or completed_sj:
+            raise HTTPException(
+                status_code=409,
+                detail="Dokumen ini sudah memiliki transaksi/SJ selesai. Gunakan Koreksi Operasional setelah Selesai Muat.",
+            )
+
+        conflict_master = await db.outbound_documents.find_one(
+            {"documentNo": new_no, "documentType": document_type},
+            {"_id": 0, "id": 1},
+        )
+        conflict_load = await db.outbound_loads.find_one(
+            {
+                "$or": [{"ref": new_no}, {"documents": new_no}, {"items.documentNo": new_no}],
+            },
+            {"_id": 0, "id": 1, "bon_no": 1, "status": 1},
+        )
+        conflict_tx = await db.transactions.find_one(
+            {"$or": [{"ref": new_no}, {"source_document": new_no}, {"parent_document": new_no}]},
+            {"_id": 0, "id": 1},
+        )
+        if conflict_master or conflict_load or conflict_tx:
+            raise HTTPException(status_code=409, detail=f"Nomor tujuan {new_no} sudah dipakai. Gunakan nomor lain atau periksa dokumen tersebut.")
+
+        active_loads = await db.outbound_loads.find(
+            {
+                "status": {"$in": ["Menunggu", "Sedang Dimuat"]},
+                "document_type": document_type,
+                "$or": [{"ref": old_no}, {"documents": old_no}, {"items.documentNo": old_no}],
+            },
+            {"_id": 0},
+        ).to_list(500)
+        if not active_loads:
+            raise HTTPException(status_code=404, detail="Tidak ada antrean aktif yang memakai nomor dokumen tersebut")
+
+        old_master = await db.outbound_documents.find_one(
+            {"documentNo": old_no, "documentType": document_type},
+            {"_id": 0},
+        )
+        if not old_master:
+            raise HTTPException(status_code=409, detail="Master dokumen lama tidak ditemukan; koreksi dibatalkan agar saldo dokumen tidak terpecah")
+
+        now = now_iso()
+        event_id = new_id()
+        snapshots = [dict(load) for load in active_loads]
+        changed_ids = []
+        master_changed = False
+        audit_id = new_id()
+
+        def rename_map(mapping):
+            source = dict(mapping or {})
+            if old_no not in source:
+                return source
+            value = source.pop(old_no)
+            source[new_no] = value
+            return source
+
+        try:
+            master_result = await db.outbound_documents.update_one(
+                {"id": old_master["id"], "documentNo": old_no, "documentType": document_type},
+                {"$set": {
+                    "documentNo": new_no,
+                    "updatedAt": now,
+                    "updatedBy": user.get("name", ""),
+                    "lastCorrectionAt": now,
+                    "lastCorrectionBy": user.get("name", ""),
+                    "lastCorrectionReason": body.reason.strip(),
+                    "previousDocumentNo": old_no,
+                }},
+            )
+            if master_result.matched_count == 0:
+                raise HTTPException(status_code=409, detail="Master dokumen berubah saat koreksi. Muat ulang lalu coba kembali.")
+            master_changed = True
+
+            for load in active_loads:
+                changed = dict(load)
+                changed["ref"] = new_no if _doc_key(load.get("ref")) == old_no else load.get("ref", "")
+                changed["documents"] = [
+                    new_no if _doc_key(value) == old_no else value
+                    for value in (load.get("documents") or [])
+                ]
+                changed["items"] = [
+                    {
+                        **item,
+                        "documentNo": new_no if _doc_key(item.get("documentNo") or load.get("ref")) == old_no else item.get("documentNo", ""),
+                    }
+                    for item in (load.get("items") or [])
+                ]
+                changed["document_progress"] = rename_map(load.get("document_progress"))
+                changed["so_document_progress"] = rename_map(load.get("so_document_progress"))
+                changed["document_parties"] = rename_map(load.get("document_parties"))
+                changed["so_document_parties"] = rename_map(load.get("so_document_parties"))
+                changed["cancelled_documents"] = [
+                    new_no if _doc_key(value) == old_no else value
+                    for value in (load.get("cancelled_documents") or [])
+                ]
+                correction_event = {
+                    "id": event_id,
+                    "time": now,
+                    "by": user.get("name", ""),
+                    "reason": body.reason.strip(),
+                    "type": "KOREKSI_NOMOR_DOKUMEN",
+                    "before": {"documentNo": old_no},
+                    "after": {"documentNo": new_no},
+                }
+                changed["correction_history"] = list(load.get("correction_history") or []) + [correction_event]
+                changed["last_correction_at"] = now
+                changed["last_correction_by"] = user.get("name", "")
+
+                result = await db.outbound_loads.replace_one(
+                    {"id": load["id"], "status": {"$in": ["Menunggu", "Sedang Dimuat"]}},
+                    changed,
+                    upsert=False,
+                )
+                if result.matched_count == 0:
+                    raise HTTPException(status_code=409, detail="Salah satu antrean berubah saat koreksi. Seluruh perubahan dibatalkan.")
+                changed_ids.append(load["id"])
+
+            await db.transactions.insert_one({
+                "id": audit_id,
+                "operation_id": audit_id,
+                "load_id": load_id,
+                "time": now,
+                "ref": new_no,
+                "source_document": new_no,
+                "type": "KOREKSI",
+                "kondisi": "DOKUMEN",
+                "document_type": "KOREKSI_NOMOR_DOKUMEN_KELUAR",
+                "product": f"Nomor {document_type}",
+                "sku": "",
+                "change": 0,
+                "unit": "",
+                "operator": user.get("name", ""),
+                "keterangan": body.reason.strip(),
+                "correction_reason": body.reason.strip(),
+                "old_document_no": old_no,
+                "new_document_no": new_no,
+                "affected_load_ids": changed_ids,
+                "correction_event_id": event_id,
+            })
+        except Exception:
+            await db.transactions.delete_one({"id": audit_id})
+            for snapshot in snapshots:
+                await db.outbound_loads.replace_one({"id": snapshot["id"]}, snapshot, upsert=True)
+            if master_changed:
+                await db.outbound_documents.replace_one({"id": old_master["id"]}, old_master, upsert=True)
+            raise
+
+        return {
+            "ok": True,
+            "oldDocumentNo": old_no,
+            "newDocumentNo": new_no,
+            "documentType": document_type,
+            "affectedLoads": len(changed_ids),
+            "loadIds": changed_ids,
+        }
 
 
 @router.put("/operational-corrections/outbound/{load_id}/stack")
