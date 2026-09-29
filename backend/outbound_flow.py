@@ -1208,12 +1208,13 @@ async def edit_outbound_load(load_id: str, body: OutboundEditInput, user: dict =
 
 @router.post("/outbound-loads/{load_id}/cancel")
 async def cancel_outbound_load(load_id: str, body: DocumentCancelInput, user: dict = Depends(require_write)):
-    """Batalkan dokumen yang belum dimuat tanpa menghapus jejak antrian."""
+    """Batalkan dokumen sebelum pemuatan selesai tanpa menghapus jejak antrian."""
     load = await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
     if not load:
         raise HTTPException(status_code=404, detail="Data pemuatan tidak ditemukan")
-    if load.get("status") != "Menunggu":
-        raise HTTPException(status_code=400, detail="Hanya dokumen yang masih menunggu pemuatan dapat dibatalkan. Dokumen selesai harus dikoreksi melalui Retur atau dokumen balik.")
+    original_status = str(load.get("status") or "")
+    if original_status not in {"Menunggu", "Sedang Dimuat"}:
+        raise HTTPException(status_code=400, detail="Pembatalan hanya dapat dilakukan sebelum Selesai Muat. Dokumen yang sudah selesai harus dikoreksi melalui Retur atau dokumen balik.")
 
     documents = list(load.get("documents") or [load.get("ref", "")])
     requested = body.documentNo.strip()
@@ -1240,7 +1241,10 @@ async def cancel_outbound_load(load_id: str, body: DocumentCancelInput, user: di
         "cancellation_history": history,
         "cancelled_documents": list(load.get("cancelled_documents") or []) + targets,
         "document_status": "Dibatalkan Sebagian" if retained_items else "Dibatalkan",
-        "status": "Menunggu" if retained_items else "Dibatalkan",
+        # Bila pembatalan hanya sebagian saat proses muat sudah dimulai, kendaraan
+        # tetap Sedang Dimuat untuk dokumen yang tersisa. Membatalkan seluruh
+        # dokumen mengakhiri antrian dan otomatis melepas seluruh reservasi.
+        "status": original_status if retained_items else "Dibatalkan",
         "updated_at": now_iso(),
     }
     await db.outbound_loads.update_one({"id": load_id}, {"$set": changes})
