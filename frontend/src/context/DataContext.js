@@ -371,6 +371,7 @@ export const DataProvider = ({ children }) => {
   const cancelOutboundLoad = async (id, payload) => { const { data } = await api.post(`/outbound-loads/${id}/cancel`, payload); await refreshOutboundLoads(); return data; };
   const editOutboundLoad = async (id, payload) => { const { data } = await api.put(`/outbound-loads/${id}/edit`, payload); await refreshOutboundLoads(); return data; };
   const correctOutboundStack = async (id, payload) => { const { data } = await api.put(`/operational-corrections/outbound/${id}/stack`, payload); await refreshOutboundFlow(); return data; };
+  const correctOutboundDocumentNumber = async (id, payload) => { const { data } = await api.put(`/operational-corrections/outbound/${id}/document-number`, payload); await refreshOutboundFlow(); return data; };
   const cancelPurchaseOrder = async (id, payload) => { const { data } = await api.post(`/purchase-orders-v2/${id}/cancel`, payload); await refreshPurchaseOrders(); return data; };
 
   const addSupplier = async (sup) => {
@@ -441,7 +442,7 @@ export const DataProvider = ({ children }) => {
       consignmentLastSync, consignmentSyncing,
       login, logout, ...state, fetchAll,
       addProduct, updateProduct, deleteProduct, addTransaction, addReceipt, recordStockDamage, createSupplierReturn, receiveSupplierReplacement,
-      createOutboundLoad, refreshOutboundLoads, refreshOutboundSnapshot, startOutboundLoad, completeOutboundLoad, createConsignmentReturn, createSalesReturn, settleOutboundDocument, settleOutboundDocuments, updateSJStatus, cancelOutboundLoad, editOutboundLoad, correctOutboundStack, cancelPurchaseOrder,
+      createOutboundLoad, refreshOutboundLoads, refreshOutboundSnapshot, startOutboundLoad, completeOutboundLoad, createConsignmentReturn, createSalesReturn, settleOutboundDocument, settleOutboundDocuments, updateSJStatus, cancelOutboundLoad, editOutboundLoad, correctOutboundStack, correctOutboundDocumentNumber, cancelPurchaseOrder,
       addSupplier, addPO, addUser, updateUser, deleteUser, changeUserPassword, updateSettings, resetData, importCsv,
       addStackAllocation, updateStackAllocation, deleteStackAllocation,
       addStackTreatment,
