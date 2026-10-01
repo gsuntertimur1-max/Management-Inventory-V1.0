@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Clock, Loader, Maximize2, Minimize2, RefreshCw, Volume2, VolumeX } from 'lucide-react';
+import { Clock, Loader, Maximize2, Minimize2, RefreshCw, Settings2, Volume2, VolumeX } from 'lucide-react';
 import api from '../lib/api';
 import { formatNum } from '../mock';
 
@@ -13,6 +13,26 @@ const quantitySummary = (items = []) => {
     .filter(([, value]) => Math.abs(value) > 1e-9)
     .map(([unit, value]) => `${formatNum(value)} ${unit}`);
   return parts.join(' + ') || '—';
+};
+
+const VOICE_PREF_KEY = 'pepeg_queue_voice_preferences_v1';
+
+const voiceKey = (voice) => voice?.voiceURI || `${voice?.name || ''}|${voice?.lang || ''}`;
+
+const loadVoicePreferences = () => {
+  if (typeof window === 'undefined') return { voiceKey: '', rate: 0.85, pitch: 0.9 };
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(VOICE_PREF_KEY) || '{}');
+    const rate = Number(saved.rate);
+    const pitch = Number(saved.pitch);
+    return {
+      voiceKey: String(saved.voiceKey || ''),
+      rate: Number.isFinite(rate) ? Math.min(Math.max(rate, 0.6), 1.2) : 0.85,
+      pitch: Number.isFinite(pitch) ? Math.min(Math.max(pitch, 0.6), 1.2) : 0.9,
+    };
+  } catch (error) {
+    return { voiceKey: '', rate: 0.85, pitch: 0.9 };
+  }
 };
 
 const measureSummary = (items = []) => {
@@ -33,7 +53,13 @@ const LayarAntrian = () => {
   const [queueLoads, setQueueLoads] = useState([]);
   const [presentationMode, setPresentationMode] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const initialVoicePreferences = useMemo(() => loadVoicePreferences(), []);
+  const [voiceOptions, setVoiceOptions] = useState([]);
+  const [selectedVoiceKey, setSelectedVoiceKey] = useState(initialVoicePreferences.voiceKey);
   const [indonesianVoice, setIndonesianVoice] = useState(null);
+  const [voiceRate, setVoiceRate] = useState(initialVoicePreferences.rate);
+  const [voicePitch, setVoicePitch] = useState(initialVoicePreferences.pitch);
+  const [showVoiceSettings, setShowVoiceSettings] = useState(false);
   const [voiceNotice, setVoiceNotice] = useState('');
   const [lastUpdated, setLastUpdated] = useState(new Date());
   const [refreshing, setRefreshing] = useState(false);
@@ -82,22 +108,52 @@ const LayarAntrian = () => {
       return undefined;
     }
 
-    const loadIndonesianVoice = () => {
+    const loadBrowserVoices = () => {
       const voices = window.speechSynthesis.getVoices();
-      const selected = voices.find((voice) => voice.lang?.toLowerCase() === 'id-id')
-        || voices.find((voice) => voice.lang?.toLowerCase().startsWith('id'))
-        || voices.find((voice) => /bahasa indonesia|indonesian|damayanti|dimas/i.test(voice.name));
+      const sorted = [...voices].sort((a, b) => {
+        const aId = a.lang?.toLowerCase().startsWith('id') ? 0 : 1;
+        const bId = b.lang?.toLowerCase().startsWith('id') ? 0 : 1;
+        return aId - bId || String(a.name || '').localeCompare(String(b.name || ''));
+      });
+      setVoiceOptions(sorted);
 
-      setIndonesianVoice(selected || null);
+      const saved = sorted.find((voice) => voiceKey(voice) === selectedVoiceKey);
+      const automatic = sorted.find((voice) => voice.lang?.toLowerCase() === 'id-id')
+        || sorted.find((voice) => voice.lang?.toLowerCase().startsWith('id'))
+        || sorted.find((voice) => /bahasa indonesia|indonesian|damayanti|dimas/i.test(voice.name));
+      const selected = saved || automatic || sorted[0] || null;
+
+      setIndonesianVoice(selected);
+      if (selected && voiceKey(selected) !== selectedVoiceKey) setSelectedVoiceKey(voiceKey(selected));
       if (selected) setVoiceNotice('');
-      else if (voices.length > 0) setVoiceNotice('Suara Bahasa Indonesia tidak ditemukan. PEPEG akan memakai suara bawaan browser dengan bahasa id-ID.');
+      else if (voices.length > 0) setVoiceNotice('Suara browser tidak dapat dipilih. PEPEG akan mencoba suara bawaan.');
       else setVoiceNotice('Daftar suara browser belum dimuat. Tekan Aktifkan suara sekali untuk mengizinkan audio.');
     };
 
-    loadIndonesianVoice();
-    window.speechSynthesis.addEventListener?.('voiceschanged', loadIndonesianVoice);
-    return () => window.speechSynthesis.removeEventListener?.('voiceschanged', loadIndonesianVoice);
+    loadBrowserVoices();
+    window.speechSynthesis.addEventListener?.('voiceschanged', loadBrowserVoices);
+    return () => window.speechSynthesis.removeEventListener?.('voiceschanged', loadBrowserVoices);
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(VOICE_PREF_KEY, JSON.stringify({
+      voiceKey: selectedVoiceKey,
+      rate: voiceRate,
+      pitch: voicePitch,
+    }));
+  }, [selectedVoiceKey, voiceRate, voicePitch]);
+
+  const selectBrowserVoice = (key) => {
+    setSelectedVoiceKey(key);
+    const selected = voiceOptions.find((voice) => voiceKey(voice) === key) || null;
+    setIndonesianVoice(selected);
+    if (selected && !selected.lang?.toLowerCase().startsWith('id')) {
+      setVoiceNotice('Voice ini bukan voice Bahasa Indonesia. Pelafalan nama lokasi/nomor mungkin terdengar berbeda.');
+    } else {
+      setVoiceNotice('');
+    }
+  };
 
   const speakText = useCallback((text, { immediate = false, onStart } = {}) => {
     if (!('speechSynthesis' in window) || !('SpeechSynthesisUtterance' in window)) {
@@ -110,8 +166,9 @@ const LayarAntrian = () => {
 
     const message = new SpeechSynthesisUtterance(text);
     if (indonesianVoice) message.voice = indonesianVoice;
-    message.lang = 'id-ID';
-    message.rate = 0.85;
+    message.lang = indonesianVoice?.lang || 'id-ID';
+    message.rate = voiceRate;
+    message.pitch = voicePitch;
     message.volume = 1;
     message.onstart = () => {
       setVoiceNotice('');
@@ -131,7 +188,7 @@ const LayarAntrian = () => {
     if (immediate) play();
     else window.setTimeout(play, 90);
     return true;
-  }, [indonesianVoice]);
+  }, [indonesianVoice, voiceRate, voicePitch]);
 
   useEffect(() => {
     if (!voiceEnabled || !('speechSynthesis' in window)) return;
@@ -184,6 +241,11 @@ const LayarAntrian = () => {
     speakText('Suara antrian aktif.', { immediate: true });
   };
 
+  const testVoice = () => {
+    setVoiceEnabled(true);
+    speakText('Nomor antrian A 0 0 1. Silakan menuju Unit 18.', { immediate: true });
+  };
+
   const loadingQueueLabel = loadingLoads.length
     ? loadingLoads.map((load) => load.antrian).filter(Boolean).join(' · ')
     : '—';
@@ -200,6 +262,9 @@ const LayarAntrian = () => {
             {voiceEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
             {voiceEnabled ? 'Suara aktif' : 'Aktifkan suara'}
           </button>
+          <button type="button" onClick={() => setShowVoiceSettings((value) => !value)} className="queue-action inline-flex min-h-11 items-center gap-2 rounded-xl border border-[#242f3d] px-3.5 py-2.5 text-sm text-[#c7d0dc] hover:bg-[#141a24]">
+            <Settings2 size={18} /> Pengaturan suara
+          </button>
           <button type="button" onClick={refreshQueue} disabled={refreshing} className="queue-action inline-flex min-h-11 items-center gap-2 rounded-xl border border-[#242f3d] px-3.5 py-2.5 text-sm text-[#c7d0dc] hover:bg-[#141a24] disabled:opacity-60">
             <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''} /> Perbarui
           </button>
@@ -209,6 +274,43 @@ const LayarAntrian = () => {
           </button>
         </div>
       </div>
+
+      {showVoiceSettings && (
+        <div className="card-surface p-4 sm:p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+            <div>
+              <div className="font-semibold">Pengaturan Voice Browser</div>
+              <div className="text-xs text-[#8b93a1] mt-1">Pilihan ini tersimpan hanya di browser/perangkat layar antrian ini.</div>
+            </div>
+            <button type="button" onClick={testVoice} className="inline-flex items-center gap-2 rounded-lg border border-[#2563eb] px-3 py-2 text-xs font-semibold text-[#93c5fd] hover:bg-[#2563eb]/10">
+              <Volume2 size={14} /> Tes Suara
+            </button>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-[minmax(280px,1fr)_220px_220px] gap-4">
+            <div>
+              <label className="text-xs text-[#8b93a1] block mb-1.5">Voice</label>
+              <select value={selectedVoiceKey} onChange={(event) => selectBrowserVoice(event.target.value)} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]">
+                {voiceOptions.length === 0 && <option value="">Voice browser belum tersedia</option>}
+                {voiceOptions.map((voice) => <option key={voiceKey(voice)} value={voiceKey(voice)}>
+                  {voice.name} · {voice.lang}{voice.lang?.toLowerCase().startsWith('id') ? ' · Indonesia' : ''}
+                </option>)}
+              </select>
+              <div className="text-[10px] text-[#64748b] mt-1.5">Voice Bahasa Indonesia ditempatkan paling atas. Daftar mengikuti voice yang terpasang di Windows/browser.</div>
+            </div>
+            <div>
+              <div className="flex justify-between gap-3 mb-1.5"><label className="text-xs text-[#8b93a1]">Kecepatan</label><span className="font-mono text-xs text-[#93c5fd]">{Number(voiceRate).toFixed(2)}×</span></div>
+              <input aria-label="Kecepatan suara" type="range" min="0.6" max="1.2" step="0.05" value={voiceRate} onChange={(event) => setVoiceRate(Number(event.target.value))} className="w-full" />
+              <div className="text-[10px] text-[#64748b] mt-1">Lebih kecil = lebih tenang/lambat.</div>
+            </div>
+            <div>
+              <div className="flex justify-between gap-3 mb-1.5"><label className="text-xs text-[#8b93a1]">Pitch / Nada</label><span className="font-mono text-xs text-[#93c5fd]">{Number(voicePitch).toFixed(2)}</span></div>
+              <input aria-label="Pitch suara" type="range" min="0.6" max="1.2" step="0.05" value={voicePitch} onChange={(event) => setVoicePitch(Number(event.target.value))} className="w-full" />
+              <div className="text-[10px] text-[#64748b] mt-1">Lebih kecil = nada lebih rendah/berat.</div>
+            </div>
+          </div>
+          <div className="mt-3 text-[10px] text-[#8b93a1]">Saran awal suara pria formal: kecepatan 0,80–0,90 dan pitch 0,85–0,95. Karakter akhir tetap bergantung pada voice yang tersedia di perangkat.</div>
+        </div>
+      )}
 
       {voiceEnabled && voiceNotice && (
         <div role="status" className="rounded-xl border border-[#eab308]/30 bg-[#eab308]/10 px-4 py-3 text-sm text-[#facc15]">
