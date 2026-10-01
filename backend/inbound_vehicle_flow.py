@@ -6,7 +6,18 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from backend.server import db, get_current_user, new_id, next_sequence, now_iso, operational_now, require_write
+from backend.server import (
+    ROLE_ADMIN,
+    ROLE_SUPERADMIN,
+    canonical_role,
+    db,
+    get_current_user,
+    new_id,
+    next_sequence,
+    now_iso,
+    operational_now,
+    require_write,
+)
 from backend.inventory_flow import (
     ReceiptInput,
     ReceiptItemInput,
@@ -68,6 +79,11 @@ class InboundLoadComplete(BaseModel):
 
 class InboundCancelInput(BaseModel):
     reason: str = Field(min_length=3, max_length=500)
+
+
+class InboundStartInput(BaseModel):
+    actualStartAt: str = ""
+    reason: str = Field(default="", max_length=500)
 
 
 def _normalize_unloading_fee_mode(value: str) -> str:
@@ -221,8 +237,37 @@ async def create_inbound_load(body: InboundLoadCreate, user: dict = Depends(requ
 
 
 @router.post("/inbound-loads/{load_id}/start")
-async def start_inbound_load(load_id: str, user: dict = Depends(require_write)):
+async def start_inbound_load(
+    load_id: str,
+    body: InboundStartInput | None = None,
+    user: dict = Depends(require_write),
+):
     user_key = _unloading_user_key(user)
+    now = operational_now()
+    requested_start = str((body.actualStartAt if body else "") or "").strip()
+    reason = str((body.reason if body else "") or "").strip()
+    is_backdated = bool(requested_start)
+
+    if is_backdated:
+        if canonical_role(user.get("role")) not in {ROLE_SUPERADMIN, ROLE_ADMIN}:
+            raise HTTPException(status_code=403, detail="Waktu mulai aktual hanya dapat diubah oleh Superadmin atau Admin Operasional")
+        if len(reason) < 3:
+            raise HTTPException(status_code=400, detail="Alasan penggunaan waktu mulai aktual minimal 3 karakter")
+        try:
+            started = datetime.fromisoformat(requested_start.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Format waktu mulai aktual tidak valid") from exc
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=now.tzinfo)
+        else:
+            started = started.astimezone(now.tzinfo)
+        if started > now:
+            raise HTTPException(status_code=400, detail="Waktu mulai aktual tidak boleh berada di masa depan")
+        if started.date() != now.date():
+            raise HTTPException(status_code=400, detail="Backdate waktu mulai bongkar saat ini hanya diizinkan untuk tanggal operasional hari ini")
+    else:
+        started = now
+
     # Lock hanya kendaraan yang sedang diubah. Jangan lock per akun: di lapangan
     # satu operator dapat mengawasi beberapa kendaraan bongkar secara paralel.
     async with operation_guard([f"inbound-load:{load_id}"]):
@@ -232,9 +277,9 @@ async def start_inbound_load(load_id: str, user: dict = Depends(require_write)):
         if load.get("status") != "Menunggu Bongkar":
             raise HTTPException(status_code=409, detail="Kendaraan tidak lagi berstatus Menunggu Bongkar")
 
-        started = operational_now()
         session_id = new_id()
         vehicle_session_key = f"inbound-vehicle:{load_id}:{user_key}"
+        recorded_at = now_iso()
         session = {
             "id": session_id,
             "status": "BERJALAN",
@@ -246,24 +291,52 @@ async def start_inbound_load(load_id: str, user: dict = Depends(require_write)):
             "startedByUserKey": user_key,
             "vehicleSessionKey": vehicle_session_key,
             "sessionType": "INBOUND_VEHICLE",
-            "createdAt": now_iso(),
+            "createdAt": recorded_at,
             "inboundLoadId": load_id,
+            "startTimeSource": "BACKDATED_ACTUAL" if is_backdated else "SYSTEM",
+            "actualStartReason": reason if is_backdated else "",
+            "actualStartRecordedAt": recorded_at if is_backdated else "",
+            "actualStartRecordedBy": user.get("name", "") if is_backdated else "",
         }
         await db.unloading_sessions.insert_one(dict(session))
-        event = {"time": now_iso(), "status": "Sedang Bongkar", "by": user.get("name", ""), "note": "Mulai bongkar"}
+        event_note = (
+            f"Mulai bongkar · waktu aktual {started.strftime('%d-%m-%Y %H:%M')} · alasan: {reason}"
+            if is_backdated else
+            "Mulai bongkar"
+        )
+        event = {
+            "time": recorded_at,
+            "status": "Sedang Bongkar",
+            "by": user.get("name", ""),
+            "note": event_note,
+            "actualTime": started.isoformat() if is_backdated else "",
+            "timeSource": "BACKDATED_ACTUAL" if is_backdated else "SYSTEM",
+        }
+        update_fields = {
+            "status": "Sedang Bongkar",
+            "startedAt": started.isoformat(),
+            "startedBy": user.get("name", ""),
+            "unloadingSessionId": session_id,
+            "startTimeSource": "BACKDATED_ACTUAL" if is_backdated else "SYSTEM",
+        }
+        if is_backdated:
+            update_fields.update({
+                "actualStartReason": reason,
+                "actualStartRecordedAt": recorded_at,
+                "actualStartRecordedBy": user.get("name", ""),
+            })
         result = await db.inbound_loads.update_one(
             {"id": load_id, "status": "Menunggu Bongkar"},
-            {"$set": {
-                "status": "Sedang Bongkar",
-                "startedAt": started.isoformat(),
-                "startedBy": user.get("name", ""),
-                "unloadingSessionId": session_id,
-            }, "$push": {"history": event}},
+            {"$set": update_fields, "$push": {"history": event}},
         )
         if result.matched_count == 0:
             await db.unloading_sessions.delete_one({"id": session_id})
             raise HTTPException(status_code=409, detail="Status kendaraan berubah. Muat ulang halaman.")
-        return {**load, "status": "Sedang Bongkar", "startedAt": started.isoformat(), "startedBy": user.get("name", ""), "unloadingSessionId": session_id, "history": list(load.get("history") or []) + [event]}
+        return {
+            **load,
+            **update_fields,
+            "history": list(load.get("history") or []) + [event],
+        }
 
 
 @router.post("/inbound-loads/{load_id}/cancel")
