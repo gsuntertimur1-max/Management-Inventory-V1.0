@@ -925,13 +925,37 @@ async def export_master_template(user: dict = Depends(get_current_user)):
 
 
 @router.get("/export/transactions-v2.xlsx")
-async def export_transactions_with_expiry(user: dict = Depends(get_current_user)):
+async def export_transactions_with_expiry(
+    startDate: str = "",
+    endDate: str = "",
+    user: dict = Depends(get_current_user),
+):
     now = operational_now()
-    start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    if start.month == 12:
-        end = start.replace(year=start.year + 1, month=1)
+
+    if bool(startDate) != bool(endDate):
+        raise HTTPException(status_code=400, detail="Tanggal awal dan tanggal akhir harus diisi")
+
+    if startDate and endDate:
+        try:
+            start_day = datetime.strptime(startDate, "%Y-%m-%d")
+            end_day = datetime.strptime(endDate, "%Y-%m-%d")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Format tanggal harus YYYY-MM-DD") from exc
+        if end_day < start_day:
+            raise HTTPException(status_code=400, detail="Tanggal akhir tidak boleh lebih kecil dari tanggal awal")
+
+        operational_tz = now.tzinfo
+        start = start_day.replace(tzinfo=operational_tz)
+        end = (end_day + timedelta(days=1)).replace(tzinfo=operational_tz)
+        filename_period = startDate if startDate == endDate else f"{startDate}_s.d_{endDate}"
     else:
-        end = start.replace(month=start.month + 1)
+        # Kompatibilitas untuk klien lama yang belum mengirim rentang tanggal.
+        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        if start.month == 12:
+            end = start.replace(year=start.year + 1, month=1)
+        else:
+            end = start.replace(month=start.month + 1)
+        filename_period = start.strftime("%Y_%m")
 
     transactions = await db.transactions.find(
         {
@@ -942,6 +966,9 @@ async def export_transactions_with_expiry(user: dict = Depends(get_current_user)
         },
         {"_id": 0},
     ).sort("time", 1).to_list(10000)
+
+    if not transactions:
+        raise HTTPException(status_code=404, detail="Tidak ada transaksi pada rentang tanggal yang dipilih")
 
     headers = [
         "Waktu", "No. Referensi", "No. PO", "Antrian", "Tipe", "Kondisi",
@@ -964,7 +991,7 @@ async def export_transactions_with_expiry(user: dict = Depends(get_current_user)
         for t in transactions
     ]
     output = build_xlsx(headers, rows, "Riwayat Transaksi")
-    filename = f"riwayat_transaksi_{start.strftime('%Y_%m')}.xlsx"
+    filename = f"riwayat_transaksi_{filename_period}.xlsx"
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
