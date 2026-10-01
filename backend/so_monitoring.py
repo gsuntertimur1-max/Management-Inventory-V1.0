@@ -328,6 +328,8 @@ async def build_so_monitoring() -> dict:
             "party": master_party or (sorted(parties)[0] if parties else ""),
             "status": status,
             "items": item_rows,
+            "quantityCorrectionHistory": list((master or {}).get("quantityCorrectionHistory") or []),
+            "lastQuantityCorrection": (master or {}).get("lastQuantityCorrection"),
             "loads": history_rows,
             "issues": issues,
             "lastActivity": last_activity,
