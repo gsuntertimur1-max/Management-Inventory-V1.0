@@ -229,6 +229,15 @@ class MultiSettlementInput(BaseModel):
     note: str = ""
 
 
+class SettlementCorrectionInput(BaseModel):
+    documentNo: str = ""
+    party: str = ""
+    sources: List[MultiSettlementSourceInput] = Field(default_factory=list, max_length=100)
+    note: str = ""
+    reason: str = Field(min_length=3, max_length=500)
+    cancel: bool = False
+
+
 PARTIAL_DOCUMENT_TYPES = {"SO", "TM", "ND", "MEMO", "CT"}
 
 
@@ -1584,6 +1593,18 @@ def _all_source_documents_settled(load: dict) -> bool:
     return True
 
 
+def _document_link_status(load: dict) -> str:
+    if _all_source_documents_settled(load):
+        return "Selesai Dokumen"
+    links = list(load.get("document_links") or [])
+    if any(link.get("type") == "SO" for link in links):
+        return "SO Sebagian · Belum Selesai"
+    return_link = next((link for link in reversed(links) if link.get("type") in {"CR", "RETUR"}), None)
+    if return_link:
+        return f"{return_link.get('type')} Tercatat · Menunggu SO"
+    return "Menunggu SO/Retur"
+
+
 @router.post("/outbound-loads/{load_id}/return")
 async def create_consignment_return(load_id: str, body: ConsignmentReturnInput, user: dict = Depends(require_write)):
     load = await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
@@ -1922,6 +1943,288 @@ async def settle_outbound_documents(body: MultiSettlementInput, user: dict = Dep
                 },
             )
         raise
+
+
+@router.put("/outbound-settlements/so/{batch_id}")
+async def correct_outbound_settlement(
+    batch_id: str,
+    body: SettlementCorrectionInput,
+    user: dict = Depends(require_admin),
+):
+    """Koreksi/batalkan satu batch tautan SO tanpa menyentuh stok fisik.
+
+    Semua link dan transaksi dokumen pada settlementBatchId yang sama diperbarui
+    sebagai satu kesatuan. Jika salah satu validasi gagal, snapshot dikembalikan.
+    """
+    batch_id = str(batch_id or "").strip()
+    if not batch_id:
+        raise HTTPException(status_code=400, detail="Batch penyelesaian SO tidak valid")
+
+    old_loads = await db.outbound_loads.find(
+        {"document_links": {"$elemMatch": {"type": "SO", "settlementBatchId": batch_id}}},
+        {"_id": 0},
+    ).to_list(500)
+    if not old_loads:
+        raise HTTPException(status_code=404, detail="Batch penyelesaian SO tidak ditemukan")
+
+    old_links = [
+        link
+        for load in old_loads
+        for link in (load.get("document_links") or [])
+        if link.get("type") == "SO" and str(link.get("settlementBatchId") or "") == batch_id
+    ]
+    old_document_numbers = {str(link.get("no") or "").strip() for link in old_links if str(link.get("no") or "").strip()}
+    if len(old_document_numbers) != 1:
+        raise HTTPException(status_code=409, detail="Batch SO memiliki nomor dokumen yang tidak konsisten; koreksi dibatalkan")
+    old_document_no = next(iter(old_document_numbers))
+    old_party = next((str(link.get("party") or "").strip() for link in old_links if str(link.get("party") or "").strip()), "")
+
+    if body.cancel:
+        document_no = old_document_no
+        party = old_party
+        requested_sources = []
+    else:
+        document_no = body.documentNo.strip()
+        party = body.party.strip()
+        requested_sources = list(body.sources or [])
+        if not document_no.upper().startswith("SO/"):
+            raise HTTPException(status_code=400, detail="Nomor penyelesaian harus berupa dokumen SO")
+        if not party:
+            raise HTTPException(status_code=400, detail="Penerima/Tujuan SO wajib diisi")
+        if not requested_sources:
+            raise HTTPException(status_code=400, detail="Isi alokasi kuantum SO pada minimal satu dokumen sumber")
+
+        if document_no != old_document_no:
+            conflict_ref = await db.outbound_loads.find_one({"ref": document_no}, {"_id": 0, "id": 1})
+            conflict_link = await db.outbound_loads.find_one(
+                {"document_links": {"$elemMatch": {"no": document_no, "settlementBatchId": {"$ne": batch_id}}}},
+                {"_id": 0, "id": 1},
+            )
+            if conflict_ref or conflict_link:
+                raise HTTPException(status_code=409, detail="Nomor SO baru sudah digunakan")
+
+    old_load_ids = {str(load.get("id") or "") for load in old_loads if str(load.get("id") or "")}
+    requested_load_ids = {str(source.loadId or "").strip() for source in requested_sources if str(source.loadId or "").strip()}
+    all_load_ids = old_load_ids | requested_load_ids
+    snapshots = await db.outbound_loads.find({"id": {"$in": list(all_load_ids)}}, {"_id": 0}).to_list(500)
+    snapshots_by_id = {str(load.get("id") or ""): load for load in snapshots}
+    if len(snapshots_by_id) != len(all_load_ids):
+        raise HTTPException(status_code=404, detail="Salah satu pemuatan sumber tidak ditemukan")
+
+    source_keys = set()
+    resolved = []
+    document_types = set()
+    for allocation in requested_sources:
+        load_id = allocation.loadId.strip()
+        source_document_request = allocation.sourceDocumentNo.strip()
+        source_key = (load_id, source_document_request)
+        if source_key in source_keys:
+            raise HTTPException(status_code=400, detail="Dokumen sumber yang sama tidak boleh diulang")
+        source_keys.add(source_key)
+
+        load = snapshots_by_id[load_id]
+        if load.get("document_type") not in {"CT", "MEMO", "ND"} or load.get("status") != "Selesai":
+            raise HTTPException(status_code=400, detail="Semua sumber SO harus berasal dari CT, Memo, atau ND yang sudah selesai dimuat")
+        document_types.add(load.get("document_type"))
+
+        base_load = {
+            **load,
+            "document_links": [
+                link for link in (load.get("document_links") or [])
+                if not (link.get("type") == "SO" and str(link.get("settlementBatchId") or "") == batch_id)
+            ],
+        }
+        source_document = _resolve_source_document(base_load, source_document_request)
+        original = _source_product_totals(base_load, source_document)
+        if not original:
+            raise HTTPException(status_code=400, detail=f"{source_document} tidak memiliki komoditas yang dapat diselesaikan")
+        if len({item.productId for item in allocation.items}) != len(allocation.items):
+            raise HTTPException(status_code=400, detail=f"Produk pada {source_document} tidak boleh dicatat lebih dari satu baris")
+
+        items = []
+        for item in allocation.items:
+            source = original.get(item.productId)
+            if not source:
+                raise HTTPException(status_code=400, detail=f"Produk SO tidak terdapat pada dokumen sumber {source_document}")
+            returned, sold = _linked_totals(base_load, item.productId, source_document)
+            remaining = max(float(source.get("qty", 0) or 0) - returned - sold, 0)
+            qty = float(item.qty)
+            if qty <= 0:
+                continue
+            if qty > remaining + 1e-9:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Jumlah SO {source.get('name', '')} melebihi sisa {source_document} ({remaining:g} {source.get('unit', '')})",
+                )
+            items.append({
+                "productId": item.productId,
+                "name": source.get("name", ""),
+                "unit": source.get("unit", ""),
+                "channel": source.get("channel", ""),
+                "qty": qty,
+            })
+
+        if items:
+            resolved.append({
+                "loadId": load_id,
+                "sourceDocumentNo": source_document,
+                "items": items,
+                "load": load,
+            })
+
+    if not body.cancel:
+        if not resolved:
+            raise HTTPException(status_code=400, detail="Isi alokasi kuantum SO pada minimal satu dokumen sumber")
+        if len(document_types) > 1:
+            raise HTTPException(status_code=400, detail="Satu SO harus menggunakan jenis dokumen sumber yang sama")
+
+    old_transactions = await db.transactions.find(
+        {"settlement_batch_id": batch_id},
+        {"_id": 0},
+    ).to_list(10000)
+
+    allocations_by_load = defaultdict(list)
+    for allocation in resolved:
+        allocations_by_load[allocation["loadId"]].append(allocation)
+
+    timestamp = now_iso()
+    event_id = new_id()
+    audit_id = new_id()
+    replacement_transactions = []
+    replacement_loads = {}
+    old_total = sum(float(tx.get("settled_qty", 0) or 0) for tx in old_transactions)
+
+    for load_id in all_load_ids:
+        original_load = snapshots_by_id[load_id]
+        base_links = [
+            link for link in (original_load.get("document_links") or [])
+            if not (link.get("type") == "SO" and str(link.get("settlementBatchId") or "") == batch_id)
+        ]
+        new_links = list(base_links)
+        allocations = allocations_by_load.get(load_id, [])
+        if allocations and not body.cancel:
+            aggregate = {}
+            source_payloads = []
+            for allocation in allocations:
+                source_items = [dict(item) for item in allocation["items"]]
+                source_payloads.append({
+                    "sourceDocumentNo": allocation["sourceDocumentNo"],
+                    "items": source_items,
+                })
+                for item in source_items:
+                    row = aggregate.setdefault(item["productId"], {**item, "qty": 0.0})
+                    row["qty"] += float(item["qty"])
+                    replacement_transactions.append({
+                        "id": new_id(),
+                        "load_id": load_id,
+                        "settlement_batch_id": batch_id,
+                        "time": timestamp,
+                        "ref": document_no,
+                        "type": "DOKUMEN",
+                        "kondisi": "—",
+                        "document_type": "SO",
+                        "parent_document": allocation["sourceDocumentNo"],
+                        "product": item["name"],
+                        "change": 0,
+                        "settled_qty": item["qty"],
+                        "unit": item["unit"],
+                        "channel": item.get("channel", ""),
+                        "penerima": party,
+                        "pengambil": original_load.get("pengambil", ""),
+                        "polisi": original_load.get("polisi", ""),
+                        "operator": user.get("name", ""),
+                        "keterangan": body.note.strip(),
+                    })
+            source_numbers = [row["sourceDocumentNo"] for row in source_payloads]
+            new_links.append({
+                "id": new_id(),
+                "settlementBatchId": batch_id,
+                "type": "SO",
+                "no": document_no,
+                "sourceDocumentNo": source_numbers[0] if len(source_numbers) == 1 else "",
+                "sourceDocumentNos": source_numbers,
+                "sources": source_payloads,
+                "time": timestamp,
+                "party": party,
+                "items": list(aggregate.values()),
+                "note": body.note.strip(),
+                "operator": user.get("name", ""),
+                "correctedFrom": old_document_no,
+            })
+
+        candidate = {**original_load, "document_links": new_links}
+        correction_event = {
+            "id": event_id,
+            "time": timestamp,
+            "by": user.get("name", ""),
+            "reason": body.reason.strip(),
+            "type": "BATAL_PENYELESAIAN_SO" if body.cancel else "KOREKSI_PENYELESAIAN_SO",
+            "settlementBatchId": batch_id,
+            "before": {"documentNo": old_document_no},
+            "after": {"documentNo": "" if body.cancel else document_no},
+        }
+        candidate["settlement_correction_history"] = list(original_load.get("settlement_correction_history") or []) + [correction_event]
+        candidate["document_status"] = _document_link_status(candidate)
+        candidate["updated_at"] = timestamp
+        replacement_loads[load_id] = candidate
+
+    new_total = sum(float(tx.get("settled_qty", 0) or 0) for tx in replacement_transactions)
+
+    written_loads = []
+    try:
+        for load_id, candidate in replacement_loads.items():
+            result = await db.outbound_loads.replace_one({"id": load_id}, candidate, upsert=False)
+            if not result.matched_count:
+                raise HTTPException(status_code=409, detail="Pemuatan sumber berubah saat koreksi")
+            written_loads.append(load_id)
+
+        await db.transactions.delete_many({"settlement_batch_id": batch_id})
+        if replacement_transactions:
+            await db.transactions.insert_many(replacement_transactions)
+
+        await db.transactions.insert_one({
+            "id": audit_id,
+            "operation_id": audit_id,
+            "time": timestamp,
+            "ref": old_document_no if body.cancel else document_no,
+            "type": "KOREKSI",
+            "kondisi": "DOKUMEN",
+            "document_type": "BATAL_PENYELESAIAN_SO" if body.cancel else "KOREKSI_PENYELESAIAN_SO",
+            "parent_document": "",
+            "product": "Penyelesaian SO",
+            "change": 0,
+            "unit": "",
+            "operator": user.get("name", ""),
+            "keterangan": body.reason.strip(),
+            "correction_reason": body.reason.strip(),
+            "settlement_correction_batch_id": batch_id,
+            "old_document_no": old_document_no,
+            "new_document_no": "" if body.cancel else document_no,
+            "old_settled_qty": old_total,
+            "new_settled_qty": 0 if body.cancel else new_total,
+            "affected_load_ids": sorted(all_load_ids),
+            "correction_event_id": event_id,
+        })
+    except Exception:
+        await db.transactions.delete_many({"settlement_batch_id": batch_id})
+        if old_transactions:
+            await db.transactions.insert_many([dict(row) for row in old_transactions])
+        await db.transactions.delete_one({"id": audit_id})
+        for load_id in written_loads:
+            snapshot = snapshots_by_id[load_id]
+            await db.outbound_loads.replace_one({"id": load_id}, snapshot, upsert=True)
+        raise
+
+    return {
+        "ok": True,
+        "settlementBatchId": batch_id,
+        "cancelled": body.cancel,
+        "oldDocumentNo": old_document_no,
+        "documentNo": "" if body.cancel else document_no,
+        "oldSettledQty": old_total,
+        "newSettledQty": 0 if body.cancel else new_total,
+        "affectedLoads": sorted(all_load_ids),
+    }
 
 
 @router.post("/outbound-loads/{load_id}/settle")
