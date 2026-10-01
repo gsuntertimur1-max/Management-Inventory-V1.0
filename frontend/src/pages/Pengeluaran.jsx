@@ -90,13 +90,14 @@ const DocumentBalance = ({ documentNo }) => {
 };
 
 const Pengeluaran = () => {
-  const { user, outboundLoads, suratJalan, settings, stackAllocations, startOutboundLoad, completeOutboundLoad, createConsignmentReturn, createSalesReturn, settleOutboundDocument, settleOutboundDocuments, cancelOutboundLoad, editOutboundLoad, correctOutboundStack, correctOutboundDocumentNumber, refreshOutboundLoads, refreshOutboundSnapshot } = useData();
+  const { user, outboundLoads, suratJalan, settings, stackAllocations, startOutboundLoad, completeOutboundLoad, createConsignmentReturn, createSalesReturn, settleOutboundDocument, settleOutboundDocuments, correctOutboundSettlement, cancelOutboundLoad, editOutboundLoad, correctOutboundStack, correctOutboundDocumentNumber, refreshOutboundLoads, refreshOutboundSnapshot } = useData();
   const STACKS = stackCodes(settings?.warehouses);
   const navigate = useNavigate();
   const [filter, setFilter] = useState('Semua Status');
   const [query, setQuery] = useState('');
   const [busyId, setBusyId] = useState('');
   const [documentModal, setDocumentModal] = useState(null);
+  const [settlementCorrectionModal, setSettlementCorrectionModal] = useState(null);
   const [costBusy, setCostBusy] = useState(false);
   const [paymentModal, setPaymentModal] = useState(null);
   const [cancelModal, setCancelModal] = useState(null);
@@ -222,22 +223,145 @@ const Pengeluaran = () => {
     const remaining = mode === 'SO_RETUR' ? salesReturnRemaining(load, item, sourceDocumentNo) : remainingQty(load, item, sourceDocumentNo);
     return { productId: item.productId, name: item.name, unit: item.unit, goodQty: 0, stackCode: item.location || '', placements: [{ goodQty: 0, stackCode: item.location || '' }], damagedQty: 0, remaining };
   });
-  const soSourceRowsFor = (anchorLoad) => {
+  const settlementQtyFor = (load, batchId, sourceDocumentNo, productId) => (load.document_links || [])
+    .filter((link) => link.type === 'SO' && String(link.settlementBatchId || '') === String(batchId || ''))
+    .reduce((total, link) => {
+      if (Array.isArray(link.sources)) {
+        return total + link.sources
+          .filter((source) => source.sourceDocumentNo === sourceDocumentNo)
+          .reduce((sourceTotal, source) => sourceTotal + (source.items || [])
+            .filter((item) => item.productId === productId)
+            .reduce((sum, item) => sum + Number(item.qty || 0), 0), 0);
+      }
+      if ((link.sourceDocumentNo || load.ref || '') !== sourceDocumentNo) return total;
+      return total + (link.items || []).filter((item) => item.productId === productId).reduce((sum, item) => sum + Number(item.qty || 0), 0);
+    }, 0);
+
+  const soSourceRowsFor = (anchorLoad, correctionBatchId = '') => {
     const anchorSourceDocument = (anchorLoad.documents || [anchorLoad.ref])[0] || anchorLoad.ref || '';
     return outboundLoads
     .filter((load) => load.status === 'Selesai' && load.document_type === anchorLoad.document_type)
-    .flatMap((load) => (load.documents || [load.ref]).flatMap((sourceDocumentNo) => sourceItemsFor(load, sourceDocumentNo).map((item) => ({
-      loadId: load.id,
-      sourceDocumentNo,
-      productId: item.productId,
-      name: item.name,
-      unit: item.unit,
-      party: (load.document_parties || load.so_document_parties || {})[String(sourceDocumentNo || '').trim().toUpperCase()] || load.party || '',
-      remaining: remainingQty(load, item, sourceDocumentNo),
-      qty: 0,
-      isCurrent: load.id === anchorLoad.id && sourceDocumentNo === anchorSourceDocument,
-    })).filter((row) => row.remaining > 0)))
+    .flatMap((load) => (load.documents || [load.ref]).flatMap((sourceDocumentNo) => sourceItemsFor(load, sourceDocumentNo).map((item) => {
+      const currentQty = correctionBatchId ? settlementQtyFor(load, correctionBatchId, sourceDocumentNo, item.productId) : 0;
+      const available = remainingQty(load, item, sourceDocumentNo) + currentQty;
+      return {
+        loadId: load.id,
+        sourceDocumentNo,
+        productId: item.productId,
+        name: item.name,
+        unit: item.unit,
+        party: (load.document_parties || load.so_document_parties || {})[String(sourceDocumentNo || '').trim().toUpperCase()] || load.party || '',
+        remaining: available,
+        qty: correctionBatchId ? currentQty : 0,
+        currentQty,
+        isCurrent: load.id === anchorLoad.id && sourceDocumentNo === anchorSourceDocument,
+      };
+    }).filter((row) => row.remaining > 0)))
     .sort((a, b) => Number(b.isCurrent) - Number(a.isCurrent) || a.sourceDocumentNo.localeCompare(b.sourceDocumentNo) || a.name.localeCompare(b.name));
+  };
+
+  const fillAllSameSource = (modal, setter) => {
+    if (!modal) return;
+    const sourceDocumentNo = (modal.load.documents || [modal.load.ref])[0] || modal.load.ref || '';
+    setter({
+      ...modal,
+      sources: (modal.sources || []).map((row) => ({
+        ...row,
+        qty: row.sourceDocumentNo === sourceDocumentNo ? Number(row.remaining || 0) : 0,
+      })),
+    });
+  };
+
+  const openSettlementCorrection = (load) => {
+    const localLinks = (load.document_links || []).filter((link) => link.type === 'SO' && link.settlementBatchId);
+    if (!localLinks.length) {
+      toast.error('Tautan SO ini belum memiliki batch koreksi');
+      return;
+    }
+    const link = localLinks[localLinks.length - 1];
+    const batchId = link.settlementBatchId;
+    const batchLinks = outboundLoads.flatMap((row) => (row.document_links || [])
+      .filter((entry) => entry.type === 'SO' && entry.settlementBatchId === batchId));
+    const sourceDocuments = new Set(batchLinks.flatMap((entry) => {
+      if (Array.isArray(entry.sources)) return entry.sources.map((source) => source.sourceDocumentNo).filter(Boolean);
+      return [entry.sourceDocumentNo].filter(Boolean);
+    }));
+    const sources = soSourceRowsFor(load, batchId).filter((row) => sourceDocuments.has(row.sourceDocumentNo));
+    setSettlementCorrectionModal({
+      load,
+      batchId,
+      documentNo: link.no || '',
+      party: link.party || load.party || '',
+      note: link.note || '',
+      reason: '',
+      sources,
+    });
+  };
+
+  const updateSettlementCorrectionSource = (index, patch) => setSettlementCorrectionModal((prev) => ({
+    ...prev,
+    sources: prev.sources.map((item, i) => i === index ? { ...item, ...patch } : item),
+  }));
+
+  const saveSettlementCorrection = async () => {
+    if (!settlementCorrectionModal || busyId) return;
+    const documentNo = String(settlementCorrectionModal.documentNo || '').trim();
+    const party = String(settlementCorrectionModal.party || '').trim();
+    const reason = String(settlementCorrectionModal.reason || '').trim();
+    if (!documentNo) return toast.error('Isi nomor SO');
+    if (!party) return toast.error('Isi Penerima/Tujuan SO');
+    if (reason.length < 3) return toast.error('Isi alasan koreksi minimal 3 karakter');
+    const selected = (settlementCorrectionModal.sources || []).filter((row) => Number(row.qty || 0) > 0);
+    if (!selected.length) return toast.error('Isi kuantum SO minimal pada satu pemuatan');
+    const invalid = selected.find((row) => Number(row.qty || 0) > Number(row.remaining || 0) + 1e-9);
+    if (invalid) return toast.error(`Alokasi ${invalid.sourceDocumentNo} melebihi kapasitas yang dapat dikoreksi`);
+
+    const grouped = {};
+    selected.forEach((row) => {
+      const key = `${row.loadId}|${row.sourceDocumentNo}`;
+      grouped[key] = grouped[key] || { loadId: row.loadId, sourceDocumentNo: row.sourceDocumentNo, items: [] };
+      grouped[key].items.push({ productId: row.productId, qty: Number(row.qty) });
+    });
+
+    if (!window.confirm(`Simpan koreksi penyelesaian ${documentNo}? Koreksi ini hanya mengubah hubungan dokumen dan tidak mengubah stok fisik.`)) return;
+    setBusyId(settlementCorrectionModal.load.id);
+    try {
+      const result = await correctOutboundSettlement(settlementCorrectionModal.batchId, {
+        documentNo,
+        party,
+        note: settlementCorrectionModal.note || '',
+        reason,
+        cancel: false,
+        sources: Object.values(grouped),
+      });
+      toast.success(`Penyelesaian SO dikoreksi: ${formatNum(result?.oldSettledQty || 0)} → ${formatNum(result?.newSettledQty || 0)}`);
+      setSettlementCorrectionModal(null);
+    } catch (e) {
+      toast.error(apiError(e));
+    } finally {
+      setBusyId('');
+    }
+  };
+
+  const cancelSettlementCorrection = async () => {
+    if (!settlementCorrectionModal || busyId) return;
+    const reason = String(settlementCorrectionModal.reason || '').trim();
+    if (reason.length < 3) return toast.error('Isi alasan pembatalan minimal 3 karakter');
+    if (!window.confirm(`Batalkan seluruh tautan ${settlementCorrectionModal.documentNo} pada batch ini? Outstanding dokumen sumber akan kembali, stok fisik tidak berubah.`)) return;
+    setBusyId(settlementCorrectionModal.load.id);
+    try {
+      await correctOutboundSettlement(settlementCorrectionModal.batchId, {
+        reason,
+        cancel: true,
+        sources: [],
+      });
+      toast.success('Tautan SO dibatalkan dan outstanding dokumen sumber dikembalikan');
+      setSettlementCorrectionModal(null);
+    } catch (e) {
+      toast.error(apiError(e));
+    } finally {
+      setBusyId('');
+    }
   };
 
   const openLinkedDocument = (load, mode) => {
@@ -691,7 +815,7 @@ const Pengeluaran = () => {
                     <td className="py-3 pr-4"><div className="flex flex-wrap gap-2 min-w-[270px]">
                       {load.status === 'Menunggu' && canOperateOutbound && <>{isSuperadmin && <><button disabled={busyId === load.id} onClick={() => openEdit(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#f59e0b] text-[#fbbf24] hover:bg-[#f59e0b]/10 disabled:opacity-50">Edit</button><button disabled={busyId === load.id} onClick={() => openDocumentNumberCorrection(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#a855f7] text-[#c084fc] hover:bg-[#a855f7]/10 disabled:opacity-50">Koreksi Nomor</button></>}<button disabled={busyId === load.id} onClick={() => startAndPrint(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#2563eb] text-[#60a5fa] hover:bg-[#2563eb]/10 disabled:opacity-50"><Play size={13} /> Mulai Muat & Cetak Bon</button>{load.weighing_form && <button onClick={() => printWeighingForm(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#294263] text-[#93c5fd]"><Printer size={13} /> Cetak Timbangan</button>}<button disabled={busyId === load.id} onClick={() => setCancelModal({ load, documentNo: '', reason: '' })} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#ef4444] text-[#f87171] hover:bg-[#ef4444]/10 disabled:opacity-50">Batalkan</button></>}
                       {load.status === 'Sedang Dimuat' && <>{isSuperadmin && <button disabled={busyId === load.id} onClick={() => openDocumentNumberCorrection(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#a855f7] text-[#c084fc] hover:bg-[#a855f7]/10 disabled:opacity-50">Koreksi Nomor</button>}<button onClick={() => printBon(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#242f3d] hover:bg-[#141a24]"><Printer size={13} /> Cetak Bon</button>{load.weighing_form && <button onClick={() => printWeighingForm(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#294263] text-[#93c5fd]"><Printer size={13} /> Cetak Ulang Timbangan</button>}{canOperateOutbound && <><button disabled={busyId === load.id} onClick={() => finishLoading(load)} className="btn-primary inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg disabled:opacity-50"><CheckCircle2 size={13} /> Selesai Muat</button><button disabled={busyId === load.id} onClick={() => setCancelModal({ load, documentNo: '', reason: '' })} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#ef4444] text-[#f87171] hover:bg-[#ef4444]/10 disabled:opacity-50">Batalkan</button></>}</>}
-                      {load.status === 'Selesai' && <>{canOperateOutbound && <>{Number(load.loading_cost?.chargeable || 0) > Number(load.loading_fee_payment_total || 0) && <button onClick={() => setPaymentModal({ load, amount: Math.max(Number(load.loading_cost?.chargeable || 0) - Number(load.loading_fee_payment_total || 0), 0), method: 'TUNAI', payer: load.pengambil || load.party || '', note: '' })} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#f59e0b] text-[#fbbf24]"><CheckCircle2 size={13} /> Catat Bayar Muat</button>}{load.document_type === 'SO' && <button onClick={() => openLinkedDocument(load, 'SO_RETUR')} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#f59e0b] text-[#fbbf24]"><RotateCcw size={13} /> Catat Retur SO</button>}{load.document_type === 'CT' && <button onClick={() => openLinkedDocument(load, 'CR')} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#f59e0b] text-[#fbbf24]"><RotateCcw size={13} /> Catat CR</button>}{['MEMO', 'ND'].includes(load.document_type) && <button onClick={() => openLinkedDocument(load, 'RETUR')} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#f59e0b] text-[#fbbf24]"><RotateCcw size={13} /> Catat Retur</button>}{['CT', 'MEMO', 'ND'].includes(load.document_type) && <button onClick={() => openLinkedDocument(load, 'SO')} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#2563eb] text-[#60a5fa]"><Link2 size={13} /> Tautkan SO</button>}</>}{isSuperadmin && String(load.kondisi || 'BAIK').toUpperCase() === 'BAIK' && (load.items || []).some((item) => item.stackCode) && <button disabled={busyId === load.id} onClick={() => openStackCorrection(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#a855f7] text-[#c084fc] hover:bg-[#a855f7]/10 disabled:opacity-50">Koreksi Tumpukan</button>}<button onClick={() => printBon(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#242f3d] hover:bg-[#141a24]"><Printer size={13} /> Cetak Bon</button><button onClick={() => printSuratJalan(sj)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#22c55e] text-[#4ade80] hover:bg-[#22c55e]/10"><Printer size={13} /> Cetak Surat Jalan</button>{load.weighing_form && <button onClick={() => printWeighingForm(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#294263] text-[#93c5fd]"><Printer size={13} /> Cetak Ulang Timbangan</button>}</>}
+                      {load.status === 'Selesai' && <>{canOperateOutbound && <>{Number(load.loading_cost?.chargeable || 0) > Number(load.loading_fee_payment_total || 0) && <button onClick={() => setPaymentModal({ load, amount: Math.max(Number(load.loading_cost?.chargeable || 0) - Number(load.loading_fee_payment_total || 0), 0), method: 'TUNAI', payer: load.pengambil || load.party || '', note: '' })} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#f59e0b] text-[#fbbf24]"><CheckCircle2 size={13} /> Catat Bayar Muat</button>}{load.document_type === 'SO' && <button onClick={() => openLinkedDocument(load, 'SO_RETUR')} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#f59e0b] text-[#fbbf24]"><RotateCcw size={13} /> Catat Retur SO</button>}{load.document_type === 'CT' && <button onClick={() => openLinkedDocument(load, 'CR')} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#f59e0b] text-[#fbbf24]"><RotateCcw size={13} /> Catat CR</button>}{['MEMO', 'ND'].includes(load.document_type) && <button onClick={() => openLinkedDocument(load, 'RETUR')} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#f59e0b] text-[#fbbf24]"><RotateCcw size={13} /> Catat Retur</button>}{['CT', 'MEMO', 'ND'].includes(load.document_type) && <button onClick={() => openLinkedDocument(load, 'SO')} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#2563eb] text-[#60a5fa]"><Link2 size={13} /> Tautkan SO</button>}{isSuperadmin && ['CT', 'MEMO', 'ND'].includes(load.document_type) && (load.document_links || []).some((link) => link.type === 'SO' && link.settlementBatchId) && <button onClick={() => openSettlementCorrection(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#a855f7] text-[#d8b4fe] hover:bg-[#a855f7]/10">Koreksi SO</button>}</>}{isSuperadmin && String(load.kondisi || 'BAIK').toUpperCase() === 'BAIK' && (load.items || []).some((item) => item.stackCode) && <button disabled={busyId === load.id} onClick={() => openStackCorrection(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#a855f7] text-[#c084fc] hover:bg-[#a855f7]/10 disabled:opacity-50">Koreksi Tumpukan</button>}<button onClick={() => printBon(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#242f3d] hover:bg-[#141a24]"><Printer size={13} /> Cetak Bon</button><button onClick={() => printSuratJalan(sj)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#22c55e] text-[#4ade80] hover:bg-[#22c55e]/10"><Printer size={13} /> Cetak Surat Jalan</button>{load.weighing_form && <button onClick={() => printWeighingForm(load)} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-[#294263] text-[#93c5fd]"><Printer size={13} /> Cetak Ulang Timbangan</button>}</>}
                     </div></td>
                   </tr>
                 );
@@ -809,6 +933,66 @@ const Pengeluaran = () => {
       <Dialog open={Boolean(editModal)} onOpenChange={(open) => { if (!open && !busyId) setEditModal(null); }}><DialogContent className="max-w-2xl border-[#242f3d] bg-[#0d121b] text-[#e7ebf2]"><DialogHeader><DialogTitle>Koreksi Pengeluaran</DialogTitle><DialogDescription className="text-[#8b93a1]">Khusus Superadmin · hanya tersedia sebelum pemuatan dimulai. Riwayat koreksi tetap disimpan.</DialogDescription></DialogHeader>{editModal && <div className="space-y-4"><div className="grid grid-cols-1 sm:grid-cols-2 gap-3"><div><label className="text-sm block mb-1">Nomor Polisi</label><input value={editModal.polisi} onChange={(e) => setEditModal({ ...editModal, polisi: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5" /></div><div><label className="text-sm block mb-1">Nama Sopir / Pengambil</label><input value={editModal.pengambil} onChange={(e) => setEditModal({ ...editModal, pengambil: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5" /></div></div><div><label className="text-sm block mb-1">Nomor Dokumen</label>{editModal.documents.map((doc, index) => <input key={index} value={doc} onChange={(e) => { const documents = [...editModal.documents]; documents[index] = e.target.value; setEditModal({ ...editModal, documents }); }} className="w-full mb-2 bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 font-mono text-sm" />)}</div><div className="space-y-2">{editModal.items.map((item, index) => <div key={index} className="grid grid-cols-1 sm:grid-cols-[1fr_110px_190px] gap-2 rounded-lg border border-[#202a38] bg-[#0b0f17] p-3"><div><div className="text-sm font-semibold">{item.name}</div><div className="text-xs text-[#8b93a1]">{item.unit}</div></div><div><label className="text-xs text-[#8b93a1]">Kuantum awal dokumen</label><input aria-label="Kuantum awal dokumen" type="number" min="0.01" step="any" value={item.documentQty || ''} onChange={(e) => updateEditItem(index, { documentQty: e.target.value })} placeholder="Total asli" className="w-full mt-1 mb-2 bg-[#0d121b] border border-[#242f3d] rounded-lg px-3 py-2" /><label className="text-xs text-[#8b93a1]">Kuantum muat</label><input type="number" min="0.01" step="any" value={item.qty} onChange={(e) => updateEditItem(index, { qty: e.target.value })} className="w-full mt-1 bg-[#0d121b] border border-[#242f3d] rounded-lg px-3 py-2" /></div><div><label className="text-xs text-[#8b93a1]">Dokumen sumber</label><select value={item.documentNo || editModal.documents[0] || ''} onChange={(e) => updateEditItem(index, { documentNo: e.target.value })} className="w-full mt-1 bg-[#0d121b] border border-[#242f3d] rounded-lg px-2 py-2 text-xs">{editModal.documents.map((doc) => <option key={doc} value={doc}>{doc || 'Isi dokumen...'}</option>)}</select></div></div>)}</div></div>}<DialogFooter><button disabled={Boolean(busyId)} onClick={() => setEditModal(null)} className="px-4 py-2 border border-[#242f3d] rounded-lg">Batal</button><button disabled={Boolean(busyId)} onClick={saveEdit} className="btn-primary px-4 py-2 rounded-lg disabled:opacity-50">{busyId ? 'Menyimpan...' : 'Simpan Koreksi'}</button></DialogFooter></DialogContent></Dialog>
       <Dialog open={Boolean(cancelModal)} onOpenChange={(open) => { if (!open && !busyId) setCancelModal(null); }}><DialogContent className="max-w-md border-[#242f3d] bg-[#0d121b] text-[#e7ebf2]"><DialogHeader><DialogTitle>Batalkan Dokumen Pengeluaran</DialogTitle><DialogDescription className="text-[#8b93a1]">Pembatalan sebelum Selesai Muat tidak mengurangi stok dan melepaskan reservasi dokumen/barang yang dibatalkan. Riwayat pembatalan tetap disimpan. Dokumen yang sudah selesai harus dikoreksi melalui retur atau dokumen balik.</DialogDescription></DialogHeader>{cancelModal && <div className="space-y-3"><div><label className="text-sm block mb-1">Dokumen yang dibatalkan</label><select value={cancelModal.documentNo} onChange={(e) => setCancelModal({ ...cancelModal, documentNo: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5"><option value="">Semua dokumen pada antrian</option>{(cancelModal.load.documents || [cancelModal.load.ref]).map((doc) => <option key={doc} value={doc}>{doc}</option>)}</select><p className="text-xs text-[#8b93a1] mt-1">Pilih satu dokumen untuk pembatalan sebagian pada pemuatan multi-dokumen. Jika pemuatan sudah dimulai, dokumen lain tetap berstatus Sedang Dimuat.</p></div><div><label className="text-sm block mb-1">Alasan pembatalan</label><textarea rows="3" value={cancelModal.reason} onChange={(e) => setCancelModal({ ...cancelModal, reason: e.target.value })} placeholder="Contoh: permintaan dibatalkan oleh penerima" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5" /></div></div>}<DialogFooter><button disabled={Boolean(busyId)} onClick={() => setCancelModal(null)} className="px-4 py-2 border border-[#242f3d] rounded-lg">Kembali</button><button disabled={Boolean(busyId)} onClick={saveCancellation} className="px-4 py-2 rounded-lg bg-[#dc2626] text-white disabled:opacity-50">{busyId ? 'Membatalkan...' : 'Simpan Pembatalan'}</button></DialogFooter></DialogContent></Dialog>
       <Dialog open={Boolean(paymentModal)} onOpenChange={(open) => { if (!open && !costBusy) setPaymentModal(null); }}><DialogContent className="max-w-md border-[#242f3d] bg-[#0d121b] text-[#e7ebf2]"><DialogHeader><DialogTitle>Pembayaran Biaya Pemuatan</DialogTitle><DialogDescription className="text-[#8b93a1]">Dokumen {paymentModal?.load?.ref} · biaya ini hanya catatan internal.</DialogDescription></DialogHeader>{paymentModal && <div className="space-y-3"><div><label className="text-sm block mb-1">Nominal diterima</label><input type="number" min="1" value={paymentModal.amount} onChange={(e) => setPaymentModal({ ...paymentModal, amount: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 font-mono" /></div><div><label className="text-sm block mb-1">Metode</label><select value={paymentModal.method} onChange={(e) => setPaymentModal({ ...paymentModal, method: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5"><option value="TUNAI">Tunai</option><option value="TRANSFER">Transfer</option><option value="PIUTANG">Piutang / Disetujui</option></select></div><div><label className="text-sm block mb-1">Nama pembayar</label><input value={paymentModal.payer} onChange={(e) => setPaymentModal({ ...paymentModal, payer: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5" /></div><textarea rows="2" value={paymentModal.note} onChange={(e) => setPaymentModal({ ...paymentModal, note: e.target.value })} placeholder="Catatan (opsional)" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5" /></div>}<DialogFooter><button onClick={() => setPaymentModal(null)} className="px-4 py-2 border border-[#242f3d] rounded-lg">Batal</button><button disabled={costBusy} onClick={saveLoadingPayment} className="btn-primary px-4 py-2 rounded-lg">{costBusy ? 'Menyimpan...' : 'Simpan Pembayaran'}</button></DialogFooter></DialogContent></Dialog>
+      <Dialog open={Boolean(settlementCorrectionModal)} onOpenChange={(open) => { if (!open && !busyId) setSettlementCorrectionModal(null); }}>
+        <DialogContent className="max-w-2xl max-h-[calc(100dvh-2rem)] sm:max-h-[90vh] overflow-y-auto border-[#242f3d] bg-[#0d121b] text-[#e7ebf2]">
+          <DialogHeader>
+            <DialogTitle>Koreksi Penyelesaian SO</DialogTitle>
+            <DialogDescription className="text-[#8b93a1]">
+              Koreksi ini hanya mengubah hubungan SO dengan Memo/ND/CT. Stok fisik, tumpukan, Bon Muat, dan Surat Jalan tidak berubah.
+            </DialogDescription>
+          </DialogHeader>
+          {settlementCorrectionModal && <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm block mb-1">Nomor SO</label>
+                <input value={settlementCorrectionModal.documentNo} onChange={(e) => setSettlementCorrectionModal({ ...settlementCorrectionModal, documentNo: e.target.value })} className="w-full bg-[#0b0f17] border border-[#a855f7] rounded-lg px-3 py-2.5 font-mono" />
+              </div>
+              <div>
+                <label className="text-sm block mb-1">Penerima / Tujuan</label>
+                <input value={settlementCorrectionModal.party} onChange={(e) => setSettlementCorrectionModal({ ...settlementCorrectionModal, party: e.target.value })} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5" />
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={() => fillAllSameSource(settlementCorrectionModal, setSettlementCorrectionModal)} className="rounded-lg border border-[#2563eb] px-3 py-2 text-xs font-semibold text-[#93c5fd] hover:bg-[#2563eb]/10">
+                Ambil Semua Sisa {settlementCorrectionModal.load.document_type}
+              </button>
+              <span className="self-center text-[10px] text-[#8b93a1]">Kapasitas tiap baris sudah termasuk alokasi SO lama yang sedang dikoreksi.</span>
+            </div>
+            <div className="space-y-2">
+              {(settlementCorrectionModal.sources || []).map((row, index) => <div key={`${row.loadId}-${row.sourceDocumentNo}-${row.productId}`} className="rounded-lg border border-[#263244] bg-[#0b0f17] p-3">
+                <div className="flex flex-wrap justify-between gap-2">
+                  <div>
+                    <div className="font-mono text-xs text-[#93c5fd]">{row.sourceDocumentNo}</div>
+                    <div className="text-sm font-semibold">{row.name}</div>
+                    <div className="text-[10px] text-[#8b93a1]">Pemuatan {outboundLoads.find((load) => load.id === row.loadId)?.bon_no || row.loadId}</div>
+                  </div>
+                  <div className="text-right text-xs">
+                    <div className="text-[#8b93a1]">Alokasi sebelumnya</div>
+                    <div className="font-mono">{formatNum(row.currentQty || 0)} {row.unit}</div>
+                    <div className="text-[#8b93a1] mt-1">Maksimum koreksi</div>
+                    <div className="font-mono text-[#fbbf24]">{formatNum(row.remaining)} {row.unit}</div>
+                  </div>
+                </div>
+                <input type="number" min="0" max={row.remaining} step="any" value={row.qty} onChange={(e) => updateSettlementCorrectionSource(index, { qty: e.target.value })} className="w-full mt-3 bg-[#0d121b] border border-[#a855f7]/60 rounded-lg px-3 py-2 font-mono" />
+              </div>)}
+            </div>
+            <div className="flex justify-between rounded-lg border border-[#263244] bg-[#101722] px-3 py-2 text-sm">
+              <span>Total penyelesaian setelah koreksi</span>
+              <span className="font-mono font-semibold text-[#d8b4fe]">{formatNum((settlementCorrectionModal.sources || []).reduce((sum, row) => sum + Number(row.qty || 0), 0))}</span>
+            </div>
+            <div>
+              <label className="text-sm block mb-1">Alasan koreksi / pembatalan</label>
+              <textarea rows="3" value={settlementCorrectionModal.reason} onChange={(e) => setSettlementCorrectionModal({ ...settlementCorrectionModal, reason: e.target.value })} placeholder="Contoh: kuantum SO yang diterbitkan berbeda dari input sebelumnya" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5" />
+            </div>
+            <textarea rows="2" value={settlementCorrectionModal.note} onChange={(e) => setSettlementCorrectionModal({ ...settlementCorrectionModal, note: e.target.value })} placeholder="Catatan SO (opsional)" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5" />
+          </div>}
+          <DialogFooter className="flex-wrap">
+            <button disabled={Boolean(busyId)} onClick={() => setSettlementCorrectionModal(null)} className="px-4 py-2 border border-[#242f3d] rounded-lg">Tutup</button>
+            <button disabled={Boolean(busyId)} onClick={cancelSettlementCorrection} className="px-4 py-2 border border-[#ef4444] text-[#f87171] rounded-lg disabled:opacity-50">Batalkan Tautan SO</button>
+            <button disabled={Boolean(busyId)} onClick={saveSettlementCorrection} className="px-4 py-2 bg-[#7e22ce] text-white rounded-lg disabled:opacity-50">{busyId ? 'Menyimpan...' : 'Simpan Koreksi SO'}</button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={Boolean(documentModal)} onOpenChange={(open) => { if (!open && !busyId) setDocumentModal(null); }}>
         <DialogContent className="max-w-2xl max-h-[calc(100dvh-2rem)] sm:max-h-[90vh] overflow-y-auto overscroll-contain touch-pan-y border-[#242f3d] bg-[#0d121b] text-[#e7ebf2]">
           <DialogHeader>
@@ -847,6 +1031,12 @@ const Pengeluaran = () => {
             {documentModal.mode === 'SO' ? <div className="space-y-3">
               <div className="rounded-lg border border-[#1d4ed8]/40 bg-[#0b1424] px-3 py-2 text-xs text-[#93c5fd]">
                 Alokasi SO dapat dibagi ke beberapa dokumen sumber. Contoh: ND1 sisa 100 + ND2 sisa 100 = SO 200 dengan nomor SO yang sama.
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={() => fillAllSameSource(documentModal, setDocumentModal)} className="inline-flex items-center gap-2 rounded-lg border border-[#2563eb] px-3 py-2 text-xs font-semibold text-[#93c5fd] hover:bg-[#2563eb]/10">
+                  Ambil Semua Sisa {documentModal.load.document_type}
+                </button>
+                <span className="self-center text-[10px] text-[#8b93a1]">Mengisi otomatis seluruh sisa pemuatan yang memakai nomor {((documentModal.load.documents || [documentModal.load.ref])[0] || documentModal.load.ref || '')}.</span>
               </div>
               {(documentModal.sources || []).length ? (documentModal.sources || []).map((row, index) => <div key={`${row.loadId}-${row.sourceDocumentNo}-${row.productId}`} className={`rounded-lg border p-3 ${row.isCurrent ? 'border-[#2563eb]/60 bg-[#0b1424]' : 'border-[#202a38] bg-[#0b0f17]'}`}>
                 <div className="flex flex-wrap items-start justify-between gap-2">
