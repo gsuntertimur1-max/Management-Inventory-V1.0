@@ -362,6 +362,269 @@ async def build_so_monitoring() -> dict:
     }
 
 
+
+SOURCE_DOCUMENT_TYPES = {"MEMO", "ND", "CT"}
+
+
+def _load_document_refs(load: dict, document_type: str) -> set[str]:
+    refs: set[str] = set()
+    if str(load.get("document_type") or "").upper() != document_type:
+        return refs
+    fallback = _doc_key(load.get("ref"))
+    for value in [load.get("ref"), *(load.get("documents") or [])]:
+        key = _doc_key(value)
+        if key:
+            refs.add(key)
+    for item in load.get("items", []):
+        key = _doc_key(item.get("documentNo") or fallback)
+        if key:
+            refs.add(key)
+    for event in load.get("cancellation_history", []):
+        for value in event.get("documents", []):
+            key = _doc_key(value)
+            if key:
+                refs.add(key)
+        for item in event.get("items", []):
+            key = _doc_key(item.get("documentNo") or fallback)
+            if key:
+                refs.add(key)
+    return refs
+
+
+def _current_items_for_document(load: dict, document_no: str) -> list[dict]:
+    target = _doc_key(document_no)
+    fallback = _doc_key(load.get("ref"))
+    return [
+        item for item in load.get("items", [])
+        if _doc_key(item.get("documentNo") or fallback) == target
+    ]
+
+
+def _cancelled_items_for_document(load: dict, document_no: str) -> list[dict]:
+    target = _doc_key(document_no)
+    fallback = _doc_key(load.get("ref"))
+    rows: list[dict] = []
+    for event in load.get("cancellation_history", []):
+        event_docs = {_doc_key(value) for value in event.get("documents", [])}
+        for item in event.get("items", []):
+            item_doc = _doc_key(item.get("documentNo") or fallback)
+            if item_doc == target or target in event_docs:
+                rows.append({
+                    **item,
+                    "cancelledAt": event.get("cancelledAt", ""),
+                    "cancelledBy": event.get("cancelledBy", ""),
+                    "cancelReason": event.get("reason", ""),
+                })
+    return rows
+
+
+async def build_source_document_outstanding() -> dict:
+    """Outstanding fisik Memo/ND/CT dengan logika yang sama seperti Monitoring SO.
+
+    Hanya dokumen yang masih memiliki sisa, reservasi aktif, atau master aktif yang
+    ditampilkan. Dokumen legacy yang sudah selesai dan tidak memiliki master tidak
+    ditebak kuantum aslinya.
+    """
+    masters = await db.outbound_documents.find(
+        {"documentType": {"$in": sorted(SOURCE_DOCUMENT_TYPES)}},
+        {"_id": 0},
+    ).to_list(20000)
+    loads = await db.outbound_loads.find(
+        {"document_type": {"$in": sorted(SOURCE_DOCUMENT_TYPES)}},
+        {"_id": 0},
+    ).to_list(30000)
+
+    masters_by_key = {
+        (str(row.get("documentType") or "").upper(), _doc_key(row.get("documentNo"))): row
+        for row in masters
+        if str(row.get("documentType") or "").upper() in SOURCE_DOCUMENT_TYPES and _doc_key(row.get("documentNo"))
+    }
+
+    document_keys = set(masters_by_key)
+    for load in loads:
+        doc_type = str(load.get("document_type") or "").upper()
+        if doc_type not in SOURCE_DOCUMENT_TYPES:
+            continue
+        for document_no in _load_document_refs(load, doc_type):
+            # Saldo awal Bazar/Ecom adalah snapshot legacy, bukan dokumen operasional
+            # yang perlu dimonitor outstanding.
+            if document_no.startswith("SALDO-AWAL/"):
+                continue
+            document_keys.add((doc_type, document_no))
+
+    records: list[dict] = []
+    for document_type, document_no in sorted(document_keys):
+        master = masters_by_key.get((document_type, document_no))
+        related_loads = [
+            load for load in loads
+            if str(load.get("document_type") or "").upper() == document_type
+            and document_no in _load_document_refs(load, document_type)
+        ]
+        usage: dict[str, dict] = defaultdict(
+            lambda: {"completedQty": 0.0, "reservedQty": 0.0, "cancelledQty": 0.0, "identity": {}}
+        )
+        history_rows: list[dict] = []
+        parties = set()
+
+        for load in related_loads:
+            current_items = _current_items_for_document(load, document_no)
+            cancelled_items = _cancelled_items_for_document(load, document_no)
+            load_status = str(load.get("status") or "")
+            party_map = load.get("document_parties") or {}
+            party = str(party_map.get(document_no) or load.get("party") or "").strip()
+            if party:
+                parties.add(party)
+
+            for item in current_items:
+                product_id = str(item.get("productId") or "")
+                if not product_id:
+                    continue
+                usage[product_id]["identity"] = {
+                    "productId": product_id,
+                    "sku": item.get("sku", ""),
+                    "name": item.get("name", ""),
+                    "unit": item.get("unit", ""),
+                    "channel": item.get("channel", ""),
+                }
+                qty = _n(item.get("qty"))
+                if load_status == "Selesai":
+                    usage[product_id]["completedQty"] += qty
+                elif load_status in ACTIVE_LOAD_STATUSES:
+                    usage[product_id]["reservedQty"] += qty
+
+            for item in cancelled_items:
+                product_id = str(item.get("productId") or "")
+                if not product_id:
+                    continue
+                if not usage[product_id]["identity"]:
+                    usage[product_id]["identity"] = {
+                        "productId": product_id,
+                        "sku": item.get("sku", ""),
+                        "name": item.get("name", ""),
+                        "unit": item.get("unit", ""),
+                        "channel": item.get("channel", ""),
+                    }
+                usage[product_id]["cancelledQty"] += _n(item.get("qty"))
+
+            item_rows_for_history = current_items if current_items else cancelled_items
+            if item_rows_for_history:
+                history_rows.append({
+                    "loadId": str(load.get("id") or ""),
+                    "status": load_status if current_items else "Dibatalkan",
+                    "bonNo": load.get("bon_no", ""),
+                    "queue": load.get("antrian", ""),
+                    "operationalDate": load.get("operational_date", ""),
+                    "createdAt": load.get("created_at", ""),
+                    "completedAt": load.get("completed_at", ""),
+                    "party": party,
+                    "vehicleNo": load.get("polisi", ""),
+                    "driver": load.get("pengambil", ""),
+                    "items": _group_items(item_rows_for_history),
+                })
+
+        master_items = {
+            str(item.get("productId") or ""): item
+            for item in (master or {}).get("items", [])
+            if str(item.get("productId") or "")
+        }
+        item_rows: list[dict] = []
+        all_product_ids = sorted(set(master_items) | set(usage))
+        for product_id in all_product_ids:
+            source = master_items.get(product_id) or usage[product_id]["identity"]
+            used = usage.get(product_id, {})
+            ordered = _n((master_items.get(product_id) or {}).get("orderedQty"))
+            completed = _n(used.get("completedQty"))
+            reserved = _n(used.get("reservedQty"))
+            cancelled = _n(used.get("cancelledQty"))
+            committed = completed + reserved
+            item_rows.append({
+                "productId": product_id,
+                "sku": source.get("sku", ""),
+                "name": source.get("name", ""),
+                "unit": source.get("unit", ""),
+                "channel": source.get("channel", ""),
+                "orderedQty": ordered if master else None,
+                "completedQty": completed,
+                "reservedQty": reserved,
+                "committedQty": committed,
+                "remainingQty": max(ordered - committed, 0.0) if master else None,
+                "outstandingQty": max(ordered - completed, 0.0) if master else None,
+                "cancelledQty": cancelled,
+            })
+
+        if master:
+            completed_any = any(_n(row.get("completedQty")) > EPS for row in item_rows)
+            reserved_any = any(_n(row.get("reservedQty")) > EPS for row in item_rows)
+            over_allocated = any(
+                _n(row.get("committedQty")) > _n(row.get("orderedQty")) + EPS
+                for row in item_rows
+            )
+            all_complete = bool(item_rows) and all(
+                _n(row.get("completedQty")) + EPS >= _n(row.get("orderedQty"))
+                for row in item_rows
+            )
+            if over_allocated:
+                status = "BERMASALAH"
+            elif all_complete:
+                status = "SELESAI"
+            elif completed_any:
+                status = "SEBAGIAN"
+            elif reserved_any:
+                status = "DALAM_ANTREAN"
+            else:
+                status = "BELUM_DIAMBIL"
+        else:
+            active_exists = any(
+                str(load.get("status") or "") in ACTIVE_LOAD_STATUSES
+                and _current_items_for_document(load, document_no)
+                for load in related_loads
+            )
+            status = "PERLU_KUANTUM_DOKUMEN" if active_exists else "ARSIP_LEGACY"
+
+        # User meminta hanya sumber dokumen yang outstanding. Arsip selesai/legacy tidak
+        # memenuhi definisi tersebut dan sengaja tidak ditampilkan.
+        if status in {"SELESAI", "ARSIP_LEGACY"}:
+            continue
+
+        history_rows.sort(
+            key=lambda row: row.get("completedAt") or row.get("createdAt") or "",
+            reverse=True,
+        )
+        master_party = str((master or {}).get("party") or "").strip()
+        records.append({
+            "documentType": document_type,
+            "documentNo": document_no,
+            "masterId": (master or {}).get("id", ""),
+            "hasMaster": bool(master),
+            "party": master_party or (sorted(parties)[0] if parties else ""),
+            "status": status,
+            "items": item_rows,
+            "loads": history_rows,
+            "lastActivity": _latest_value([
+                *((row.get("completedAt") or row.get("createdAt") or "") for row in history_rows),
+                str((master or {}).get("updatedAt") or ""),
+                str((master or {}).get("createdAt") or ""),
+            ]),
+            "loadCount": len(history_rows),
+            "completedLoadCount": sum(1 for row in history_rows if row.get("status") == "Selesai"),
+            "activeLoadCount": sum(1 for row in history_rows if row.get("status") in ACTIVE_LOAD_STATUSES),
+        })
+
+    records.sort(key=lambda row: row.get("lastActivity") or row.get("documentNo") or "", reverse=True)
+    summary = {
+        "total": len(records),
+        "memo": sum(1 for row in records if row.get("documentType") == "MEMO"),
+        "ct": sum(1 for row in records if row.get("documentType") == "CT"),
+        "nd": sum(1 for row in records if row.get("documentType") == "ND"),
+        "partial": sum(1 for row in records if row.get("status") == "SEBAGIAN"),
+        "queued": sum(1 for row in records if row.get("status") == "DALAM_ANTREAN"),
+        "notStarted": sum(1 for row in records if row.get("status") == "BELUM_DIAMBIL"),
+        "problem": sum(1 for row in records if row.get("status") == "BERMASALAH"),
+        "needsMaster": sum(1 for row in records if row.get("status") == "PERLU_KUANTUM_DOKUMEN"),
+    }
+    return {"summary": summary, "records": records}
+
+
 def fulfillment_integrity_issues(monitoring: dict) -> list[dict]:
     rows: list[dict] = []
     for record in monitoring.get("records", []):
@@ -376,4 +639,10 @@ def fulfillment_integrity_issues(monitoring: dict) -> list[dict]:
 
 @router.get("/so-monitoring")
 async def so_monitoring(user: dict = Depends(require_cost_view)):
-    return await build_so_monitoring()
+    monitoring = await build_so_monitoring()
+    sources = await build_source_document_outstanding()
+    return {
+        **monitoring,
+        "sourceOutstandingSummary": sources["summary"],
+        "sourceOutstanding": sources["records"],
+    }
