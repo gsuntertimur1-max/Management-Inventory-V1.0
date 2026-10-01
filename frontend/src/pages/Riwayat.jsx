@@ -73,6 +73,13 @@ const Riwayat = () => {
   const [kondisi, setKondisi] = useState('SEMUA');
   const [channel, setChannel] = useState('SEMUA');
   const [exporting, setExporting] = useState(false);
+  const todayText = (() => {
+    const now = new Date();
+    const pad = (value) => String(value).padStart(2, '0');
+    return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  })();
+  const [exportStartDate, setExportStartDate] = useState(todayText);
+  const [exportEndDate, setExportEndDate] = useState(todayText);
   const [unloadingOpen, setUnloadingOpen] = useState(false);
   const [loadingOpen, setLoadingOpen] = useState(false);
   const [costSettlements, setCostSettlements] = useState({ loading: [], unloading: [] });
@@ -446,12 +453,15 @@ const Riwayat = () => {
     w.document.close();
   };
 
-  const exportCurrentMonth = async () => {
+  const exportDateRange = async () => {
     if (exporting) return;
+    if (!exportStartDate || !exportEndDate) return toast.error('Pilih tanggal awal dan tanggal akhir');
+    if (exportEndDate < exportStartDate) return toast.error('Tanggal akhir tidak boleh lebih kecil dari tanggal awal');
     setExporting(true);
     try {
-      await downloadApiFile('/export/transactions-v2.xlsx', 'riwayat_transaksi.xlsx');
-      toast.success('File Excel riwayat bulan ini berhasil diunduh');
+      const params = new URLSearchParams({ startDate: exportStartDate, endDate: exportEndDate });
+      await downloadApiFile(`/export/transactions-v2.xlsx?${params.toString()}`, 'riwayat_transaksi.xlsx');
+      toast.success(`File Excel riwayat ${exportStartDate} s.d. ${exportEndDate} berhasil diunduh`);
     } catch (e) {
       toast.error(apiError(e));
     } finally {
@@ -481,7 +491,17 @@ const Riwayat = () => {
           <select data-testid="riwayat-kondisi-filter" value={kondisi} onChange={(e) => setKondisi(e.target.value)} className="bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none"><option value="SEMUA">SEMUA KONDISI</option><option value="BAIK">BAIK</option><option value="RUSAK">RUSAK</option><option value="DOKUMEN">DOKUMEN</option></select>
           <button onClick={() => { setType('MASUK'); setUnloadingOpen(true); }} className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-[#8a5a16] text-[#fbbf24] hover:bg-[#f59e0b]/10"><DollarSign size={15} /> Rekap Biaya Bongkar</button>
           <button onClick={() => { setType('KELUAR'); setLoadingOpen(true); }} className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-[#2563eb] text-[#93c5fd] hover:bg-[#2563eb]/10"><DollarSign size={15} /> Rekap Biaya Muat</button>
-          <button onClick={exportCurrentMonth} disabled={exporting} className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-[#242f3d] hover:bg-[#141a24] disabled:opacity-60 disabled:cursor-wait"><Download size={15} /> {exporting ? 'Menyiapkan…' : 'Unduh Excel Bulan Ini'}</button>
+          <div className="flex flex-wrap items-end gap-2 rounded-lg border border-[#242f3d] bg-[#0b0f17] p-2">
+            <div>
+              <label className="text-[9px] text-[#8b93a1] block mb-1">Dari Tanggal</label>
+              <input type="date" value={exportStartDate} onChange={(e) => setExportStartDate(e.target.value)} className="bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2.5 py-2 text-xs outline-none focus:border-[#2563eb]" />
+            </div>
+            <div>
+              <label className="text-[9px] text-[#8b93a1] block mb-1">Sampai Tanggal</label>
+              <input type="date" value={exportEndDate} min={exportStartDate || undefined} onChange={(e) => setExportEndDate(e.target.value)} className="bg-[#0b0f17] border border-[#242f3d] rounded-lg px-2.5 py-2 text-xs outline-none focus:border-[#2563eb]" />
+            </div>
+            <button onClick={exportDateRange} disabled={exporting || !exportStartDate || !exportEndDate} className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-[#242f3d] hover:bg-[#141a24] disabled:opacity-60 disabled:cursor-wait"><Download size={15} /> {exporting ? 'Menyiapkan…' : 'Unduh Excel'}</button>
+          </div>
         </div>
         
 
