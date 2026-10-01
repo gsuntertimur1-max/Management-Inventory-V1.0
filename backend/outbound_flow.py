@@ -505,20 +505,21 @@ async def outbound_document_balance(documentNo: str, user: dict = Depends(get_cu
 @router.post("/outbound-document-quantity-correction")
 async def correct_outbound_document_quantity(body: SOQuantityCorrectionInput, user: dict = Depends(require_admin)):
     document_no = _doc_key(body.documentNo)
-    if not document_no.startswith("SO/"):
-        raise HTTPException(status_code=400, detail="Koreksi kuantum induk hanya berlaku untuk SO")
+    document_type = _document_type(document_no)
+    if document_type not in {"SO", "MEMO", "ND", "CT"}:
+        raise HTTPException(status_code=400, detail="Koreksi kuantum induk hanya berlaku untuk SO, Memo, ND, atau CT")
 
     master = await db.outbound_documents.find_one(
-        {"documentNo": document_no, "documentType": "SO"},
+        {"documentNo": document_no, "documentType": document_type},
         {"_id": 0},
     )
     if not master:
-        raise HTTPException(status_code=404, detail="Master SO belum tersedia")
+        raise HTTPException(status_code=404, detail=f"Master {document_type} belum tersedia")
 
     items = [dict(item) for item in (master.get("items") or [])]
     index = next((i for i, item in enumerate(items) if str(item.get("productId") or "") == body.productId), -1)
     if index < 0:
-        raise HTTPException(status_code=404, detail="Komoditas tidak ditemukan pada master SO")
+        raise HTTPException(status_code=404, detail=f"Komoditas tidak ditemukan pada master {document_type}")
 
     product = await db.products.find_one({"id": body.productId}, {"_id": 0})
     if product:
@@ -534,7 +535,7 @@ async def correct_outbound_document_quantity(body: SOQuantityCorrectionInput, us
         raise HTTPException(
             status_code=409,
             detail=(
-                f"Kuantum SO tidak boleh lebih kecil dari yang sudah selesai + terreservasi "
+                f"Kuantum {document_type} tidak boleh lebih kecil dari yang sudah selesai + terreservasi "
                 f"({committed:g} {items[index].get('unit', '')})."
             ),
         )
@@ -561,7 +562,7 @@ async def correct_outbound_document_quantity(body: SOQuantityCorrectionInput, us
     items[index]["orderedQty"] = new_qty
     history = list(master.get("quantityCorrectionHistory") or []) + [event]
     await db.outbound_documents.update_one(
-        {"documentNo": document_no, "documentType": "SO"},
+        {"documentNo": document_no, "documentType": document_type},
         {"$set": {
             "items": items,
             "quantityCorrectionHistory": history,
@@ -571,11 +572,11 @@ async def correct_outbound_document_quantity(body: SOQuantityCorrectionInput, us
         }},
     )
 
-    # Samakan snapshot kuantum induk pada antrean SO aktif agar edit berikutnya
+    # Samakan snapshot kuantum induk pada antrean aktif agar edit berikutnya
     # tidak membawa nilai lama, tanpa mengubah jumlah muat/reservasi yang berjalan.
     active_loads = await db.outbound_loads.find(
         {
-            "document_type": "SO",
+            "document_type": document_type,
             "status": {"$in": ["Menunggu", "Sedang Dimuat"]},
             "$or": [{"documents": document_no}, {"ref": document_no}],
         },
