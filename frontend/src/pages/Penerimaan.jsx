@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CheckCircle2, Clock3, Play, Printer, RefreshCcw, RotateCcw, Truck, XCircle } from 'lucide-react';
+import { CalendarClock, CheckCircle2, Clock3, Play, Printer, RefreshCcw, RotateCcw, Truck, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import api, { apiError, printApiFile } from '../lib/api';
 import { useData } from '../context/DataContext';
@@ -30,6 +30,16 @@ const nowMinutesWib = () => {
   return Number(map.hour) * 60 + Number(map.minute);
 };
 
+const nowWibDateTimeLocal = () => {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Jakarta',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(new Date());
+  const map = Object.fromEntries(parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+  return `${map.year}-${map.month}-${map.day}T${map.hour}:${map.minute}`;
+};
+
 const statusClass = (status) => ({
   'Menunggu Bongkar': 'border-[#92400e] bg-[#78350f]/15 text-[#fbbf24]',
   'Sedang Bongkar': 'border-[#1d4ed8] bg-[#1d4ed8]/15 text-[#93c5fd]',
@@ -38,13 +48,14 @@ const statusClass = (status) => ({
 }[status] || 'border-[#334155] text-[#94a3b8]');
 
 const Penerimaan = () => {
-  const { products, settings, fetchAll } = useData();
+  const { products, settings, fetchAll, user } = useData();
   const navigate = useNavigate();
   const STACKS = stackCodes(settings?.warehouses);
   const [loads, setLoads] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
   const [completion, setCompletion] = useState(null);
+  const [startModal, setStartModal] = useState(null);
   const [cancelModal, setCancelModal] = useState(null);
   const [historyPage, setHistoryPage] = useState(1);
 
@@ -69,6 +80,7 @@ const Penerimaan = () => {
     () => loads.filter((row) => ['Selesai', 'Dibatalkan'].includes(row.status)),
     [loads],
   );
+  const canBackdateStart = ['Administrator', 'Superadmin', 'Supervisor', 'Admin', 'Admin Operasional'].includes(String(user?.role || ''));
   const historyPageSize = 10;
   const paginatedHistory = history.slice((historyPage - 1) * historyPageSize, historyPage * historyPageSize);
 
@@ -77,18 +89,51 @@ const Penerimaan = () => {
     if (historyPage > maxPage) setHistoryPage(maxPage);
   }, [history.length, historyPage]);
 
-  const startLoad = async (load) => {
+  const executeStartLoad = async (load, payload = undefined) => {
     if (busy) return;
     setBusy(`start:${load.id}`);
     try {
-      await api.post(`/inbound-loads/${load.id}/start`);
-      toast.success(`${load.loadNo} mulai bongkar. Waktu mulai tercatat otomatis.`);
+      await api.post(`/inbound-loads/${load.id}/start`, payload);
+      if (payload?.actualStartAt) {
+        toast.success(`${load.loadNo} mulai bongkar dengan waktu aktual ${payload.actualStartAt.replace('T', ' ')}.`);
+      } else {
+        toast.success(`${load.loadNo} mulai bongkar. Waktu mulai tercatat otomatis.`);
+      }
+      setStartModal(null);
       await loadAll();
     } catch (error) {
       toast.error(apiError(error));
     } finally {
       setBusy('');
     }
+  };
+
+  const startLoad = (load) => {
+    if (busy) return;
+    if (!canBackdateStart) {
+      executeStartLoad(load);
+      return;
+    }
+    setStartModal({
+      load,
+      useActualTime: false,
+      actualStartAt: nowWibDateTimeLocal(),
+      reason: '',
+    });
+  };
+
+  const confirmStartLoad = async () => {
+    if (!startModal || busy) return;
+    if (!startModal.useActualTime) {
+      await executeStartLoad(startModal.load);
+      return;
+    }
+    if (!startModal.actualStartAt) return toast.error('Isi waktu mulai bongkar aktual');
+    if (String(startModal.reason || '').trim().length < 3) return toast.error('Alasan backdate minimal 3 karakter');
+    await executeStartLoad(startModal.load, {
+      actualStartAt: startModal.actualStartAt,
+      reason: String(startModal.reason || '').trim(),
+    });
   };
 
   const askCancel = (load) => setCancelModal({ load, reason: '' });
@@ -212,7 +257,8 @@ const Penerimaan = () => {
           </div>
           <div className="font-semibold mt-2">{load.poNo} · {load.party}</div>
           <div className="text-xs text-[#8b93a1] mt-1">{load.polisi || 'Tanpa nomor polisi'}{load.driver ? ` · ${load.driver}` : ''}</div>
-          {load.startedAt && <div className="text-xs text-[#8b93a1] mt-1">Mulai bongkar: {displayTime(load.startedAt)}</div>}
+          {load.startedAt && <div className="text-xs text-[#8b93a1] mt-1">Mulai bongkar: {displayTime(load.startedAt)}{load.startTimeSource === 'BACKDATED_ACTUAL' ? ' · waktu aktual/backdate' : ''}</div>}
+          {load.startTimeSource === 'BACKDATED_ACTUAL' && load.actualStartReason && <div className="text-[10px] text-[#fbbf24] mt-1">Alasan waktu aktual: {load.actualStartReason}{load.actualStartRecordedBy ? ` · dicatat oleh ${load.actualStartRecordedBy}` : ''}</div>}
           {load.status === 'Selesai' && Number(load.unloadingCost?.total || 0) > 0 && (
             <div className="text-xs text-[#fbbf24] mt-1">
               Biaya bongkar kendaraan: {formatRp(load.unloadingCost.total)}
@@ -270,11 +316,31 @@ const Penerimaan = () => {
       </section>
     </>}
 
+    {startModal && <div className="fixed inset-0 z-[95] bg-black/75 flex items-center justify-center p-4"><div className="card-surface w-full max-w-lg p-6">
+      <div className="flex items-start gap-3">
+        <CalendarClock size={20} className="text-[#93c5fd] mt-0.5"/>
+        <div>
+          <h2 className="font-display text-xl font-bold">Mulai Bongkar · {startModal.load.loadNo}</h2>
+          <p className="text-xs text-[#8b93a1] mt-1">{startModal.load.poNo} · {startModal.load.party} · {startModal.load.polisi || 'Tanpa nomor polisi'}</p>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-2 mt-5">
+        <button type="button" onClick={() => setStartModal({ ...startModal, useActualTime: false })} className={`rounded-lg border px-3 py-2.5 text-xs font-semibold ${!startModal.useActualTime ? 'border-[#2563eb] bg-[#2563eb]/15 text-[#93c5fd]' : 'border-[#374151] text-[#cbd5e1]'}`}>Waktu Sekarang</button>
+        <button type="button" onClick={() => setStartModal({ ...startModal, useActualTime: true })} className={`rounded-lg border px-3 py-2.5 text-xs font-semibold ${startModal.useActualTime ? 'border-[#b45309] bg-[#78350f]/15 text-[#fbbf24]' : 'border-[#374151] text-[#cbd5e1]'}`}>Waktu Aktual / Backdate</button>
+      </div>
+      {startModal.useActualTime ? <div className="space-y-3 mt-4">
+        <div className="rounded-lg border border-[#b45309]/60 bg-[#78350f]/10 px-3 py-2 text-xs text-[#fbbf24]">Gunakan hanya bila pekerjaan memang sudah dimulai lebih awal tetapi terlambat dicatat. Saat ini backdate dibatasi untuk tanggal operasional hari ini dan seluruh perubahan disimpan dalam audit.</div>
+        <div><label className="text-xs text-[#8b93a1] block mb-1.5">Waktu mulai aktual</label><input type="datetime-local" value={startModal.actualStartAt} onChange={(e) => setStartModal({ ...startModal, actualStartAt: e.target.value })} className="w-full bg-[#0b0f17] border border-[#7c5a1f] rounded-lg px-3 py-2.5 text-sm"/></div>
+        <div><label className="text-xs text-[#8b93a1] block mb-1.5">Alasan koreksi waktu</label><textarea rows={3} value={startModal.reason} onChange={(e) => setStartModal({ ...startModal, reason: e.target.value })} placeholder="Contoh: bongkar aktual mulai pukul 14.00, terlambat dicatat di PEPEG" className="w-full bg-[#0b0f17] border border-[#7c5a1f] rounded-lg px-3 py-2.5 text-sm"/></div>
+      </div> : <div className="mt-4 rounded-lg border border-[#243044] bg-[#0a0f17] px-3 py-2 text-xs text-[#8b93a1]">PEPEG akan memakai waktu saat tombol konfirmasi ditekan.</div>}
+      <div className="flex justify-end gap-2 mt-5"><button disabled={Boolean(busy)} onClick={() => setStartModal(null)} className="px-4 py-2 rounded-lg border border-[#242f3d]">Batal</button><button disabled={Boolean(busy)} onClick={confirmStartLoad} className="btn-primary px-5 py-2 rounded-lg font-semibold disabled:opacity-50">{busy ? 'Memulai...' : 'Konfirmasi Mulai Bongkar'}</button></div>
+    </div></div>}
+
     {completion && <div className="fixed inset-0 z-[90] bg-black/75 flex items-center justify-center p-4"><div className="card-surface w-full max-w-4xl max-h-[92vh] overflow-y-auto p-6">
       <h2 className="font-display text-2xl font-bold">Selesaikan Bongkar · {completion.load.loadNo}</h2>
       <p className="text-xs text-[#8b93a1] mt-1">Isi jumlah aktual per kendaraan. Baik masuk tumpukan, rusak masuk Area Barang Rusak. Rencana yang tidak diterima tetap menjadi outstanding PO.</p>
       {completion.fullOvertime && <div className="mt-3 rounded-lg border border-[#b45309] bg-[#1f1408] px-3 py-2 text-xs text-[#fbbf24]">Mulai bongkar setelah 16.00 · seluruh jumlah aktual otomatis dihitung lembur.</div>}
-      {completion.crossesCutoff && <div className="mt-3 rounded-lg border border-[#b45309] bg-[#1f1408] px-3 py-2 text-xs text-[#fbbf24]">Pekerjaan melewati 16.00 · isi hanya jumlah yang dibongkar setelah 16.00.</div>}
+      {completion.crossesCutoff && <div className="mt-3 rounded-lg border border-[#b45309] bg-[#1f1408] px-3 py-2 text-xs text-[#fbbf24]">{completion.load.startTimeSource === 'BACKDATED_ACTUAL' ? 'Waktu mulai dicatat secara backdate sebelum 16.00, sedangkan pencatatan selesai dilakukan setelah 16.00. Isi 0 jika seluruh bongkar aktual selesai sebelum 16.00; isi hanya jumlah yang benar-benar dibongkar setelah 16.00 bila ada.' : 'Pekerjaan melewati 16.00 · isi hanya jumlah yang dibongkar setelah 16.00.'}</div>}
       <div className="space-y-3 mt-4">{completion.rows.map((row, index) => {
         const actual = Number(row.goodQty || 0) + Number(row.damagedQty || 0);
         const overtime = completion.fullOvertime ? actual : Number(row.overtimeQty || 0);
