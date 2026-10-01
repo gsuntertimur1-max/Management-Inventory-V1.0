@@ -11,6 +11,7 @@ const statusMeta = {
   BELUM_DIAMBIL: ['Belum Diambil', 'bg-[#334155]/30 text-[#cbd5e1] border-[#475569]'],
   BERMASALAH: ['Bermasalah', 'bg-[#7f1d1d]/35 text-[#fca5a5] border-[#7f1d1d]'],
   PERLU_KUANTUM_SO: ['Perlu Kuantum SO', 'bg-[#7c2d12]/35 text-[#fdba74] border-[#9a3412]'],
+  PERLU_KUANTUM_DOKUMEN: ['Perlu Kuantum Dokumen', 'bg-[#7c2d12]/35 text-[#fdba74] border-[#9a3412]'],
   ARSIP_LEGACY: ['Arsip Legacy', 'bg-[#27272a]/45 text-[#a1a1aa] border-[#3f3f46]'],
 };
 
@@ -29,7 +30,7 @@ const fmtDate = (value) => {
 };
 
 const MonitorSO = () => {
-  const [data, setData] = useState({ summary: {}, records: [] });
+  const [data, setData] = useState({ summary: {}, records: [], sourceOutstandingSummary: {}, sourceOutstanding: [] });
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('OUTSTANDING');
@@ -40,7 +41,7 @@ const MonitorSO = () => {
     setLoading(true);
     try {
       const response = await api.get('/so-monitoring');
-      setData(response.data || { summary: {}, records: [] });
+      setData(response.data || { summary: {}, records: [], sourceOutstandingSummary: {}, sourceOutstanding: [] });
     } catch (error) {
       toast.error(apiError(error));
     } finally {
@@ -106,6 +107,8 @@ const MonitorSO = () => {
   }, [data.records, query, status]);
 
   const summary = data.summary || {};
+  const sourceSummary = data.sourceOutstandingSummary || {};
+  const sourceOutstanding = data.sourceOutstanding || [];
   const cards = [
     ['Outstanding', summary.outstanding || 0, 'text-[#fbbf24]'],
     ['Sebagian', summary.partial || 0, 'text-[#fbbf24]'],
@@ -120,7 +123,7 @@ const MonitorSO = () => {
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
         <div className="label-mono mb-2">Operasional · Dokumen Pengeluaran</div>
-        <h1 className="font-display text-3xl sm:text-4xl font-bold">Monitoring SO Bertahap</h1>
+        <h1 className="font-display text-3xl sm:text-4xl font-bold">Monitoring SO & Dokumen Outstanding</h1>
         
       </div>
       <button onClick={load} disabled={loading} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-[#243044] text-sm text-[#93c5fd] disabled:opacity-50"><RefreshCcw size={15} className={loading ? 'animate-spin' : ''}/> Periksa Ulang</button>
@@ -131,6 +134,82 @@ const MonitorSO = () => {
         <div className="label-mono text-[9px]">{label}</div>
         <div className={`font-mono text-2xl font-bold mt-1 ${tone}`}>{value}</div>
       </div>)}
+    </div>
+
+    <div className="card-surface overflow-hidden">
+      <div className="px-5 py-4 border-b border-[#1a222e]">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="label-mono text-[9px] mb-1">Dokumen Sumber Pengeluaran</div>
+            <h2 className="font-display text-xl font-bold">Memo / CT / ND Outstanding</h2>
+            <div className="text-xs text-[#8b93a1] mt-1">Menampilkan dokumen yang masih memiliki sisa kuantum untuk dimuat. Dokumen yang sudah selesai penuh tidak ditampilkan.</div>
+          </div>
+          <div className="flex flex-wrap gap-2 text-xs">
+            <span className="rounded-full border border-[#374151] px-3 py-1.5">Total <b className="font-mono text-[#fbbf24]">{sourceSummary.total || 0}</b></span>
+            <span className="rounded-full border border-[#7c3aed]/50 px-3 py-1.5">Memo <b className="font-mono">{sourceSummary.memo || 0}</b></span>
+            <span className="rounded-full border border-[#2563eb]/50 px-3 py-1.5">CT <b className="font-mono">{sourceSummary.ct || 0}</b></span>
+            <span className="rounded-full border border-[#0f766e]/50 px-3 py-1.5">ND <b className="font-mono">{sourceSummary.nd || 0}</b></span>
+          </div>
+        </div>
+      </div>
+
+      {loading ? <div className="p-6 text-center text-sm text-[#8b93a1]">Memuat outstanding Memo/CT/ND...</div>
+        : sourceOutstanding.length === 0 ? <div className="p-6 text-center text-sm text-[#8b93a1]">Tidak ada Memo, CT, atau ND yang outstanding.</div>
+        : <div className="divide-y divide-[#1a222e]">
+          {sourceOutstanding.map((record) => {
+            const meta = statusMeta[record.status] || [record.status, 'bg-[#334155]/30 text-[#cbd5e1] border-[#475569]'];
+            const typeTone = record.documentType === 'MEMO'
+              ? 'border-[#7c3aed]/60 text-[#d8b4fe]'
+              : record.documentType === 'CT'
+                ? 'border-[#2563eb]/60 text-[#93c5fd]'
+                : 'border-[#0f766e]/60 text-[#5eead4]';
+            return <details key={`${record.documentType}-${record.documentNo}`} className="group">
+              <summary className="cursor-pointer list-none px-5 py-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`rounded border px-2 py-1 text-[10px] font-bold ${typeTone}`}>{record.documentType}</span>
+                      <span className="font-mono font-bold text-[#e2e8f0]">{record.documentNo}</span>
+                      <span className={`border rounded-full px-2 py-1 text-[10px] font-semibold ${meta[1]}`}>{meta[0]}</span>
+                    </div>
+                    <div className="text-sm mt-1">{record.party || 'Penerima/Tujuan belum tercatat'}</div>
+                    <div className="text-[11px] text-[#8b93a1] mt-1">{record.loadCount || 0} pemuatan · {record.completedLoadCount || 0} selesai · {record.activeLoadCount || 0} aktif · aktivitas terakhir {fmtDate(record.lastActivity)}</div>
+                  </div>
+                  <div className="text-xs text-[#8b93a1] inline-flex items-center gap-2"><ClipboardList size={14}/> Lihat rincian</div>
+                </div>
+                <div className="mt-4 overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead className="text-[#8b93a1]"><tr><th className="text-left py-1 pr-3">Komoditi</th><th>Total Dokumen</th><th>Selesai Muat</th><th>Dalam Antrean</th><th>Sisa Dijadwalkan</th><th>Outstanding Fisik</th></tr></thead>
+                    <tbody>{(record.items || []).map((item) => <tr key={item.productId} className="border-t border-[#1f2937]">
+                      <td className="py-2 pr-3"><div className="font-medium min-w-[220px]">{item.name || item.sku}</div><div className="font-mono text-[10px] text-[#64748b]">{item.sku}</div></td>
+                      <td className="text-center font-mono">{item.orderedQty === null ? '—' : `${formatNum(item.orderedQty)} ${item.unit}`}</td>
+                      <td className="text-center font-mono text-[#86efac]">{formatNum(item.completedQty)} {item.unit}</td>
+                      <td className="text-center font-mono text-[#93c5fd]">{formatNum(item.reservedQty)} {item.unit}</td>
+                      <td className="text-center font-mono font-bold text-[#fbbf24]">{item.remainingQty === null ? '—' : `${formatNum(item.remainingQty)} ${item.unit}`}</td>
+                      <td className="text-center font-mono">{item.outstandingQty === null ? '—' : `${formatNum(item.outstandingQty)} ${item.unit}`}</td>
+                    </tr>)}</tbody>
+                  </table>
+                </div>
+              </summary>
+              <div className="border-t border-[#1a222e] px-5 py-4">
+                <div className="font-semibold text-sm mb-2 flex items-center gap-2"><TimerReset size={15} className="text-[#93c5fd]"/> Riwayat Pemuatan Dokumen</div>
+                {(record.loads || []).length === 0 ? <div className="text-xs text-[#8b93a1]">Belum ada riwayat pemuatan.</div> : <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead className="text-[#8b93a1]"><tr><th className="text-left py-2">Tanggal</th><th>Bon Muat</th><th>Antrian</th><th>Status</th><th>Kendaraan</th><th>Komoditi</th></tr></thead>
+                    <tbody>{record.loads.map((loadRow) => <tr key={`${loadRow.loadId}-${loadRow.status}`} className="border-t border-[#1f2937]">
+                      <td className="py-2 whitespace-nowrap">{loadRow.operationalDate || '—'}</td>
+                      <td className="text-center font-mono whitespace-nowrap">{loadRow.bonNo || '—'}</td>
+                      <td className="text-center font-mono">{loadRow.queue || '—'}</td>
+                      <td className={`text-center font-semibold whitespace-nowrap ${loadStatusClass(loadRow.status)}`}>{loadRow.status}</td>
+                      <td className="text-center whitespace-nowrap">{loadRow.vehicleNo || '—'}</td>
+                      <td className="py-2 min-w-[260px]">{(loadRow.items || []).map((item) => `${item.name}: ${formatNum(item.qty)} ${item.unit}`).join(' · ') || '—'}</td>
+                    </tr>)}</tbody>
+                  </table>
+                </div>}
+              </div>
+            </details>;
+          })}
+        </div>}
     </div>
 
     {(summary.errors > 0 || summary.warnings > 0) && <div className="rounded-xl border border-[#7f1d1d]/60 bg-[#450a0a]/15 px-4 py-3 text-sm flex items-start gap-3">
