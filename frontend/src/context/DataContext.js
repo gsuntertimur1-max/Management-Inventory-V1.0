@@ -366,6 +366,7 @@ export const DataProvider = ({ children }) => {
   const createSalesReturn = async (id, payload) => { const { data } = await api.post(`/outbound-loads/${id}/sales-return`, payload); await refreshOutboundFlow(); return data; };
   const settleOutboundDocument = async (id, payload) => { const { data } = await api.post(`/outbound-loads/${id}/settle`, payload); await refreshOutboundFlow(); return data; };
   const settleOutboundDocuments = async (payload) => { const { data } = await api.post('/outbound-settlements/so', payload); await refreshOutboundFlow(); return data; };
+  const correctOutboundSettlement = async (batchId, payload) => { const { data } = await api.put(`/outbound-settlements/so/${encodeURIComponent(batchId)}`, payload); await refreshOutboundFlow(); return data; };
 
   const updateSJStatus = async (id, status) => { await api.put(`/surat-jalan/${id}/status`, { status }); await refreshSuratJalan(); };
   const cancelOutboundLoad = async (id, payload) => { const { data } = await api.post(`/outbound-loads/${id}/cancel`, payload); await refreshOutboundLoads(); return data; };
@@ -442,7 +443,7 @@ export const DataProvider = ({ children }) => {
       consignmentLastSync, consignmentSyncing,
       login, logout, ...state, fetchAll,
       addProduct, updateProduct, deleteProduct, addTransaction, addReceipt, recordStockDamage, createSupplierReturn, receiveSupplierReplacement,
-      createOutboundLoad, refreshOutboundLoads, refreshOutboundSnapshot, startOutboundLoad, completeOutboundLoad, createConsignmentReturn, createSalesReturn, settleOutboundDocument, settleOutboundDocuments, updateSJStatus, cancelOutboundLoad, editOutboundLoad, correctOutboundStack, correctOutboundDocumentNumber, cancelPurchaseOrder,
+      createOutboundLoad, refreshOutboundLoads, refreshOutboundSnapshot, startOutboundLoad, completeOutboundLoad, createConsignmentReturn, createSalesReturn, settleOutboundDocument, settleOutboundDocuments, correctOutboundSettlement, updateSJStatus, cancelOutboundLoad, editOutboundLoad, correctOutboundStack, correctOutboundDocumentNumber, cancelPurchaseOrder,
       addSupplier, addPO, addUser, updateUser, deleteUser, changeUserPassword, updateSettings, resetData, importCsv,
       addStackAllocation, updateStackAllocation, deleteStackAllocation,
       addStackTreatment,
