@@ -159,6 +159,7 @@ class SupplierReturnInput(BaseModel):
     qty: float = Field(gt=0)
     channel: str = ""
     supplier: str = ""
+    sourceType: str = ""
     sourceDamageOperationId: str = ""
     sourceStackCode: str = ""
     poNo: str = ""
@@ -588,6 +589,7 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
                 "antrian": "",
                 "type": "MASUK",
                 "kondisi": kondisi,
+                "product_id": product.get("id", ""),
                 "product": product.get("name", ""),
                 "sku": product.get("sku", ""),
                 "change": qty,
@@ -745,28 +747,187 @@ async def create_supplier_return(body: SupplierReturnInput, user: dict = Depends
     await ensure_channel_stock(product)
     if float(product.get("damaged", 0) or 0) + 1e-9 < float(body.qty) or float(product.get("channelStock", {}).get(channel, {}).get("damaged", 0) or 0) + 1e-9 < float(body.qty):
         raise HTTPException(status_code=400, detail="Stok rusak tidak mencukupi untuk diretur ke pemasok")
+
+    source_type = str(body.sourceType or "").strip().upper()
     source = None
-    if body.sourceDamageOperationId:
-        source = await db.transactions.find_one({"operation_id": body.sourceDamageOperationId, "product": product.get("name", ""), "kondisi": "RUSAK"}, {"_id": 0})
+    po = None
+    po_no = body.poNo.strip()
+    supplier = body.supplier.strip()
+    source_operation_id = body.sourceDamageOperationId.strip()
+    source_stack_code = body.sourceStackCode.strip().upper()
+
+    if source_type == "PO_RECEIPT":
+        if not po_no:
+            raise HTTPException(status_code=400, detail="Pilih nomor PO sumber barang rusak")
+        po = await db.purchase_orders.find_one({"no": po_no}, {"_id": 0})
+        if not po:
+            raise HTTPException(status_code=404, detail="Purchase Order sumber barang rusak tidak ditemukan")
+        po_item = next(
+            (
+                item for item in po.get("items", [])
+                if str(item.get("productId") or "") == body.productId
+                or (product.get("sku") and str(item.get("sku") or "") == str(product.get("sku") or ""))
+            ),
+            None,
+        )
+        if not po_item:
+            raise HTTPException(status_code=400, detail="Produk tidak tercantum pada PO yang dipilih")
+
+        damaged_rows = await db.transactions.find(
+            {
+                "type": "MASUK",
+                "kondisi": "RUSAK",
+                "po_no": po_no,
+                "voided": {"$ne": True},
+                "$or": [
+                    {"product_id": body.productId},
+                    {"sku": product.get("sku", "")},
+                    {"product": product.get("name", "")},
+                ],
+            },
+            {"_id": 0, "damaged_change": 1, "change": 1},
+        ).to_list(10000)
+        source_qty = sum(
+            max(float(row.get("damaged_change", row.get("change", 0)) or 0), 0.0)
+            for row in damaged_rows
+        )
+        used_rows = await db.supplier_returns.find(
+            {
+                "po_no": po_no,
+                "product_id": body.productId,
+                "damage_source_type": {"$ne": "TEMUAN"},
+            },
+            {"_id": 0, "qty": 1},
+        ).to_list(10000)
+        used_qty = sum(float(row.get("qty", 0) or 0) for row in used_rows)
+        available = max(source_qty - used_qty, 0.0)
+        if source_qty <= 1e-9:
+            raise HTTPException(status_code=400, detail="Tidak ada barang rusak saat penerimaan pada PO dan produk yang dipilih")
+        if float(body.qty) > available + 1e-9:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Jumlah retur melebihi sisa barang rusak PO ({available:g} {product.get('unit', '')})",
+            )
+        supplier = supplier or str(po.get("supplier") or "").strip()
+        source_operation_id = ""
+        source_stack_code = ""
+
+    elif source_type == "TEMUAN":
+        if not source_operation_id:
+            raise HTTPException(status_code=400, detail="Pilih Temuan Kerusakan yang akan diretur")
+        source = await db.transactions.find_one(
+            {
+                "operation_id": source_operation_id,
+                "document_type": "TEMUAN_RUSAK",
+                "kondisi": "RUSAK",
+                "$or": [
+                    {"product_id": body.productId},
+                    {"sku": product.get("sku", "")},
+                    {"product": product.get("name", "")},
+                ],
+            },
+            {"_id": 0},
+        )
         if not source:
-            raise HTTPException(status_code=400, detail="Sumber barang rusak tidak ditemukan")
+            raise HTTPException(status_code=400, detail="Sumber Temuan Kerusakan tidak ditemukan")
         source_qty = float(source.get("damaged_change", source.get("change", 0)) or 0)
-        used = await db.supplier_returns.aggregate([{"$match": {"source_damage_operation_id": body.sourceDamageOperationId, "product_id": body.productId}}, {"$group": {"_id": None, "total": {"$sum": "$qty"}}}]).to_list(1)
-        if float(body.qty) > source_qty - float(used[0]["total"] if used else 0) + 1e-9:
-            raise HTTPException(status_code=400, detail="Jumlah retur melebihi barang rusak pada sumber yang dipilih")
+        used = await db.supplier_returns.aggregate([
+            {"$match": {
+                "source_damage_operation_id": source_operation_id,
+                "product_id": body.productId,
+                "damage_source_type": "TEMUAN",
+            }},
+            {"$group": {"_id": None, "total": {"$sum": "$qty"}}},
+        ]).to_list(1)
+        available = max(source_qty - float(used[0]["total"] if used else 0), 0.0)
+        if float(body.qty) > available + 1e-9:
+            raise HTTPException(status_code=400, detail=f"Jumlah retur melebihi sisa Temuan Kerusakan ({available:g} {product.get('unit', '')})")
+        source_stack_code = source_stack_code or str(source.get("stackCode") or "").strip().upper()
+        po_no = ""
+
+    else:
+        # Compatibility path for old clients. A linked source keeps the legacy
+        # behavior, but new PEPEG UI always sends PO_RECEIPT or TEMUAN explicitly.
+        if source_operation_id:
+            source = await db.transactions.find_one(
+                {"operation_id": source_operation_id, "product": product.get("name", ""), "kondisi": "RUSAK"},
+                {"_id": 0},
+            )
+            if not source:
+                raise HTTPException(status_code=400, detail="Sumber barang rusak tidak ditemukan")
+            source_qty = float(source.get("damaged_change", source.get("change", 0)) or 0)
+            used = await db.supplier_returns.aggregate([
+                {"$match": {"source_damage_operation_id": source_operation_id, "product_id": body.productId}},
+                {"$group": {"_id": None, "total": {"$sum": "$qty"}}},
+            ]).to_list(1)
+            if float(body.qty) > source_qty - float(used[0]["total"] if used else 0) + 1e-9:
+                raise HTTPException(status_code=400, detail="Jumlah retur melebihi barang rusak pada sumber yang dipilih")
+            source_stack_code = source_stack_code or str(source.get("stackCode") or "").strip().upper()
+
     now = now_iso()
     return_no = body.returnNo.strip() or f"RP-{operational_now().strftime('%Y%m%d')}-{await next_sequence('supplier-return', 0):04d}"
     if await db.supplier_returns.find_one({"return_no": return_no}, {"_id": 1}):
         raise HTTPException(status_code=409, detail="Nomor retur pemasok sudah digunakan")
-    doc = {"id": new_id(), "return_no": return_no, "created_at": now, "product_id": body.productId, "product": product.get("name", ""), "sku": product.get("sku", ""), "qty": float(body.qty), "unit": product.get("unit", ""), "channel": channel, "supplier": body.supplier.strip(), "po_no": body.poNo.strip(), "source_damage_operation_id": body.sourceDamageOperationId, "source_stack_code": body.sourceStackCode.strip().upper() or (source or {}).get("stackCode", ""), "note": body.note.strip(), "status": "MENUNGGU_PENGGANTIAN", "replacement_qty": 0.0, "created_by": user.get("name", "")}
-    await db.products.update_one({"id": body.productId}, {"$inc": {"damaged": -float(body.qty), f"channelStock.{channel}.damaged": -float(body.qty)}})
+
+    doc = {
+        "id": new_id(),
+        "return_no": return_no,
+        "created_at": now,
+        "product_id": body.productId,
+        "product": product.get("name", ""),
+        "sku": product.get("sku", ""),
+        "qty": float(body.qty),
+        "unit": product.get("unit", ""),
+        "channel": channel,
+        "supplier": supplier,
+        "po_id": str((po or {}).get("id") or ""),
+        "po_no": po_no,
+        "damage_source_type": source_type or ("TEMUAN" if str((source or {}).get("document_type") or "") == "TEMUAN_RUSAK" else "LEGACY"),
+        "source_damage_operation_id": source_operation_id,
+        "source_stack_code": source_stack_code,
+        "note": body.note.strip(),
+        "status": "MENUNGGU_PENGGANTIAN",
+        "replacement_qty": 0.0,
+        "created_by": user.get("name", ""),
+    }
+    await db.products.update_one(
+        {"id": body.productId},
+        {"$inc": {"damaged": -float(body.qty), f"channelStock.{channel}.damaged": -float(body.qty)}},
+    )
     try:
         await db.supplier_returns.insert_one(dict(doc))
-        await db.transactions.insert_one({"id": new_id(), "operation_id": doc["id"], "time": now, "ref": return_no, "type": "KELUAR", "document_type": "RETUR_PEMASOK", "parent_document": body.poNo.strip() or body.sourceDamageOperationId, "kondisi": "RUSAK", "product": doc["product"], "sku": doc["sku"], "change": -doc["qty"], "damaged_change": -doc["qty"], "unit": doc["unit"], "channel": channel, "stackCode": doc["source_stack_code"], "penerima": doc["supplier"], "operator": user.get("name", ""), "keterangan": doc["note"]})
+        await db.transactions.insert_one({
+            "id": new_id(),
+            "operation_id": doc["id"],
+            "time": now,
+            "ref": return_no,
+            "type": "KELUAR",
+            "document_type": "RETUR_PEMASOK",
+            "parent_document": po_no or source_operation_id,
+            "po_id": doc["po_id"],
+            "po_no": po_no,
+            "damage_source_type": doc["damage_source_type"],
+            "source_damage_operation_id": source_operation_id,
+            "kondisi": "RUSAK",
+            "product_id": body.productId,
+            "product": doc["product"],
+            "sku": doc["sku"],
+            "change": -doc["qty"],
+            "damaged_change": -doc["qty"],
+            "unit": doc["unit"],
+            "channel": channel,
+            "stackCode": doc["source_stack_code"],
+            "penerima": doc["supplier"],
+            "operator": user.get("name", ""),
+            "keterangan": doc["note"],
+        })
     except Exception:
         await db.transactions.delete_many({"operation_id": doc["id"]})
         await db.supplier_returns.delete_many({"id": doc["id"]})
-        await db.products.update_one({"id": body.productId}, {"$inc": {"damaged": float(body.qty), f"channelStock.{channel}.damaged": float(body.qty)}})
+        await db.products.update_one(
+            {"id": body.productId},
+            {"$inc": {"damaged": float(body.qty), f"channelStock.{channel}.damaged": float(body.qty)}},
+        )
         raise
     return doc
 
