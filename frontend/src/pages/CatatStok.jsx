@@ -130,6 +130,7 @@ const CatatStok = ({ panel = '' }) => {
   const [grossMax, setGrossMax] = useState('');
   const [damageForm, setDamageForm] = useState(null);
   const [supplierClaimForm, setSupplierClaimForm] = useState(null);
+  const [damagedLedger, setDamagedLedger] = useState(null);
   const [feeChargeMode, setFeeChargeMode] = useState(initialType === 'MASUK' ? 'PENGIRIM' : 'PENGAMBIL');
   const [fefoGuides, setFefoGuides] = useState({});
   const [soBalances, setSoBalances] = useState({});
@@ -160,8 +161,17 @@ const CatatStok = ({ panel = '' }) => {
 
   useEffect(() => {
     if (activePanel === 'damage' && !damageForm) setDamageForm({ productId: '', stackCode: '', qty: '', channel: 'KOM', cause: '', note: '', referenceNo: '' });
-    if (activePanel === 'supplier-return' && !supplierClaimForm) setSupplierClaimForm({ productId: '', qty: '', channel: 'KOM', supplier: '', sourceDamageOperationId: '', sourceStackCode: '', poNo: '', returnNo: '', note: '' });
+    if (activePanel === 'supplier-return' && !supplierClaimForm) setSupplierClaimForm({ sourceType: 'PO_RECEIPT', productId: '', qty: '', channel: 'KOM', supplier: '', sourceDamageOperationId: '', sourceStackCode: '', poNo: '', returnNo: '', note: '' });
   }, [activePanel, damageForm, supplierClaimForm]);
+
+  useEffect(() => {
+    if (activePanel !== 'supplier-return') return undefined;
+    let cancelled = false;
+    api.get('/damaged-stock-area')
+      .then(({ data }) => { if (!cancelled) setDamagedLedger(data || {}); })
+      .catch(() => { if (!cancelled) setDamagedLedger({ poDamageGroups: [], discoveryDamageGroups: [] }); });
+    return () => { cancelled = true; };
+  }, [activePanel, supplierReturns, transactions]);
 
   const activePOs = useMemo(
     () => purchaseOrders.filter((po) => !['Selesai', 'Diterima', 'Dibatalkan', 'Diterima Sebagian · Sisa Dibatalkan'].includes(po.status)),
@@ -500,23 +510,116 @@ const CatatStok = ({ panel = '' }) => {
       navigate('/catat');
     } catch (e) { toast.error(e?.response?.data?.detail || 'Gagal mencatat kerusakan'); } finally { setSaving(false); }
   };
-  const damageSources = (transactions || []).filter((tx) => tx.kondisi === 'RUSAK' && (tx.document_type === 'TEMUAN_RUSAK' || tx.type === 'MASUK') && Number(tx.damaged_change ?? tx.change ?? 0) > 0);
-  const claimProduct = products.find((p) => p.id === supplierClaimForm?.productId);
-  const claimSources = damageSources.filter((tx) => tx.product === claimProduct?.name);
-  const claimSource = claimSources.find((tx) => tx.operation_id === supplierClaimForm?.sourceDamageOperationId);
+  const poDamageGroups = damagedLedger?.poDamageGroups || [];
+  const discoveryDamageGroups = damagedLedger?.discoveryDamageGroups || [];
+  const selectedDamagePO = poDamageGroups.find((group) => group.poNo === supplierClaimForm?.poNo);
+  const selectedPoDamageItem = (selectedDamagePO?.items || []).find((item) => item.productId === supplierClaimForm?.productId);
+  const selectedDiscovery = discoveryDamageGroups.find((item) => item.operationId === supplierClaimForm?.sourceDamageOperationId);
   const openClaims = (supplierReturns || []).filter((claim) => claim.status !== 'SELESAI_DIGANTI');
-  const saveSupplierReturn = async () => {
-    if (!supplierClaimForm?.productId || Number(supplierClaimForm.qty) <= 0) return toast.error('Pilih produk dan jumlah yang diretur');
-    setSaving(true);
-    try { await createSupplierReturn({ ...supplierClaimForm, qty: Number(supplierClaimForm.qty), sourceStackCode: claimSource?.stackCode || supplierClaimForm.sourceStackCode || '' }); toast.success('Retur rusak ke pemasok dicatat. Menunggu barang pengganti.'); setSupplierClaimForm(null); navigate('/catat'); } catch (e) { toast.error(e?.response?.data?.detail || 'Gagal menyimpan retur pemasok'); } finally { setSaving(false); }
+
+  const selectClaimSourceType = (sourceType) => {
+    setSupplierClaimForm((prev) => ({
+      ...(prev || {}),
+      sourceType,
+      productId: '',
+      qty: '',
+      supplier: '',
+      sourceDamageOperationId: '',
+      sourceStackCode: '',
+      poNo: '',
+      channel: 'KOM',
+    }));
   };
+
+  const selectClaimPO = (poNo) => {
+    const group = poDamageGroups.find((item) => item.poNo === poNo);
+    setSupplierClaimForm((prev) => ({
+      ...prev,
+      poNo,
+      supplier: group?.supplier || '',
+      productId: '',
+      qty: '',
+      sourceDamageOperationId: '',
+      sourceStackCode: '',
+    }));
+  };
+
+  const selectClaimPOProduct = (productId) => {
+    const item = (selectedDamagePO?.items || []).find((row) => row.productId === productId);
+    setSupplierClaimForm((prev) => ({
+      ...prev,
+      productId,
+      qty: item?.availableForReturn > 0 ? String(item.availableForReturn) : '',
+      channel: item?.channel || products.find((p) => p.id === productId)?.channel || 'KOM',
+    }));
+  };
+
+  const selectDiscoveryClaim = (operationId) => {
+    const item = discoveryDamageGroups.find((row) => row.operationId === operationId);
+    const product = products.find((row) => row.id === item?.productId);
+    setSupplierClaimForm((prev) => ({
+      ...prev,
+      sourceDamageOperationId: operationId,
+      productId: item?.productId || '',
+      qty: item?.availableForReturn > 0 ? String(item.availableForReturn) : '',
+      channel: item?.channel || product?.channel || 'KOM',
+      sourceStackCode: item?.stackCode || '',
+      supplier: product?.supplier || '',
+      poNo: '',
+    }));
+  };
+
+  const saveSupplierReturn = async () => {
+    if (!supplierClaimForm?.productId || Number(supplierClaimForm.qty) <= 0) {
+      return toast.error('Pilih sumber barang rusak dan jumlah yang diretur');
+    }
+    if (supplierClaimForm.sourceType === 'PO_RECEIPT') {
+      if (!supplierClaimForm.poNo) return toast.error('Pilih nomor PO sumber barang rusak');
+      if (Number(supplierClaimForm.qty) > Number(selectedPoDamageItem?.availableForReturn || 0) + 1e-9) {
+        return toast.error(`Sisa barang rusak PO yang dapat diretur hanya ${formatNum(selectedPoDamageItem?.availableForReturn || 0)} ${selectedPoDamageItem?.unit || ''}`);
+      }
+    } else {
+      if (!supplierClaimForm.sourceDamageOperationId) return toast.error('Pilih Temuan Kerusakan yang akan diretur');
+      if (Number(supplierClaimForm.qty) > Number(selectedDiscovery?.availableForReturn || 0) + 1e-9) {
+        return toast.error(`Sisa Temuan Kerusakan yang dapat diretur hanya ${formatNum(selectedDiscovery?.availableForReturn || 0)} ${selectedDiscovery?.unit || ''}`);
+      }
+    }
+    setSaving(true);
+    try {
+      await createSupplierReturn({
+        ...supplierClaimForm,
+        qty: Number(supplierClaimForm.qty),
+        sourceStackCode: supplierClaimForm.sourceType === 'TEMUAN' ? (selectedDiscovery?.stackCode || supplierClaimForm.sourceStackCode || '') : '',
+      });
+      toast.success(supplierClaimForm.sourceType === 'PO_RECEIPT'
+        ? 'Retur barang rusak penerimaan dicatat per PO. Menunggu barang pengganti.'
+        : 'Retur Temuan Kerusakan dicatat terpisah. Menunggu barang pengganti.');
+      setSupplierClaimForm(null);
+      navigate('/catat');
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || 'Gagal menyimpan retur pemasok');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const saveReplacement = async (claim) => {
-    const qty = window.prompt(`Jumlah barang baik pengganti untuk ${claim.return_no} (sisa ${formatNum(Number(claim.qty) - Number(claim.replacement_qty || 0))} ${claim.unit})`);
+    const sourceLabel = claim.damage_source_type === 'PO_RECEIPT' && claim.po_no
+      ? `PO ${claim.po_no}`
+      : 'Temuan Kerusakan';
+    const qty = window.prompt(`Jumlah barang baik pengganti untuk ${sourceLabel} · ${claim.product} (sisa ${formatNum(Number(claim.qty) - Number(claim.replacement_qty || 0))} ${claim.unit})`);
     if (!qty || Number(qty) <= 0) return;
     const stackCode = window.prompt('Tumpukan tujuan barang pengganti, contoh 19/A02');
     if (!stackCode) return;
     setSaving(true);
-    try { await receiveSupplierReplacement(claim.id, { qty: Number(qty), stackCode, referenceNo: '', note: '' }); toast.success('Barang pengganti masuk sebagai stok baik.'); } catch (e) { toast.error(e?.response?.data?.detail || 'Gagal mencatat barang pengganti'); } finally { setSaving(false); }
+    try {
+      await receiveSupplierReplacement(claim.id, { qty: Number(qty), stackCode, referenceNo: '', note: '' });
+      toast.success('Barang pengganti masuk sebagai stok baik.');
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || 'Gagal mencatat barang pengganti');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const submit = async () => {
@@ -768,7 +871,94 @@ const CatatStok = ({ panel = '' }) => {
 
       {activePanel === 'damage' && damageForm && <div className="card-surface p-5 border border-[#7f1d1d]"><div className="flex items-start justify-between gap-3"><div><h2 className="font-display text-xl font-bold text-[#fecaca]">Temuan Kerusakan Stok</h2></div><button onClick={() => { setDamageForm(null); navigate('/catat'); }} className="text-[#fca5a5]">×</button></div><div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4"><div><label className="text-xs text-[#fca5a5] block mb-1">Produk</label><SearchableProductSelect products={products} value={damageForm.productId} placeholder="Ketik nama / SKU produk..." onChange={(productId) => setDamageForm({ ...damageForm, productId, stackCode: '', channel: products.find((p) => p.id === productId)?.channel || 'KOM' })} getDescription={(item) => `Stok ${formatNum(item.stock || 0)} ${item.unit}`} /></div><div><label className="text-xs text-[#fca5a5] block mb-1">Tumpukan asal</label><select value={damageForm.stackCode} onChange={(e) => setDamageForm({ ...damageForm, stackCode: e.target.value })} className="w-full bg-[#0b0f17] border border-[#5b2430] rounded-lg px-3 py-2.5"><option value="">Pilih tumpukan...</option>{damageStacks.map((allocation) => <option key={allocation.id} value={allocation.stackCode}>{allocation.stackCode} — tersedia {formatNum(allocation.primaryQty)} {allocation.unit}</option>)}</select></div><div><label className="text-xs text-[#fca5a5] block mb-1">Jumlah rusak</label><input type="number" min="0.01" step="any" value={damageForm.qty} onChange={(e) => setDamageForm({ ...damageForm, qty: e.target.value })} className="w-full bg-[#0b0f17] border border-[#5b2430] rounded-lg px-3 py-2.5" /></div><div><label className="text-xs text-[#fca5a5] block mb-1">Penyebab</label><input value={damageForm.cause} onChange={(e) => setDamageForm({ ...damageForm, cause: e.target.value })} placeholder="Bocor, basah, hama, kemasan robek..." className="w-full bg-[#0b0f17] border border-[#5b2430] rounded-lg px-3 py-2.5" /></div><div><label className="text-xs text-[#fca5a5] block mb-1">Saluran</label><select value={damageForm.channel} onChange={(e) => setDamageForm({ ...damageForm, channel: e.target.value })} className="w-full bg-[#0b0f17] border border-[#5b2430] rounded-lg px-3 py-2.5"><option value="PSO">PSO</option><option value="KOM">KOM</option></select></div><div><label className="text-xs text-[#fca5a5] block mb-1">No. BA / Referensi</label><input value={damageForm.referenceNo} onChange={(e) => setDamageForm({ ...damageForm, referenceNo: e.target.value })} placeholder="Opsional" className="w-full bg-[#0b0f17] border border-[#5b2430] rounded-lg px-3 py-2.5" /></div></div><textarea rows={2} value={damageForm.note} onChange={(e) => setDamageForm({ ...damageForm, note: e.target.value })} placeholder="Keterangan tambahan (opsional)" className="w-full mt-3 bg-[#0b0f17] border border-[#5b2430] rounded-lg px-3 py-2.5" /><button disabled={saving} onClick={saveDamageDiscovery} className="mt-3 px-4 py-2.5 rounded-lg bg-[#dc2626] text-white font-semibold text-sm disabled:opacity-50">{saving ? 'Menyimpan...' : 'Simpan Temuan Kerusakan'}</button></div>}
 
-      {activePanel === 'supplier-return' && supplierClaimForm && <div className="card-surface p-5 border border-[#92400e]"><div className="flex items-start justify-between gap-3"><div><h2 className="font-display text-xl font-bold text-[#fde68a]">Retur & Penggantian Pemasok</h2></div><button onClick={() => navigate('/catat')} className="text-[#fde68a]">×</button></div><div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4"><div><label className="text-xs text-[#fcd34d] block mb-1">Produk rusak</label><SearchableProductSelect products={products.filter((p) => Number(p.damaged || 0) > 0)} value={supplierClaimForm.productId} placeholder="Ketik nama / SKU produk..." onChange={(productId) => setSupplierClaimForm({ ...supplierClaimForm, productId, sourceDamageOperationId: '', channel: products.find((p) => p.id === productId)?.channel || 'KOM' })} getDescription={(item) => `Rusak ${formatNum(item.damaged || 0)} ${item.unit}`} /></div><div><label className="text-xs text-[#fcd34d] block mb-1">Sumber barang rusak</label><select value={supplierClaimForm.sourceDamageOperationId} onChange={(e) => setSupplierClaimForm({ ...supplierClaimForm, sourceDamageOperationId: e.target.value })} className="w-full bg-[#0b0f17] border border-[#6b4b1c] rounded-lg px-3 py-2.5"><option value="">Saldo rusak umum / tanpa tautan</option>{claimSources.map((tx) => <option key={`${tx.operation_id}-${tx.id}`} value={tx.operation_id}>{tx.document_type === 'TEMUAN_RUSAK' ? 'Temuan Rusak' : 'Penerimaan Rusak'} · {tx.ref} · {formatNum(Number(tx.damaged_change ?? tx.change))} {tx.unit}</option>)}</select></div><div><label className="text-xs text-[#fcd34d] block mb-1">Jumlah diretur</label><input type="number" min="0.01" step="any" value={supplierClaimForm.qty} onChange={(e) => setSupplierClaimForm({ ...supplierClaimForm, qty: e.target.value })} className="w-full bg-[#0b0f17] border border-[#6b4b1c] rounded-lg px-3 py-2.5" /></div><div><label className="text-xs text-[#fcd34d] block mb-1">Supplier / pabrik</label><input value={supplierClaimForm.supplier} onChange={(e) => setSupplierClaimForm({ ...supplierClaimForm, supplier: e.target.value })} placeholder="Nama pemasok" className="w-full bg-[#0b0f17] border border-[#6b4b1c] rounded-lg px-3 py-2.5" /></div><div><label className="text-xs text-[#fcd34d] block mb-1">No. PO</label><input value={supplierClaimForm.poNo} onChange={(e) => setSupplierClaimForm({ ...supplierClaimForm, poNo: e.target.value })} placeholder="PO/... (opsional)" className="w-full bg-[#0b0f17] border border-[#6b4b1c] rounded-lg px-3 py-2.5" /></div><div><label className="text-xs text-[#fcd34d] block mb-1">No. Retur Pemasok</label><input value={supplierClaimForm.returnNo} onChange={(e) => setSupplierClaimForm({ ...supplierClaimForm, returnNo: e.target.value })} placeholder="Otomatis bila kosong" className="w-full bg-[#0b0f17] border border-[#6b4b1c] rounded-lg px-3 py-2.5" /></div></div><textarea rows={2} value={supplierClaimForm.note} onChange={(e) => setSupplierClaimForm({ ...supplierClaimForm, note: e.target.value })} placeholder="Catatan retur (opsional)" className="w-full mt-3 bg-[#0b0f17] border border-[#6b4b1c] rounded-lg px-3 py-2.5" /><button disabled={saving} onClick={saveSupplierReturn} className="mt-3 px-4 py-2.5 rounded-lg bg-[#d97706] text-white font-semibold text-sm disabled:opacity-50">{saving ? 'Menyimpan...' : 'Simpan Retur ke Pemasok'}</button><div className="mt-5 border-t border-[#6b4b1c] pt-4"><div className="text-sm font-semibold">Menunggu barang pengganti</div>{openClaims.length === 0 ? <p className="text-xs text-[#a99675] mt-2">Belum ada retur pemasok terbuka.</p> : <div className="space-y-2 mt-2">{openClaims.map((claim) => <div key={claim.id} className="flex flex-wrap justify-between gap-2 rounded-lg bg-[#0b0f17] p-3 text-xs"><div><b>{claim.return_no}</b> · {claim.product}<br/><span className="text-[#a99675]">Retur {formatNum(claim.qty)} {claim.unit} · sudah diganti {formatNum(claim.replacement_qty || 0)} · {claim.status}</span></div><button disabled={saving} onClick={() => saveReplacement(claim)} className="px-3 py-1.5 rounded border border-[#22c55e] text-[#4ade80]">Catat Barang Pengganti</button></div>)}</div>}</div></div>}
+      {activePanel === 'supplier-return' && supplierClaimForm && <div className="card-surface p-5 border border-[#92400e]">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="font-display text-xl font-bold text-[#fde68a]">Retur & Penggantian Pemasok</h2>
+            <p className="text-xs text-[#a99675] mt-1">Rusak saat penerimaan dikelompokkan per nomor PO. Temuan Kerusakan diproses melalui jalur terpisah.</p>
+          </div>
+          <button onClick={() => navigate('/catat')} className="text-[#fde68a]">×</button>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 mt-4">
+          <button type="button" onClick={() => selectClaimSourceType('PO_RECEIPT')} className={`rounded-lg border px-3 py-2.5 text-xs font-semibold ${supplierClaimForm.sourceType === 'PO_RECEIPT' ? 'border-[#d97706] bg-[#78350f]/20 text-[#fbbf24]' : 'border-[#374151] text-[#cbd5e1]'}`}>Rusak Penerimaan PO</button>
+          <button type="button" onClick={() => selectClaimSourceType('TEMUAN')} className={`rounded-lg border px-3 py-2.5 text-xs font-semibold ${supplierClaimForm.sourceType === 'TEMUAN' ? 'border-[#dc2626] bg-[#7f1d1d]/20 text-[#fca5a5]' : 'border-[#374151] text-[#cbd5e1]'}`}>Temuan Kerusakan</button>
+        </div>
+
+        {supplierClaimForm.sourceType === 'PO_RECEIPT' ? <div className="mt-4 space-y-3">
+          <div>
+            <label className="text-xs text-[#fcd34d] block mb-1">Nomor PO</label>
+            <select value={supplierClaimForm.poNo} onChange={(e) => selectClaimPO(e.target.value)} className="w-full bg-[#0b0f17] border border-[#6b4b1c] rounded-lg px-3 py-2.5">
+              <option value="">Pilih PO...</option>
+              {poDamageGroups.filter((group) => (group.items || []).some((item) => Number(item.availableForReturn || 0) > 0)).map((group) => (
+                <option key={group.poNo} value={group.poNo}>{group.poNo} · {group.supplier || 'Supplier'} · {(group.items || []).filter((item) => Number(item.availableForReturn || 0) > 0).length} produk rusak</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-[#fcd34d] block mb-1">Produk pada PO</label>
+            <select value={supplierClaimForm.productId} onChange={(e) => selectClaimPOProduct(e.target.value)} disabled={!selectedDamagePO} className="w-full bg-[#0b0f17] border border-[#6b4b1c] rounded-lg px-3 py-2.5 disabled:opacity-50">
+              <option value="">Pilih produk rusak...</option>
+              {(selectedDamagePO?.items || []).filter((item) => Number(item.availableForReturn || 0) > 0).map((item) => (
+                <option key={item.productId || item.sku} value={item.productId}>{item.product} · Rusak {formatNum(item.totalDamaged)} · Belum diretur {formatNum(item.availableForReturn)} {item.unit}</option>
+              ))}
+            </select>
+          </div>
+          {selectedPoDamageItem && <div className="rounded-lg border border-[#6b4b1c] bg-[#1a1208] p-3 text-xs text-[#fcd34d]">
+            <b>{selectedDamagePO.poNo}</b> · {selectedPoDamageItem.product}<br/>
+            Total rusak penerimaan {formatNum(selectedPoDamageItem.totalDamaged)} {selectedPoDamageItem.unit} · sudah diretur {formatNum(selectedPoDamageItem.returnedQty)} · <b>sisa {formatNum(selectedPoDamageItem.availableForReturn)}</b>.
+            <div className="mt-1 text-[#a99675]">Rincian kendaraan tetap tersimpan di Riwayat Penerimaan dan Area Barang Rusak, tetapi retur/penggantian tidak perlu memilih kendaraan.</div>
+          </div>}
+        </div> : <div className="mt-4 space-y-3">
+          <div>
+            <label className="text-xs text-[#fca5a5] block mb-1">Temuan Kerusakan</label>
+            <select value={supplierClaimForm.sourceDamageOperationId} onChange={(e) => selectDiscoveryClaim(e.target.value)} className="w-full bg-[#0b0f17] border border-[#7f1d1d] rounded-lg px-3 py-2.5">
+              <option value="">Pilih temuan...</option>
+              {discoveryDamageGroups.filter((item) => Number(item.availableForReturn || 0) > 0).map((item) => (
+                <option key={item.operationId} value={item.operationId}>{item.referenceNo || 'Temuan'} · {item.product} · {formatNum(item.availableForReturn)} {item.unit} · {item.stackCode || 'Tanpa tumpukan'}</option>
+              ))}
+            </select>
+          </div>
+          {selectedDiscovery && <div className="rounded-lg border border-[#7f1d1d] bg-[#1f0d11] p-3 text-xs text-[#fca5a5]">
+            {selectedDiscovery.product} · Temuan {formatNum(selectedDiscovery.totalDamaged)} {selectedDiscovery.unit} · sudah diretur {formatNum(selectedDiscovery.returnedQty)} · <b>sisa {formatNum(selectedDiscovery.availableForReturn)}</b>.<br/>
+            <span className="text-[#b98d94]">Tumpukan asal {selectedDiscovery.stackCode || '—'}{selectedDiscovery.cause ? ` · ${selectedDiscovery.cause}` : ''}</span>
+          </div>}
+        </div>}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4">
+          <div>
+            <label className="text-xs text-[#fcd34d] block mb-1">Jumlah diretur</label>
+            <input type="number" min="0.01" step="any" value={supplierClaimForm.qty} onChange={(e) => setSupplierClaimForm({ ...supplierClaimForm, qty: e.target.value })} className="w-full bg-[#0b0f17] border border-[#6b4b1c] rounded-lg px-3 py-2.5" />
+          </div>
+          <div>
+            <label className="text-xs text-[#fcd34d] block mb-1">Supplier / pabrik</label>
+            <input value={supplierClaimForm.supplier} onChange={(e) => setSupplierClaimForm({ ...supplierClaimForm, supplier: e.target.value })} placeholder="Nama pemasok" className="w-full bg-[#0b0f17] border border-[#6b4b1c] rounded-lg px-3 py-2.5" />
+          </div>
+          <div>
+            <label className="text-xs text-[#fcd34d] block mb-1">No. Retur Pemasok</label>
+            <input value={supplierClaimForm.returnNo} onChange={(e) => setSupplierClaimForm({ ...supplierClaimForm, returnNo: e.target.value })} placeholder="Otomatis bila kosong" className="w-full bg-[#0b0f17] border border-[#6b4b1c] rounded-lg px-3 py-2.5" />
+          </div>
+          <div>
+            <label className="text-xs text-[#fcd34d] block mb-1">Sumber</label>
+            <div className="rounded-lg border border-[#6b4b1c] bg-[#0b0f17] px-3 py-2.5 text-sm">{supplierClaimForm.sourceType === 'PO_RECEIPT' ? (supplierClaimForm.poNo || 'Pilih PO') : (selectedDiscovery?.referenceNo || 'Pilih Temuan Kerusakan')}</div>
+          </div>
+        </div>
+        <textarea rows={2} value={supplierClaimForm.note} onChange={(e) => setSupplierClaimForm({ ...supplierClaimForm, note: e.target.value })} placeholder="Catatan retur (opsional)" className="w-full mt-3 bg-[#0b0f17] border border-[#6b4b1c] rounded-lg px-3 py-2.5" />
+        <button disabled={saving} onClick={saveSupplierReturn} className="mt-3 px-4 py-2.5 rounded-lg bg-[#d97706] text-white font-semibold text-sm disabled:opacity-50">{saving ? 'Menyimpan...' : 'Simpan Retur ke Pemasok'}</button>
+
+        <div className="mt-5 border-t border-[#6b4b1c] pt-4">
+          <div className="text-sm font-semibold">Menunggu barang pengganti</div>
+          {openClaims.length === 0 ? <p className="text-xs text-[#a99675] mt-2">Belum ada retur pemasok terbuka.</p> : <div className="space-y-2 mt-2">
+            {openClaims.map((claim) => <div key={claim.id} className="flex flex-wrap justify-between gap-2 rounded-lg bg-[#0b0f17] p-3 text-xs">
+              <div>
+                <b>{claim.damage_source_type === 'PO_RECEIPT' && claim.po_no ? claim.po_no : 'Temuan Kerusakan'}</b> · {claim.product}<br/>
+                <span className="text-[#a99675]">{claim.return_no} · Retur {formatNum(claim.qty)} {claim.unit} · sudah diganti {formatNum(claim.replacement_qty || 0)} · {claim.status}</span>
+              </div>
+              <button disabled={saving} onClick={() => saveReplacement(claim)} className="px-3 py-1.5 rounded border border-[#22c55e] text-[#4ade80]">Catat Barang Pengganti</button>
+            </div>)}
+          </div>}
+        </div>
+      </div>}
 
       <div className={`grid grid-cols-1 lg:grid-cols-3 gap-6 ${activePanel ? 'hidden' : ''}`}>
         <div className="card-surface p-6 lg:col-span-2">
