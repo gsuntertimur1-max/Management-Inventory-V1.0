@@ -30,6 +30,15 @@ const nowMinutesWib = () => {
   return Number(map.hour) * 60 + Number(map.minute);
 };
 
+const wibDateKey = (value = new Date()) => {
+  const date = value instanceof Date ? value : new Date(value);
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jakarta', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(date);
+  const map = Object.fromEntries(parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+  return `${map.year}-${map.month}-${map.day}`;
+};
+
 const nowWibDateTimeLocal = () => {
   const parts = new Intl.DateTimeFormat('en-GB', {
     timeZone: 'Asia/Jakarta',
@@ -192,7 +201,17 @@ const Penerimaan = () => {
         channel: item.channel || product?.channel || 'KOM',
       };
     });
-    setCompletion({ load, rows, note: '', fullOvertime, crossesCutoff });
+    const historicalStart = Boolean(load.startedAt) && wibDateKey(load.startedAt) < wibDateKey();
+    setCompletion({
+      load,
+      rows,
+      note: '',
+      fullOvertime,
+      crossesCutoff: historicalStart ? false : crossesCutoff,
+      historicalStart,
+      actualCompletedAt: '',
+      actualCompletionReason: '',
+    });
   };
 
   const setCompleteRow = (index, patch) => {
@@ -220,12 +239,27 @@ const Penerimaan = () => {
     }));
   };
 
+  const setActualCompletedAt = (value) => {
+    setCompletion((prev) => {
+      if (!prev) return prev;
+      const started = minutesWib(prev.load.startedAt);
+      const completed = value ? minutesWib(value) : null;
+      return {
+        ...prev,
+        actualCompletedAt: value,
+        crossesCutoff: started !== null && completed !== null && started < 16 * 60 && completed >= 16 * 60,
+      };
+    });
+  };
+
   const completeLoad = async () => {
     if (!completion || busy) return;
     const started = minutesWib(completion.load.startedAt);
-    const now = nowMinutesWib();
+    if (completion.historicalStart && !completion.actualCompletedAt) return toast.error('Isi waktu selesai aktual untuk penerimaan historis');
+    if (completion.historicalStart && String(completion.actualCompletionReason || '').trim().length < 3) return toast.error('Isi alasan pencatatan waktu selesai aktual');
+    const completedMinutes = completion.historicalStart ? minutesWib(completion.actualCompletedAt) : nowMinutesWib();
     const fullOvertimeNow = started !== null && started >= 16 * 60;
-    const crossesCutoffNow = started !== null && started < 16 * 60 && now >= 16 * 60;
+    const crossesCutoffNow = started !== null && started < 16 * 60 && completedMinutes !== null && completedMinutes >= 16 * 60;
     if (crossesCutoffNow && !completion.crossesCutoff) {
       setCompletion((prev) => prev ? { ...prev, crossesCutoff: true } : prev);
     }
@@ -277,6 +311,8 @@ const Penerimaan = () => {
           channel: row.channel || 'KOM',
         })),
         note: completion.note || '',
+        actualCompletedAt: completion.historicalStart ? completion.actualCompletedAt : '',
+        actualCompletionReason: completion.historicalStart ? String(completion.actualCompletionReason || '').trim() : '',
       });
       const status = data?.purchaseOrder?.status;
       const claimKg = (data?.shortageClaims || []).reduce((sum, claim) => sum + Number(claim.shortageWeightKg || 0), 0);
@@ -308,6 +344,7 @@ const Penerimaan = () => {
           <div className="font-semibold mt-2">{load.poNo} · {load.party}</div>
           <div className="text-xs text-[#8b93a1] mt-1">{load.polisi || 'Tanpa nomor polisi'}{load.driver ? ` · ${load.driver}` : ''}</div>
           {load.startedAt && <div className="text-xs text-[#8b93a1] mt-1">Mulai bongkar: {displayTime(load.startedAt)}{load.startTimeSource === 'BACKDATED_ACTUAL' ? ' · waktu aktual/backdate' : ''}</div>}
+          {load.completedAt && load.status === 'Selesai' && <div className="text-xs text-[#8b93a1] mt-1">Selesai bongkar: {displayTime(load.completedAt)}{load.completionTimeSource === 'BACKDATED_ACTUAL' ? ' · waktu aktual/backdate' : ''}</div>}
           {load.startTimeSource === 'BACKDATED_ACTUAL' && load.actualStartReason && <div className="text-[10px] text-[#fbbf24] mt-1">Alasan waktu aktual: {load.actualStartReason}{load.actualStartRecordedBy ? ` · dicatat oleh ${load.actualStartRecordedBy}` : ''}</div>}
           {load.status === 'Selesai' && Number(load.unloadingCost?.total || 0) > 0 && (
             <div className="text-xs text-[#fbbf24] mt-1">
@@ -398,7 +435,7 @@ const Penerimaan = () => {
         <button type="button" onClick={() => setStartModal({ ...startModal, useActualTime: true })} className={`rounded-lg border px-3 py-2.5 text-xs font-semibold ${startModal.useActualTime ? 'border-[#b45309] bg-[#78350f]/15 text-[#fbbf24]' : 'border-[#374151] text-[#cbd5e1]'}`}>Waktu Aktual / Backdate</button>
       </div>
       {startModal.useActualTime ? <div className="space-y-3 mt-4">
-        <div className="rounded-lg border border-[#b45309]/60 bg-[#78350f]/10 px-3 py-2 text-xs text-[#fbbf24]">Gunakan hanya bila pekerjaan memang sudah dimulai lebih awal tetapi terlambat dicatat. Saat ini backdate dibatasi untuk tanggal operasional hari ini dan seluruh perubahan disimpan dalam audit.</div>
+        <div className="rounded-lg border border-[#b45309]/60 bg-[#78350f]/10 px-3 py-2 text-xs text-[#fbbf24]">Gunakan hanya bila pekerjaan memang sudah dimulai lebih awal tetapi terlambat dicatat. Backdate dapat digunakan maksimal 7 hari ke belakang dan seluruh perubahan disimpan dalam audit.</div>
         <div><label className="text-xs text-[#8b93a1] block mb-1.5">Waktu mulai aktual</label><input type="datetime-local" value={startModal.actualStartAt} onChange={(e) => setStartModal({ ...startModal, actualStartAt: e.target.value })} className="w-full bg-[#0b0f17] border border-[#7c5a1f] rounded-lg px-3 py-2.5 text-sm"/></div>
         <div><label className="text-xs text-[#8b93a1] block mb-1.5">Alasan koreksi waktu</label><textarea rows={3} value={startModal.reason} onChange={(e) => setStartModal({ ...startModal, reason: e.target.value })} placeholder="Contoh: bongkar aktual mulai pukul 14.00, terlambat dicatat di PEPEG" className="w-full bg-[#0b0f17] border border-[#7c5a1f] rounded-lg px-3 py-2.5 text-sm"/></div>
       </div> : <div className="mt-4 rounded-lg border border-[#243044] bg-[#0a0f17] px-3 py-2 text-xs text-[#8b93a1]">PEPEG akan memakai waktu saat tombol konfirmasi ditekan.</div>}
@@ -408,6 +445,14 @@ const Penerimaan = () => {
     {completion && <div className="fixed inset-0 z-[90] bg-black/75 flex items-center justify-center p-4"><div className="card-surface w-full max-w-4xl max-h-[92vh] overflow-y-auto p-6">
       <h2 className="font-display text-2xl font-bold">Selesaikan Bongkar · {completion.load.loadNo}</h2>
       <p className="text-xs text-[#8b93a1] mt-1">Isi jumlah aktual per kendaraan. Baik masuk tumpukan, rusak masuk Area Barang Rusak. Rencana yang tidak diterima tetap menjadi outstanding PO.</p>
+      {completion.historicalStart && <div className="mt-3 rounded-lg border border-[#7c5a1f] bg-[#1f1408] p-3">
+        <div className="flex items-center gap-2 text-sm font-semibold text-[#fbbf24]"><CalendarClock size={15}/> Penerimaan Historis</div>
+        <p className="text-[11px] text-[#a99675] mt-1">Waktu mulai berada pada tanggal sebelumnya. Isi waktu selesai aktual agar tanggal transaksi dan perhitungan lembur mengikuti kondisi lapangan, bukan waktu input hari ini.</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+          <div><label className="text-[10px] text-[#fbbf24]">Waktu selesai aktual</label><input type="datetime-local" value={completion.actualCompletedAt} onChange={(e) => setActualCompletedAt(e.target.value)} className="w-full mt-1 bg-[#0b0f17] border border-[#7c5a1f] rounded-lg px-3 py-2.5"/></div>
+          <div><label className="text-[10px] text-[#fbbf24]">Alasan pencatatan terlambat</label><input value={completion.actualCompletionReason} onChange={(e) => setCompletion({...completion,actualCompletionReason:e.target.value})} placeholder="Contoh: penerimaan kemarin belum sempat diinput" className="w-full mt-1 bg-[#0b0f17] border border-[#7c5a1f] rounded-lg px-3 py-2.5"/></div>
+        </div>
+      </div>}
       {completion.fullOvertime && <div className="mt-3 rounded-lg border border-[#b45309] bg-[#1f1408] px-3 py-2 text-xs text-[#fbbf24]">Mulai bongkar setelah 16.00 · seluruh jumlah aktual otomatis dihitung lembur.</div>}
       {completion.crossesCutoff && <div className="mt-3 rounded-lg border border-[#b45309] bg-[#1f1408] px-3 py-2 text-xs text-[#fbbf24]">{completion.load.startTimeSource === 'BACKDATED_ACTUAL' ? 'Waktu mulai dicatat secara backdate sebelum 16.00, sedangkan pencatatan selesai dilakukan setelah 16.00. Isi 0 jika seluruh bongkar aktual selesai sebelum 16.00; isi hanya jumlah yang benar-benar dibongkar setelah 16.00 bila ada.' : 'Pekerjaan melewati 16.00 · isi hanya jumlah yang dibongkar setelah 16.00.'}</div>}
       <div className="space-y-3 mt-4">{completion.rows.map((row, index) => {
