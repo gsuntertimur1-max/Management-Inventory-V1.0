@@ -23,6 +23,7 @@ from backend.inventory_flow import (
     ReceiptItemInput,
     _hydrate_legacy_po,
     _unloading_user_key,
+    is_rice_50kg_product,
     receive_stock,
 )
 from backend.correction_receipts import enrich_receipt_result
@@ -64,8 +65,14 @@ class InboundLoadCreate(BaseModel):
 
 class InboundCompleteItem(BaseModel):
     productId: str
+    # For normal products goodQty is the physical primary-pack quantity.
+    # For 50 kg rice with torn bags it is the number of intact good bags;
+    # the torn bags are represented separately below.
     goodQty: float = Field(default=0, ge=0)
     damagedQty: float = Field(default=0, ge=0)
+    shortBagCount: int = Field(default=0, ge=0)
+    shortBagActualWeightKg: float = Field(default=0, ge=0)
+    shortageClaimReason: str = Field(default="", max_length=300)
     overtimeQty: float | None = Field(default=None, ge=0)
     stackCode: str = ""
     exp: str = ""
@@ -388,6 +395,8 @@ async def complete_inbound_load(load_id: str, body: InboundLoadComplete, user: d
             raise HTTPException(status_code=409, detail="Status kendaraan berubah. Muat ulang halaman.")
 
         completion_map = {item.productId: item for item in body.items}
+        product_rows = await db.products.find({"id": {"$in": product_ids}}, {"_id": 0}).to_list(len(product_ids) or 1)
+        products_by_id = {str(row.get("id") or ""): row for row in product_rows}
         receipt_items = []
         stored_actual = []
         total_actual = 0.0
@@ -399,45 +408,73 @@ async def complete_inbound_load(load_id: str, body: InboundLoadComplete, user: d
             actual = completion_map.get(product_id)
             if not actual:
                 continue
-            good = float(actual.goodQty or 0)
+            product = products_by_id.get(product_id)
+            if not product:
+                raise HTTPException(status_code=404, detail=f"Master produk {planned_item.get('name', '')} tidak ditemukan")
+
+            intact_good = float(actual.goodQty or 0)
             damaged = float(actual.damagedQty or 0)
-            total = good + damaged
-            if total <= EPS:
-                continue
-            planned_qty = float(planned_item.get("qty", 0) or 0)
-            if total > planned_qty + EPS:
+            short_bag_count = int(actual.shortBagCount or 0)
+            short_actual_kg = float(actual.shortBagActualWeightKg or 0)
+            rice_50kg = is_rice_50kg_product(product)
+
+            if short_bag_count > 0 and not rice_50kg:
+                raise HTTPException(status_code=400, detail=f"Karung tidak utuh hanya dapat digunakan untuk beras 50 kg: {planned_item.get('name', 'produk')}")
+            if short_bag_count == 0 and short_actual_kg > EPS:
+                raise HTTPException(status_code=400, detail=f"Isi jumlah karung tidak utuh untuk {planned_item.get('name', 'produk')}")
+
+            short_expected_kg = float(short_bag_count) * 50.0
+            if short_actual_kg > short_expected_kg + EPS:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Total aktual {planned_item.get('name', 'produk')} melebihi rencana kendaraan ({planned_qty:g} {planned_item.get('unit', '')})",
+                    detail=f"Berat aktual karung tidak utuh {planned_item.get('name', 'beras')} melebihi berat seharusnya {short_expected_kg:g} kg",
+                )
+
+            # PO/document settles by the number of bags physically presented.
+            # Stock only receives the actual rice weight from torn bags.
+            document_total = intact_good + damaged + float(short_bag_count)
+            physical_good = intact_good + (short_actual_kg / 50.0 if rice_50kg and short_bag_count > 0 else 0.0)
+            physical_total = physical_good + damaged
+            shortage_weight_kg = max(short_expected_kg - short_actual_kg, 0.0) if rice_50kg else 0.0
+
+            if document_total <= EPS:
+                continue
+            planned_qty = float(planned_item.get("qty", 0) or 0)
+            if document_total > planned_qty + EPS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Total dokumen {planned_item.get('name', 'produk')} melebihi rencana kendaraan ({planned_qty:g} {planned_item.get('unit', '')})",
                 )
 
             if started_minutes is None:
                 raise HTTPException(status_code=409, detail="Waktu mulai bongkar kendaraan tidak valid. Batalkan sesi dan mulai kembali.")
             if started_minutes >= 16 * 60:
-                # Mulai setelah pukul 16.00: seluruh aktual otomatis lembur.
-                overtime = total
+                # Biaya bongkar dihitung dari jumlah kemasan yang ditangani,
+                # termasuk karung tidak utuh, bukan ekuivalen stok fisiknya.
+                overtime = document_total
             elif completed_minutes < 16 * 60:
-                # Selesai sebelum pukul 16.00: seluruh aktual otomatis normal.
                 overtime = 0.0
             else:
-                # Mulai sebelum 16.00 dan selesai setelah 16.00: operator hanya
-                # mengisi jumlah yang benar-benar dibongkar setelah pukul 16.00.
                 if actual.overtimeQty is None:
                     raise HTTPException(
                         status_code=400,
                         detail=f"Isi jumlah {planned_item.get('name', 'produk')} yang dibongkar setelah pukul 16.00.",
                     )
                 overtime = float(actual.overtimeQty)
-            if overtime > total + EPS:
-                raise HTTPException(status_code=400, detail=f"Jumlah setelah 16.00 {planned_item.get('name', 'produk')} tidak boleh melebihi total aktual")
-            normal = max(total - overtime, 0)
+            if overtime > document_total + EPS:
+                raise HTTPException(status_code=400, detail=f"Jumlah setelah 16.00 {planned_item.get('name', 'produk')} tidak boleh melebihi total dokumen")
+            normal = max(document_total - overtime, 0)
 
             stack_code = actual.stackCode.strip().upper() or str(planned_item.get("stackCode") or "").strip().upper()
             receipt_items.append(ReceiptItemInput(
                 productId=product_id,
-                qty=total,
-                goodQty=good,
+                qty=physical_total,
+                goodQty=physical_good,
                 damagedQty=damaged,
+                poReceivedQty=document_total,
+                shortBagCount=short_bag_count,
+                shortBagActualWeightKg=short_actual_kg,
+                shortageClaimReason=actual.shortageClaimReason.strip() or ("Karung sobek / tidak utuh saat pembongkaran" if shortage_weight_kg > EPS else ""),
                 normalQtyBefore1600=normal,
                 exp=actual.exp.strip() or str(planned_item.get("exp") or ""),
                 stackCode=stack_code,
@@ -449,16 +486,24 @@ async def complete_inbound_load(load_id: str, body: InboundLoadComplete, user: d
                 "name": planned_item.get("name", ""),
                 "unit": planned_item.get("unit", ""),
                 "plannedQty": planned_qty,
-                "goodQty": good,
+                "goodQty": physical_good,
+                "intactGoodQty": intact_good,
                 "damagedQty": damaged,
-                "actualQty": total,
+                "shortBagCount": short_bag_count,
+                "shortBagActualWeightKg": short_actual_kg,
+                "shortBagExpectedWeightKg": short_expected_kg,
+                "shortageClaimWeightKg": shortage_weight_kg,
+                "shortageClaimReason": actual.shortageClaimReason.strip() or ("Karung sobek / tidak utuh saat pembongkaran" if shortage_weight_kg > EPS else ""),
+                "physicalActualQty": physical_total,
+                "documentActualQty": document_total,
+                "actualQty": physical_total,
                 "overtimeQty": overtime,
                 "normalQty": normal,
                 "stackCode": stack_code,
                 "exp": actual.exp.strip() or str(planned_item.get("exp") or ""),
                 "channel": actual.channel or str(planned_item.get("channel") or ""),
             })
-            total_actual += total
+            total_actual += document_total
 
         if total_actual <= EPS:
             raise HTTPException(status_code=400, detail="Isi minimal satu jumlah aktual penerimaan. Jika kendaraan tidak jadi bongkar, gunakan Batalkan.")
@@ -497,6 +542,7 @@ async def complete_inbound_load(load_id: str, body: InboundLoadComplete, user: d
             grossMax=float(load.get("grossMax", 0) or 0),
             unloadingFeeChargeMode=_normalize_unloading_fee_mode(load.get("unloadingFeeChargeMode")),
             unloadingSessionId=session_id,
+            inboundLoadId=load_id,
         )
         try:
             result = await receive_stock(receipt_body, user)
@@ -532,6 +578,7 @@ async def complete_inbound_load(load_id: str, body: InboundLoadComplete, user: d
             "completedBy": user.get("name", ""),
             "operationId": result.get("operationId", ""),
             "actualItems": stored_actual,
+            "shortageClaims": result.get("shortageClaims", []),
             "unloadingCost": unloading_cost,
         }
         await db.inbound_loads.update_one(
@@ -542,6 +589,7 @@ async def complete_inbound_load(load_id: str, body: InboundLoadComplete, user: d
                 "completedBy": user.get("name", ""),
                 "operationId": result.get("operationId", ""),
                 "actualItems": stored_actual,
+                "shortageClaims": result.get("shortageClaims", []),
                 "unloadingCost": unloading_cost,
             }, "$push": {"history": event}},
         )
@@ -550,4 +598,5 @@ async def complete_inbound_load(load_id: str, body: InboundLoadComplete, user: d
             "operationId": result.get("operationId", ""),
             "purchaseOrder": result.get("purchaseOrder"),
             "transactions": result.get("transactions", []),
+            "shortageClaims": result.get("shortageClaims", []),
         }
