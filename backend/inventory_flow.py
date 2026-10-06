@@ -12,7 +12,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from backend.server import (
+    ROLE_ADMIN,
+    ROLE_SUPERADMIN,
     build_xlsx,
+    canonical_role,
     db,
     get_current_user,
     max_suffix,
@@ -86,6 +89,7 @@ class ReceiptInput(BaseModel):
     unloadingSessionId: str = ""
     unloadingStartTime: str = ""  # legacy client compatibility only
     inboundLoadId: str = ""
+    operationalAt: str = ""  # audited historical vehicle receipt, Admin/Superadmin only
 
 
 def _unloading_user_key(user: dict) -> str:
@@ -527,7 +531,24 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
                     detail=f"Jumlah diterima untuk {po_item.get('name', 'produk')} melebihi sisa PO ({remaining:g} {po_item.get('unit', '')})",
                 )
 
-    op_now = operational_now()
+    current_now = operational_now()
+    op_now = current_now
+    if body.operationalAt.strip():
+        if canonical_role(user.get("role")) not in {ROLE_SUPERADMIN, ROLE_ADMIN}:
+            raise HTTPException(status_code=403, detail="Waktu operasional historis hanya dapat digunakan oleh Superadmin atau Admin Operasional")
+        try:
+            parsed_operational = datetime.fromisoformat(body.operationalAt.strip().replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Format waktu operasional historis tidak valid") from exc
+        if parsed_operational.tzinfo is None:
+            parsed_operational = parsed_operational.replace(tzinfo=current_now.tzinfo)
+        else:
+            parsed_operational = parsed_operational.astimezone(current_now.tzinfo)
+        if parsed_operational > current_now:
+            raise HTTPException(status_code=400, detail="Waktu operasional historis tidak boleh berada di masa depan")
+        if (current_now.date() - parsed_operational.date()).days > 7:
+            raise HTTPException(status_code=400, detail="Penerimaan historis hanya dapat dicatat maksimal 7 hari ke belakang")
+        op_now = parsed_operational
     unloading_session = None
     if body.unloadingSessionId.strip():
         unloading_session = await db.unloading_sessions.find_one(
@@ -555,7 +576,8 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
     unloading_holiday = holiday_from_settings(unloading_started_at, fee_settings.get("holidays") or [])
     operation_id = new_id()
     transaction_ref = po.get("no") if po else (body.ref.strip() or f"IN-{op_now.strftime('%Y%m%d%H%M%S%f')}")
-    time = now_iso()
+    recorded_at = now_iso()
+    time = op_now.isoformat() if body.operationalAt.strip() else recorded_at
     stock_changes = []
     stack_changes = []
     txns = []
@@ -637,6 +659,7 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
                 "id": new_id(),
                 "operation_id": operation_id,
                 "time": time,
+                "recorded_at": recorded_at,
                 "operational_date": op_now.strftime("%Y-%m-%d"),
                 "ref": transaction_ref,
                 "po_id": po.get("id", "") if po else "",
@@ -699,6 +722,7 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
                     "operation_id": operation_id,
                     "inboundLoadId": body.inboundLoadId.strip(),
                     "createdAt": time,
+                    "recordedAt": recorded_at,
                     "operationalDate": op_now.strftime("%Y-%m-%d"),
                     "poId": po.get("id", "") if po else "",
                     "poNo": po.get("no", "") if po else "",
