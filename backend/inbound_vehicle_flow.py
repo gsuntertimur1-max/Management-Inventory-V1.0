@@ -82,6 +82,8 @@ class InboundCompleteItem(BaseModel):
 class InboundLoadComplete(BaseModel):
     items: list[InboundCompleteItem] = Field(min_length=1)
     note: str = ""
+    actualCompletedAt: str = ""
+    actualCompletionReason: str = Field(default="", max_length=500)
 
 
 class InboundCancelInput(BaseModel):
@@ -270,8 +272,9 @@ async def start_inbound_load(
             started = started.astimezone(now.tzinfo)
         if started > now:
             raise HTTPException(status_code=400, detail="Waktu mulai aktual tidak boleh berada di masa depan")
-        if started.date() != now.date():
-            raise HTTPException(status_code=400, detail="Backdate waktu mulai bongkar saat ini hanya diizinkan untuk tanggal operasional hari ini")
+        days_back = (now.date() - started.date()).days
+        if days_back < 0 or days_back > 7:
+            raise HTTPException(status_code=400, detail="Backdate waktu mulai bongkar hanya diizinkan maksimal 7 hari ke belakang")
     else:
         started = now
 
@@ -401,7 +404,44 @@ async def complete_inbound_load(load_id: str, body: InboundLoadComplete, user: d
         stored_actual = []
         total_actual = 0.0
         started_minutes = _started_minutes(str(load.get("startedAt") or ""))
-        completed_at = operational_now()
+        current_now = operational_now()
+        try:
+            started_at = datetime.fromisoformat(str(load.get("startedAt") or "").replace("Z", "+00:00"))
+            if started_at.tzinfo is None:
+                started_at = started_at.replace(tzinfo=current_now.tzinfo)
+            else:
+                started_at = started_at.astimezone(current_now.tzinfo)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail="Waktu mulai bongkar kendaraan tidak valid. Batalkan sesi dan mulai kembali.") from exc
+
+        requested_completed = str(body.actualCompletedAt or "").strip()
+        completion_reason = str(body.actualCompletionReason or "").strip()
+        historical_start = started_at.date() < current_now.date()
+        if requested_completed:
+            if canonical_role(user.get("role")) not in {ROLE_SUPERADMIN, ROLE_ADMIN}:
+                raise HTTPException(status_code=403, detail="Waktu selesai aktual hanya dapat diubah oleh Superadmin atau Admin Operasional")
+            if len(completion_reason) < 3:
+                raise HTTPException(status_code=400, detail="Alasan waktu selesai aktual minimal 3 karakter")
+            try:
+                completed_at = datetime.fromisoformat(requested_completed.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail="Format waktu selesai aktual tidak valid") from exc
+            if completed_at.tzinfo is None:
+                completed_at = completed_at.replace(tzinfo=current_now.tzinfo)
+            else:
+                completed_at = completed_at.astimezone(current_now.tzinfo)
+            if completed_at > current_now:
+                raise HTTPException(status_code=400, detail="Waktu selesai aktual tidak boleh berada di masa depan")
+            if completed_at < started_at:
+                raise HTTPException(status_code=400, detail="Waktu selesai aktual tidak boleh lebih awal dari waktu mulai bongkar")
+            if completed_at.date() != started_at.date():
+                raise HTTPException(status_code=400, detail="Untuk penerimaan historis, waktu mulai dan selesai harus pada tanggal operasional yang sama")
+            if (current_now.date() - completed_at.date()).days > 7:
+                raise HTTPException(status_code=400, detail="Penerimaan historis hanya dapat dicatat maksimal 7 hari ke belakang")
+        else:
+            if historical_start:
+                raise HTTPException(status_code=400, detail="Isi waktu selesai aktual untuk penerimaan yang dimulai pada tanggal sebelumnya")
+            completed_at = current_now
         completed_minutes = completed_at.hour * 60 + completed_at.minute
 
         for product_id, planned_item in planned.items():
@@ -543,6 +583,7 @@ async def complete_inbound_load(load_id: str, body: InboundLoadComplete, user: d
             unloadingFeeChargeMode=_normalize_unloading_fee_mode(load.get("unloadingFeeChargeMode")),
             unloadingSessionId=session_id,
             inboundLoadId=load_id,
+            operationalAt=completed_at.isoformat() if requested_completed else "",
         )
         try:
             result = await receive_stock(receipt_body, user)
@@ -569,28 +610,47 @@ async def complete_inbound_load(load_id: str, body: InboundLoadComplete, user: d
                 unloading_groups.add(group)
         unloading_cost["groups"] = sorted(unloading_groups)
 
-        now = now_iso()
-        event = {"time": now, "status": "Selesai", "by": user.get("name", ""), "note": body.note.strip() or "Bongkar selesai"}
+        recorded_at = now_iso()
+        completed_value = completed_at.isoformat() if requested_completed else recorded_at
+        event_note = body.note.strip() or "Bongkar selesai"
+        if requested_completed:
+            event_note = f"{event_note} · waktu selesai aktual {completed_at.strftime('%d-%m-%Y %H:%M')} · alasan: {completion_reason}"
+        event = {
+            "time": recorded_at,
+            "actualTime": completed_value if requested_completed else "",
+            "timeSource": "BACKDATED_ACTUAL" if requested_completed else "SYSTEM",
+            "status": "Selesai",
+            "by": user.get("name", ""),
+            "note": event_note,
+        }
         completed_load = {
             **load,
             "status": "Selesai",
-            "completedAt": now,
+            "completedAt": completed_value,
             "completedBy": user.get("name", ""),
             "operationId": result.get("operationId", ""),
             "actualItems": stored_actual,
             "shortageClaims": result.get("shortageClaims", []),
             "unloadingCost": unloading_cost,
+            "completionTimeSource": "BACKDATED_ACTUAL" if requested_completed else "SYSTEM",
+            "actualCompletionReason": completion_reason if requested_completed else "",
+            "actualCompletionRecordedAt": recorded_at if requested_completed else "",
+            "actualCompletionRecordedBy": user.get("name", "") if requested_completed else "",
         }
         await db.inbound_loads.update_one(
             {"id": load_id, "status": "Sedang Bongkar"},
             {"$set": {
                 "status": "Selesai",
-                "completedAt": now,
+                "completedAt": completed_value,
                 "completedBy": user.get("name", ""),
                 "operationId": result.get("operationId", ""),
                 "actualItems": stored_actual,
                 "shortageClaims": result.get("shortageClaims", []),
                 "unloadingCost": unloading_cost,
+                "completionTimeSource": "BACKDATED_ACTUAL" if requested_completed else "SYSTEM",
+                "actualCompletionReason": completion_reason if requested_completed else "",
+                "actualCompletionRecordedAt": recorded_at if requested_completed else "",
+                "actualCompletionRecordedBy": user.get("name", "") if requested_completed else "",
             }, "$push": {"history": event}},
         )
         return {
