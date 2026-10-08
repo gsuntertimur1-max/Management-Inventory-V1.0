@@ -701,6 +701,24 @@ async def export_bon_muat_pdf(load_id: str, user: dict = Depends(get_current_use
     return _pdf_response(buffer, f"bon_pemuatan_{load.get('bon_no', '')}.pdf")
 
 
+def _wrap_pdf_text(text: str, font_name: str, font_size: float, max_width: float) -> list[str]:
+    """Wrap canvas text by rendered width; safe for A4 forms."""
+    words = str(text or "").split()
+    if not words:
+        return [""]
+    lines: list[str] = []
+    current = words[0]
+    for word in words[1:]:
+        candidate = f"{current} {word}"
+        if stringWidth(candidate, font_name, font_size) <= max_width:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+    lines.append(current)
+    return lines
+
+
 def _weighing_form_pdf(title: str, document_no: str, party: str, polisi: str, created_at: str, entries: list[dict]) -> io.BytesIO:
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
@@ -716,7 +734,7 @@ def _weighing_form_pdf(title: str, document_no: str, party: str, polisi: str, cr
     c.setFont("Helvetica", 8); c.drawString(left + 3 * mm, y - 10 * mm, document_no or "-"); c.drawString(left + 92 * mm, y - 10 * mm, _date(created_at, True))
     y -= 23 * mm
     c.setFont("Helvetica-Bold", 7); c.drawString(left, y, "PENERIMA / PENGIRIM"); c.drawString(left + 92 * mm, y, "NO. POLISI")
-    party_lines = _wrap_thermal(str(party or "-"), "Helvetica", 8, 86 * mm)[:3]
+    party_lines = _wrap_pdf_text(str(party or "-"), "Helvetica", 8, 86 * mm)[:3]
     c.setFont("Helvetica", 8)
     party_y = y - 5 * mm
     for line in party_lines:
