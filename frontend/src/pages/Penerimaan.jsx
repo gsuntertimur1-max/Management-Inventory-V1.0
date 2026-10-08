@@ -431,7 +431,7 @@ const Penerimaan = () => {
       </div>
     </section>}
 
-    {startModal && <div className="fixed inset-0 z-[95] bg-black/75 flex items-center justify-center p-4"><div className="card-surface w-full max-w-lg p-6">
+    {startModal && <div className="fixed inset-0 z-[95] bg-black/75 overflow-y-auto flex items-start justify-center p-4 sm:py-6"><div className="card-surface w-full max-w-lg p-6">
       <div className="flex items-start gap-3">
         <CalendarClock size={20} className="text-[#93c5fd] mt-0.5"/>
         <div>
