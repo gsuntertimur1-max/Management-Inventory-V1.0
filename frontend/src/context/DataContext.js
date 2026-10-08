@@ -451,6 +451,7 @@ export const DataProvider = ({ children }) => {
       deleteConsignmentLayout,
       addConsignmentOpname,
       refreshConsignmentFlow,
+      refreshConsignmentLayouts,
     }}>
       {children}
     </DataContext.Provider>
