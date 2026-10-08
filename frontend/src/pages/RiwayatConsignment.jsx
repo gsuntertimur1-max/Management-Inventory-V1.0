@@ -21,6 +21,7 @@ const EVENT_LABELS = {
   ECOM_SHIPPED: 'E-commerce - Dikirim',
   ECOM_CANCELLED: 'E-commerce - Dibatalkan',
   ECOM_RETUR: 'E-commerce - Retur',
+  RETURN_TO_MAIN: 'Kembali ke Gudang Induk',
 };
 
 const monthStart = () => {
@@ -44,6 +45,7 @@ const qtyText = (item) => {
   if (item.goodQty !== undefined) parts.push('Baik ' + item.goodQty + ' ' + unit);
   if (item.damagedQty !== undefined) parts.push('Rusak ' + item.damagedQty + ' ' + unit);
   if (item.packageQty !== undefined) parts.push('Paket ' + item.packageQty);
+  if (item.returnedToMainQty !== undefined) parts.push('Kembali ke Induk ' + item.returnedToMainQty + ' ' + unit);
   return parts.join(' · ') || '—';
 };
 
