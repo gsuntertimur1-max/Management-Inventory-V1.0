@@ -507,7 +507,7 @@ const Penerimaan = () => {
       <div className="flex justify-end gap-2 mt-5"><button disabled={Boolean(busy)} onClick={()=>setCompletion(null)} className="px-4 py-2 rounded-lg border border-[#242f3d]">Batal</button><button disabled={Boolean(busy)} onClick={completeLoad} className="btn-primary px-5 py-2 rounded-lg font-semibold disabled:opacity-50">{busy ? 'Menyimpan...' : 'Selesai Bongkar & Simpan'}</button></div>
     </div></div>}
 
-    {cancelModal && <div className="fixed inset-0 z-[90] bg-black/75 flex items-center justify-center p-4"><div className="card-surface w-full max-w-md p-6">
+    {cancelModal && <div className="fixed inset-0 z-[90] bg-black/75 overflow-y-auto flex items-start justify-center p-4 sm:py-6"><div className="card-surface w-full max-w-md p-6">
       <h2 className="font-display text-xl font-bold">Batalkan Kendaraan</h2>
       <p className="text-xs text-[#8b93a1] mt-1">{cancelModal.load.loadNo} · {cancelModal.load.polisi}. Pembatalan tidak mengurangi PO dan tidak mengubah stok.</p>
       <textarea rows={3} value={cancelModal.reason} onChange={(e)=>setCancelModal({...cancelModal,reason:e.target.value})} placeholder="Alasan pembatalan" className="w-full mt-4 bg-[#0b0f17] border border-[#7f1d1d] rounded-lg px-3 py-2.5"/>
