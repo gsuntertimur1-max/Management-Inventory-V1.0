@@ -8,12 +8,13 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from pymongo import ReturnDocument
 
-from backend.server import build_xlsx, db, get_current_user, new_id, next_sequence, normalize_channel, now_iso, operational_now
+from backend.server import build_xlsx, db, get_current_user, new_id, next_sequence, normalize_channel, now_iso, operational_now, ensure_channel_stock
 from backend.role_four_config import has_role_permission, role_destination
 from backend.consignment_documents import next_bazar_document_numbers
 import backend.consignment as consignment_module
 from backend.consignment_damaged import credit_consignment_damaged
 from backend.operational_guards import idempotent_operation, lock_keys
+from backend.stack_allocations import allocate_stock_to_stack, decrease_stack_allocation, valid_stack_codes
 
 router = APIRouter(prefix="/api")
 EPS = 1e-9
@@ -168,6 +169,15 @@ class QtyItem(BaseModel):
     qty: float = Field(gt=0)
 
 
+class ConsignmentReturnMainInput(BaseModel):
+    destination: Literal["Gudang Bazar", "Gudang E-commerce"]
+    productId: str
+    sourceStackCode: str
+    destinationStackCode: str
+    qty: float = Field(gt=0)
+    note: str = ""
+
+
 class BazarTripItem(QtyItem):
     stackCode: str = ""
 
@@ -192,6 +202,296 @@ class BazarCloseItem(BaseModel):
 class BazarTripClose(BaseModel):
     items: List[BazarCloseItem] = Field(min_length=1)
     note: str = ""
+
+
+@router.get("/consignment-return-main/options")
+async def consignment_return_main_options(
+    destination: Literal["Gudang Bazar", "Gudang E-commerce"],
+    user: dict = Depends(get_current_user),
+):
+    _ensure_access(user, destination, write=False)
+    stack_codes = sorted(await valid_stack_codes(), key=lambda value: (
+        999 if not str(value).split("/", 1)[0].isdigit() else int(str(value).split("/", 1)[0]),
+        str(value),
+    ))
+    stock_rows = await adjusted_consignment_stock(destination)
+    stock_by_product = {
+        str(row.get("productId") or ""): row
+        for row in stock_rows
+        if str(row.get("productId") or "")
+    }
+    layouts = await db.consignment_layouts.find(
+        {"destination": destination, "primaryQty": {"$gt": EPS}},
+        {"_id": 0},
+    ).sort([("productName", 1), ("stackCode", 1)]).to_list(5000)
+    rows = []
+    available_cache: dict[str, float] = {}
+    for layout in layouts:
+        product_id = str(layout.get("productId") or "")
+        if not product_id or product_id not in stock_by_product:
+            continue
+        if product_id not in available_cache:
+            _, _, available_cache[product_id] = await _available(destination, product_id)
+        physical_here = max(_n(layout.get("primaryQty")), 0.0)
+        if destination == BAZAR:
+            reserved_here = await _bazar_stack_reserved(product_id, str(layout.get("stackCode") or ""))
+            source_available = max(physical_here - reserved_here, 0.0)
+        else:
+            reserved_here = 0.0
+            source_available = min(physical_here, available_cache[product_id])
+        if source_available <= EPS:
+            continue
+        identity = stock_by_product[product_id]
+        rows.append({
+            "destination": destination,
+            "productId": product_id,
+            "sku": layout.get("sku") or identity.get("sku", ""),
+            "name": layout.get("productName") or identity.get("name", ""),
+            "unit": layout.get("unit") or identity.get("unit", ""),
+            "channel": normalize_channel(layout.get("channel"), normalize_channel(identity.get("channel"), "KOM")),
+            "sourceStackCode": layout.get("stackCode", ""),
+            "physicalQty": physical_here,
+            "reservedQty": reserved_here,
+            "availableQty": source_available,
+            "productAvailableQty": available_cache[product_id],
+            "documents": identity.get("documents", []),
+        })
+    return {"destination": destination, "mainStackCodes": stack_codes, "sources": rows}
+
+
+@router.post("/consignment-return-main")
+async def return_consignment_to_main(
+    body: ConsignmentReturnMainInput,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    destination = body.destination
+    _ensure_access(user, destination, write=True)
+    product_id = str(body.productId or "").strip()
+    source_stack = str(body.sourceStackCode or "").strip().upper()
+    target_stack = str(body.destinationStackCode or "").strip().upper()
+    qty = float(body.qty)
+    operator = user.get("name") or user.get("username") or "Operator"
+
+    if not product_id or not source_stack or not target_stack:
+        raise HTTPException(status_code=400, detail="Produk, lokasi asal, dan tumpukan tujuan wajib diisi")
+    if target_stack not in await valid_stack_codes():
+        raise HTTPException(status_code=400, detail="Tumpukan tujuan Gudang Induk tidak valid")
+
+    async def action():
+        product = await db.products.find_one({"id": product_id}, {"_id": 0})
+        if not product:
+            raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
+        await ensure_channel_stock(product)
+
+        source_layout = await db.consignment_layouts.find_one(
+            {"destination": destination, "productId": product_id, "stackCode": source_stack},
+            {"_id": 0},
+        )
+        if not source_layout:
+            raise HTTPException(status_code=404, detail=f"Stok tidak ditemukan pada {source_stack}")
+
+        physical, reserved, available = await _available(destination, product_id)
+        source_physical = _n(source_layout.get("primaryQty"))
+        if destination == BAZAR:
+            source_reserved = await _bazar_stack_reserved(product_id, source_stack)
+            source_available = max(source_physical - source_reserved, 0.0)
+        else:
+            source_reserved = 0.0
+            source_available = min(source_physical, available)
+        if qty > available + EPS:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Stok tersedia {product.get('name', '')} hanya {available:g} {product.get('unit', '')}; {reserved:g} sedang terikat kegiatan aktif.",
+            )
+        if qty > source_available + EPS:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Stok yang dapat diambil dari {source_stack} hanya {source_available:g} {product.get('unit', '')}.",
+            )
+
+        stock_rows = await adjusted_consignment_stock(destination)
+        identity = next((row for row in stock_rows if row.get("productId") == product_id), {})
+        channel = normalize_channel(source_layout.get("channel"), normalize_channel(identity.get("channel"), normalize_channel(product.get("channel"))))
+        source_documents = list(identity.get("documents") or [])
+        op_now = operational_now()
+        date_key = op_now.strftime("%Y%m%d")
+        seq = await next_sequence(f"consignment-return-main:{date_key}", 0)
+        reference_no = f"KGI-{date_key}-{seq:04d}"
+        operation_id = new_id()
+        movement_id = new_id()
+        transaction_id = new_id()
+        now = now_iso()
+
+        movement_inserted = False
+        product_incremented = False
+        stack_incremented = False
+        transaction_inserted = False
+        history_inserted = False
+        try:
+            await db.consignment_movements.insert_one({
+                "id": movement_id,
+                "eventKey": f"return-main:{operation_id}",
+                "operationId": operation_id,
+                "time": now,
+                "destination": destination,
+                "movementType": "RETURN_TO_MAIN",
+                "referenceId": operation_id,
+                "referenceNo": reference_no,
+                "productId": product_id,
+                "sku": product.get("sku", ""),
+                "name": product.get("name", ""),
+                "unit": product.get("unit", ""),
+                "channel": channel,
+                "delta": -qty,
+                "sourceStackCode": source_stack,
+                "destinationStackCode": target_stack,
+                "sourceDocuments": source_documents,
+                "operator": operator,
+                "note": body.note.strip(),
+            })
+            movement_inserted = True
+
+            await consignment_module.sync_consignment_layout_balance(
+                destination,
+                product_id,
+                operator=operator,
+                preferred_stack=source_stack,
+                operation_key=f"return-main:{operation_id}",
+                note=f"Pengembalian ke Gudang Induk {reference_no}",
+            )
+
+            result = await db.products.update_one(
+                {"id": product_id},
+                {"$inc": {"stock": qty, f"channelStock.{channel}.stock": qty}},
+            )
+            if result.matched_count == 0:
+                raise HTTPException(status_code=409, detail="Master produk berubah. Muat ulang lalu coba lagi.")
+            product_incremented = True
+
+            await allocate_stock_to_stack(product, target_stack, qty, operator)
+            stack_incremented = True
+
+            transaction = {
+                "id": transaction_id,
+                "operation_id": operation_id,
+                "time": now,
+                "operational_date": op_now.strftime("%Y-%m-%d"),
+                "ref": reference_no,
+                "type": "MASUK",
+                "document_type": "KEMBALI_KONSINYASI",
+                "parent_document": ", ".join(source_documents),
+                "kondisi": "BAIK",
+                "product_id": product_id,
+                "product": product.get("name", ""),
+                "sku": product.get("sku", ""),
+                "change": qty,
+                "good_change": qty,
+                "damaged_change": 0,
+                "unit": product.get("unit", ""),
+                "weight": _n(product.get("weight")),
+                "total_weight": qty * _n(product.get("weight")),
+                "secondary": product.get("secondary", ""),
+                "secondaryQty": _n(product.get("secondaryQty")),
+                "channel": channel,
+                "stackCode": target_stack,
+                "receipt_location": target_stack,
+                "consignment_source": destination,
+                "consignment_source_stack": source_stack,
+                "source_documents": source_documents,
+                "operator": operator,
+                "keterangan": body.note.strip() or f"Pengembalian sebagian/seluruh stok dari {destination} ke Gudang Induk",
+            }
+            await db.transactions.insert_one(dict(transaction))
+            transaction_inserted = True
+
+            history = {
+                "id": new_id(),
+                "operationId": operation_id,
+                "time": now,
+                "destination": destination,
+                "eventType": "RETURN_TO_MAIN",
+                "referenceId": operation_id,
+                "referenceNo": reference_no,
+                "operator": operator,
+                "items": [{
+                    "productId": product_id,
+                    "sku": product.get("sku", ""),
+                    "name": product.get("name", ""),
+                    "unit": product.get("unit", ""),
+                    "qty": qty,
+                    "returnedToMainQty": qty,
+                    "channel": channel,
+                    "sourceStackCode": source_stack,
+                    "destinationStackCode": target_stack,
+                    "documents": source_documents,
+                }],
+                "note": body.note.strip(),
+                "sourceStackCode": source_stack,
+                "destinationStackCode": target_stack,
+            }
+            await db.consignment_operation_history.insert_one(history)
+            history_inserted = True
+
+            return {
+                "ok": True,
+                "operationId": operation_id,
+                "referenceNo": reference_no,
+                "destination": destination,
+                "productId": product_id,
+                "product": product.get("name", ""),
+                "qty": qty,
+                "unit": product.get("unit", ""),
+                "sourceStackCode": source_stack,
+                "destinationStackCode": target_stack,
+                "channel": channel,
+                "sourceDocuments": source_documents,
+                "message": f"{qty:g} {product.get('unit', '')} dikembalikan ke {target_stack}",
+            }
+        except Exception:
+            if history_inserted:
+                await db.consignment_operation_history.delete_many({"operationId": operation_id})
+            if transaction_inserted:
+                await db.transactions.delete_many({"operation_id": operation_id})
+            if stack_incremented:
+                try:
+                    await decrease_stack_allocation(product_id, target_stack, qty, "Sistem (rollback kembali konsinyasi)")
+                except Exception:
+                    pass
+            if product_incremented:
+                await db.products.update_one(
+                    {"id": product_id},
+                    {"$inc": {"stock": -qty, f"channelStock.{channel}.stock": -qty}},
+                )
+            if movement_inserted:
+                await db.consignment_movements.delete_many({"operationId": operation_id})
+                try:
+                    await consignment_module.sync_consignment_layout_balance(
+                        destination,
+                        product_id,
+                        operator="Sistem (rollback kembali konsinyasi)",
+                        preferred_stack=source_stack,
+                        operation_key=f"return-main:{operation_id}:rollback",
+                        note="Rollback pengembalian ke Gudang Induk yang tidak selesai",
+                    )
+                except Exception:
+                    pass
+            raise
+
+    return await idempotent_operation(
+        request,
+        user,
+        f"consignment-return-main:{destination}:{product_id}",
+        lock_keys(
+            [
+                f"consignment:{destination}:{product_id}",
+                f"consignment-stack:{destination}:{source_stack}:{product_id}",
+                f"main-stock:{product_id}",
+                f"main-stack:{target_stack}:{product_id}",
+            ],
+        ),
+        action,
+    )
 
 
 @router.get("/bazar/trips")
