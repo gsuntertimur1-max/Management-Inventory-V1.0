@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { useData } from '../context/DataContext';
 import { defaultConsignmentStack, consignmentStackCodes } from '../lib/consignmentLocations';
 import SearchableProductSelect from '../components/SearchableProductSelect';
+import ConsignmentReturnToMainCard from '../components/ConsignmentReturnToMainCard';
 
 const inputCls = 'w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]';
 
@@ -109,7 +110,7 @@ const ConsignmentTransferCard = ({ destination, layouts = [], onChanged }) => {
 };
 
 const BazarOperasional = () => {
-  const { refreshConsignmentFlow, consignmentLayouts } = useData();
+  const { refreshConsignmentFlow, refreshConsignmentLayouts, consignmentLayouts } = useData();
   const [availability, setAvailability] = useState([]);
   const [trips, setTrips] = useState([]);
   const [history, setHistory] = useState([]);
@@ -364,7 +365,9 @@ const BazarOperasional = () => {
       </div>
     </div>
 
-    <ConsignmentTransferCard destination="Gudang Bazar" layouts={consignmentLayouts} onChanged={async () => { await Promise.all([load(), refreshConsignmentFlow()]); }} />\n\n    <div className="card-surface p-5"><div className="font-semibold flex items-center gap-2 mb-4"><History size={17}/> History Bazar</div><div className="space-y-2 max-h-[420px] overflow-auto">{history.map((row) => <div key={row.id} className="border-b border-[#1f2937] pb-2 text-xs"><div className="font-medium">{row.eventType} · {row.referenceNo}</div><div className="text-[#8b93a1]">{new Date(row.time).toLocaleString('id-ID')} · {row.operator}</div></div>)}</div></div>
+    <ConsignmentTransferCard destination="Gudang Bazar" layouts={consignmentLayouts} onChanged={async () => { await Promise.all([load(), refreshConsignmentFlow()]); }} />
+
+    <ConsignmentReturnToMainCard destination="Gudang Bazar" onChanged={async () => { await Promise.all([load(), refreshConsignmentFlow(), refreshConsignmentLayouts()]); }} />\n\n    <div className="card-surface p-5"><div className="font-semibold flex items-center gap-2 mb-4"><History size={17}/> History Bazar</div><div className="space-y-2 max-h-[420px] overflow-auto">{history.map((row) => <div key={row.id} className="border-b border-[#1f2937] pb-2 text-xs"><div className="font-medium">{row.eventType} · {row.referenceNo}</div><div className="text-[#8b93a1]">{new Date(row.time).toLocaleString('id-ID')} · {row.operator}</div></div>)}</div></div>
 
     {closing && <div className="fixed inset-0 z-[90] bg-black/75 flex items-center justify-center p-4"><div className="card-surface w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto"><h2 className="font-display text-xl font-bold">Rekonsiliasi {closing.tripNo}</h2><p className="text-xs text-[#8b93a1] mt-1 mb-4">Isi terjual dan retur rusak. Retur baik dihitung otomatis = Muat − Terjual − Retur Rusak. Retur rusak otomatis masuk Area Barang Rusak Bazar.</p>{(closing.items || []).map((item, index) => { const rowKey = `${item.productId}|${item.stackCode || ''}`; const sold = Number(closeRows[rowKey]?.soldQty || 0); const damaged = Number(closeRows[rowKey]?.returnedDamagedQty || 0); const good = Number(item.loadedQty || 0) - sold - damaged; return <div key={`${rowKey}-${index}`} className="border border-[#243044] rounded-xl p-4 mb-3"><div className="font-semibold text-sm">{item.name} · {item.stackCode || defaultConsignmentStack('Gudang Bazar')} · Muat {item.loadedQty} {item.unit}</div><div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3"><input type="number" min="0" className={inputCls} placeholder="Terjual" value={closeRows[rowKey]?.soldQty || ''} onChange={(e) => setCloseRows((p) => ({ ...p, [rowKey]: { ...p[rowKey], soldQty: e.target.value } }))}/><input type="number" min="0" className={inputCls} placeholder="Retur rusak" value={closeRows[rowKey]?.returnedDamagedQty || ''} onChange={(e) => setCloseRows((p) => ({ ...p, [rowKey]: { ...p[rowKey], returnedDamagedQty: e.target.value } }))}/><div className="rounded-lg border border-[#243044] px-3 py-2.5 text-sm">Retur baik: <b>{good}</b></div></div></div>; })}<div className="flex justify-end gap-2 mt-5"><button onClick={() => setClosing(null)} className="px-4 py-2 rounded-lg border border-[#243044]">Batal</button><button onClick={closeTrip} className="btn-primary px-5 py-2 rounded-lg font-semibold">Selesaikan Bazar</button></div></div></div>}
   </div>;
