@@ -759,6 +759,35 @@ def _weighing_form_pdf(title: str, document_no: str, party: str, polisi: str, cr
             c.setFont("Helvetica", 8); c.drawCentredString((start_x + number_col) / 2, row_y + 2.8 * mm, str(entry.get("no", first_no + index)))
             c.drawCentredString((number_col + end_x) / 2, row_y + 2.8 * mm, _num(entry.get("gross", 0)))
     y -= row_h * 11
+
+    # Ringkasan 20 hasil timbang. Gunakan angka yang benar-benar ditampilkan
+    # pada tabel agar total / 20 selalu dapat diverifikasi langsung dari PDF.
+    displayed_values = []
+    for index in range(20):
+        entry = entries[index] if index < len(entries) else {"gross": 0}
+        displayed_values.append(float(entry.get("gross", 0) or 0))
+    weighing_total = round(sum(displayed_values), 2)
+    weighing_average = round(weighing_total / 20, 2)
+
+    summary_top = y - 4 * mm
+    summary_h = 17 * mm
+    summary_mid = left + (right - left) / 2
+    c.setFillColor(colors.HexColor("#F4F7F9"))
+    c.rect(left, summary_top - summary_h, right - left, summary_h, fill=1, stroke=1)
+    c.setFillColor(colors.black)
+    c.line(summary_mid, summary_top, summary_mid, summary_top - summary_h)
+
+    c.setFont("Helvetica-Bold", 7.5)
+    c.drawString(left + 3 * mm, summary_top - 5 * mm, "TOTAL 20 TIMBANGAN")
+    c.drawString(summary_mid + 3 * mm, summary_top - 5 * mm, "RATA-RATA")
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(left + 3 * mm, summary_top - 11.5 * mm, f"{_num(weighing_total)} KG")
+    c.drawString(
+        summary_mid + 3 * mm,
+        summary_top - 11.5 * mm,
+        f"{_num(weighing_total)} / 20 = {_num(weighing_average)} KG",
+    )
+
     sign_y = 39 * mm
     c.setFont("Helvetica", 8); c.drawCentredString(left + 42 * mm, sign_y + 20 * mm, "Pengangkut / Pengambil")
     c.drawCentredString(right - 42 * mm, sign_y + 20 * mm, "Petugas Gudang")
