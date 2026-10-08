@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, CalendarClock, CheckCircle2, Clock3, Play, Printer, RefreshCcw, RotateCcw, Truck, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
@@ -72,6 +72,7 @@ const Penerimaan = () => {
   const [startModal, setStartModal] = useState(null);
   const [cancelModal, setCancelModal] = useState(null);
   const [historyPage, setHistoryPage] = useState(1);
+  const completionModalRef = useRef(null);
 
   const loadAll = useCallback(async () => {
     try {
@@ -106,6 +107,14 @@ const Penerimaan = () => {
     const maxPage = Math.max(1, Math.ceil(history.length / historyPageSize));
     if (historyPage > maxPage) setHistoryPage(maxPage);
   }, [history.length, historyPage]);
+
+  useEffect(() => {
+    if (!completion?.load?.id) return;
+    const frame = requestAnimationFrame(() => {
+      completionModalRef.current?.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [completion?.load?.id]);
 
   const executeStartLoad = async (load, payload = undefined) => {
     if (busy) return;
@@ -442,7 +451,7 @@ const Penerimaan = () => {
       <div className="flex justify-end gap-2 mt-5"><button disabled={Boolean(busy)} onClick={() => setStartModal(null)} className="px-4 py-2 rounded-lg border border-[#242f3d]">Batal</button><button disabled={Boolean(busy)} onClick={confirmStartLoad} className="btn-primary px-5 py-2 rounded-lg font-semibold disabled:opacity-50">{busy ? 'Memulai...' : 'Konfirmasi Mulai Bongkar'}</button></div>
     </div></div>}
 
-    {completion && <div className="fixed inset-0 z-[90] bg-black/75 flex items-center justify-center p-4"><div className="card-surface w-full max-w-4xl max-h-[92vh] overflow-y-auto p-6">
+    {completion && <div ref={completionModalRef} className="fixed inset-0 z-[90] bg-black/75 overflow-y-auto flex items-start justify-center p-4 sm:py-6"><div className="card-surface w-full max-w-4xl p-6">
       <h2 className="font-display text-2xl font-bold">Selesaikan Bongkar · {completion.load.loadNo}</h2>
       <p className="text-xs text-[#8b93a1] mt-1">Isi jumlah aktual per kendaraan. Baik masuk tumpukan, rusak masuk Area Barang Rusak. Rencana yang tidak diterima tetap menjadi outstanding PO.</p>
       {completion.historicalStart && <div className="mt-3 rounded-lg border border-[#7c5a1f] bg-[#1f1408] p-3">
