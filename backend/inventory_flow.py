@@ -252,15 +252,81 @@ def _validate_pack_qty(product: dict, qty: float) -> None:
 
 
 def _weighing_entries(average: float, minimum: float, maximum: float) -> list[dict]:
+    """Build exactly 20 two-decimal samples.
+
+    The declared minimum and maximum are guaranteed to appear in the sample,
+    and the arithmetic mean remains exactly the declared average whenever the
+    three values are mathematically compatible.
+    """
     target = round(average * 100)
     low, high = round(minimum * 100), round(maximum * 100)
-    spread = min(target - low, high - target)
-    chooser = random.SystemRandom()
-    values = []
-    for _ in range(10):
-        delta = chooser.randint(0, spread)
-        values.extend([target - delta, target + delta])
-    chooser.shuffle(values)
+    if low > target or target > high:
+        raise HTTPException(status_code=400, detail="Rata-rata bruto harus berada di dalam rentang timbang")
+    if low == high:
+        values = [target] * 20
+        return [{"no": index, "gross": value / 100} for index, value in enumerate(values, 1)]
+    if target in {low, high}:
+        raise HTTPException(
+            status_code=400,
+            detail="Rata-rata bruto harus berada di antara minimum dan maksimum agar keduanya dapat muncul pada 20 sampel",
+        )
+
+    # Start with the two mandatory extremes and 18 values at the target.
+    values = [low, high] + [target] * 18
+    desired_sum = target * 20
+    difference = desired_sum - sum(values)
+
+    # Correct the sum by spreading the adjustment across the 18 interior
+    # samples without ever exceeding the declared range.
+    interior = list(range(2, 20))
+    if difference > 0:
+        for index in interior:
+            if difference <= 0:
+                break
+            capacity = high - values[index]
+            step = min(capacity, difference)
+            values[index] += step
+            difference -= step
+    elif difference < 0:
+        remaining = -difference
+        for index in interior:
+            if remaining <= 0:
+                break
+            capacity = values[index] - low
+            step = min(capacity, remaining)
+            values[index] -= step
+            remaining -= step
+        difference = -remaining
+
+    if difference != 0:
+        raise HTTPException(status_code=400, detail="Rentang timbang tidak dapat menghasilkan rata-rata yang diminta")
+
+    # Add deterministic variation while preserving the exact total. This keeps
+    # the form looking like actual sample measurements rather than 18 identical
+    # values clustered at the average.
+    steps = [1, 3, 2, 5, 4, 7, 6, 8]
+    for offset, step in enumerate(steps):
+        left = 2 + offset
+        right = 19 - offset
+        if left >= right:
+            break
+        if offset % 2 == 0:
+            movable = min(step, high - values[left], values[right] - low)
+            values[left] += movable
+            values[right] -= movable
+        else:
+            movable = min(step, values[left] - low, high - values[right])
+            values[left] -= movable
+            values[right] += movable
+
+    # Use a fixed permutation so minimum/maximum are not always rows 1 and 2,
+    # while keeping regeneration stable for the same inputs.
+    order = [(index * 7) % 20 for index in range(20)]
+    values = [values[index] for index in order]
+
+    if min(values) != low or max(values) != high or sum(values) != desired_sum:
+        raise HTTPException(status_code=500, detail="Generator Form Timbangan menghasilkan data tidak konsisten")
+
     return [{"no": index, "gross": value / 100} for index, value in enumerate(values, 1)]
 
 
