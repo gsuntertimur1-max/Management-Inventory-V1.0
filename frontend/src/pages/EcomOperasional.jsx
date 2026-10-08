@@ -4,6 +4,7 @@ import api, { apiError } from '../lib/api';
 import { toast } from 'sonner';
 import { useData } from '../context/DataContext';
 import SearchableProductSelect from '../components/SearchableProductSelect';
+import ConsignmentReturnToMainCard from '../components/ConsignmentReturnToMainCard';
 import { consignmentStackCodes } from '../lib/consignmentLocations';
 
 const inputCls = 'w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb]';
@@ -109,7 +110,7 @@ const ConsignmentTransferCard = ({ destination, layouts = [], onChanged }) => {
 };
 
 const EcomOperasional = () => {
-  const { refreshConsignmentFlow, consignmentLayouts } = useData();
+  const { refreshConsignmentFlow, refreshConsignmentLayouts, consignmentLayouts } = useData();
   const [availability, setAvailability] = useState([]);
   const [orders, setOrders] = useState([]);
   const [history, setHistory] = useState([]);
@@ -357,7 +358,9 @@ const EcomOperasional = () => {
       </div>
     </div>
 
-    <ConsignmentTransferCard destination="Gudang E-commerce" layouts={consignmentLayouts} onChanged={async () => { await Promise.all([load(), refreshConsignmentFlow()]); }} />\n\n    <div className="card-surface p-5"><div className="font-semibold flex items-center gap-2 mb-4"><History size={17}/> History E-commerce</div><div className="space-y-2 max-h-[420px] overflow-auto">{history.map((row) => <div key={row.id} className="border-b border-[#1f2937] pb-2 text-xs"><div className="font-medium">{row.eventType} · {row.referenceNo}</div><div className="text-[#8b93a1]">{new Date(row.time).toLocaleString('id-ID')} · {row.operator}</div></div>)}</div></div>
+    <ConsignmentTransferCard destination="Gudang E-commerce" layouts={consignmentLayouts} onChanged={async () => { await Promise.all([load(), refreshConsignmentFlow()]); }} />
+
+    <ConsignmentReturnToMainCard destination="Gudang E-commerce" onChanged={async () => { await Promise.all([load(), refreshConsignmentFlow(), refreshConsignmentLayouts()]); }} />\n\n    <div className="card-surface p-5"><div className="font-semibold flex items-center gap-2 mb-4"><History size={17}/> History E-commerce</div><div className="space-y-2 max-h-[420px] overflow-auto">{history.map((row) => <div key={row.id} className="border-b border-[#1f2937] pb-2 text-xs"><div className="font-medium">{row.eventType} · {row.referenceNo}</div><div className="text-[#8b93a1]">{new Date(row.time).toLocaleString('id-ID')} · {row.operator}</div></div>)}</div></div>
 
     {returnOrder && <div className="fixed inset-0 z-[90] bg-black/75 flex items-center justify-center p-4"><div className="card-surface w-full max-w-2xl p-6"><h2 className="font-display text-xl font-bold">Retur {returnOrder.orderNo}</h2><p className="text-xs text-[#8b93a1] mt-1 mb-4">Retur baik kembali ke stok jual E-commerce. Retur rusak otomatis masuk Area Barang Rusak E-commerce dan tidak menambah stok jual.</p>{(returnOrder.items || []).map((item) => <div key={item.productId} className="border border-[#243044] rounded-xl p-4 mb-3"><div className="font-semibold text-sm">{item.name} · Dikirim {item.qty} {item.unit}</div><div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3"><input type="number" min="0" className={inputCls} placeholder="Retur baik" value={returnRows[item.productId]?.goodQty || ''} onChange={(e) => setReturnRows((p) => ({ ...p, [item.productId]: { ...p[item.productId], goodQty: e.target.value } }))}/><select className={inputCls} value={returnRows[item.productId]?.stackCode || ''} onChange={(e) => setReturnRows((p) => ({ ...p, [item.productId]: { ...p[item.productId], stackCode: e.target.value } }))}><option value="">Lokasi retur baik</option>{(consignmentLayouts || []).filter((row) => row.destination === 'Gudang E-commerce' && row.productId === item.productId).map((row) => <option key={row.id} value={row.stackCode}>{row.stackCode} · {row.primaryQty} {row.unit}</option>)}</select><input type="number" min="0" className={inputCls} placeholder="Retur rusak" value={returnRows[item.productId]?.damagedQty || ''} onChange={(e) => setReturnRows((p) => ({ ...p, [item.productId]: { ...p[item.productId], damagedQty: e.target.value } }))}/></div></div>)}<div className="flex justify-end gap-2 mt-5"><button onClick={() => setReturnOrder(null)} className="px-4 py-2 rounded-lg border border-[#243044]">Batal</button><button onClick={submitReturn} className="btn-primary px-5 py-2 rounded-lg font-semibold">Simpan Retur</button></div></div></div>}
   </div>;
