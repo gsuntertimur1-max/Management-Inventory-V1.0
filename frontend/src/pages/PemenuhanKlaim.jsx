@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, History, PackageCheck, RefreshCcw, Scale, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, History, PackageCheck, RefreshCcw, Scale, Truck, X } from 'lucide-react';
 import { toast } from 'sonner';
 import api, { apiError } from '../lib/api';
 
@@ -18,21 +18,22 @@ const statusBadge = (status) => {
 };
 
 const PemenuhanKlaim = () => {
-  const [claims, setClaims] = useState([]);
+  const [groups, setGroups] = useState([]);
   const [stackCodes, setStackCodes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCompleted, setShowCompleted] = useState(false);
+  const [expanded, setExpanded] = useState({});
   const [modal, setModal] = useState(null);
   const [saving, setSaving] = useState(false);
 
   const load = async () => {
     setLoading(true);
     try {
-      const [claimsRes, optionsRes] = await Promise.all([
-        api.get('/inbound-shortage-claims'),
+      const [groupsRes, optionsRes] = await Promise.all([
+        api.get('/inbound-shortage-claim-groups'),
         api.get('/inbound-shortage-claim-options'),
       ]);
-      setClaims(claimsRes.data || []);
+      setGroups(Array.isArray(groupsRes.data) ? groupsRes.data : []);
       setStackCodes(optionsRes.data?.stackCodes || []);
     } catch (e) {
       toast.error(apiError(e));
@@ -43,18 +44,19 @@ const PemenuhanKlaim = () => {
 
   useEffect(() => { load(); }, []);
 
-  const openClaims = useMemo(() => claims.filter((x) => Number(x.remainingWeightKg || 0) > 1e-9), [claims]);
-  const completedClaims = useMemo(() => claims.filter((x) => Number(x.remainingWeightKg || 0) <= 1e-9), [claims]);
-  const totalOutstanding = useMemo(() => openClaims.reduce((sum, x) => sum + Number(x.remainingWeightKg || 0), 0), [openClaims]);
-  const totalClaim = useMemo(() => claims.reduce((sum, x) => sum + Number(x.shortageWeightKg || 0), 0), [claims]);
-  const totalSettled = useMemo(() => claims.reduce((sum, x) => sum + Number(x.settledWeightKg || 0), 0), [claims]);
+  const openGroups = useMemo(() => groups.filter((x) => Number(x.remainingWeightKg || 0) > 1e-9), [groups]);
+  const completedGroups = useMemo(() => groups.filter((x) => Number(x.remainingWeightKg || 0) <= 1e-9), [groups]);
+  const totalOutstanding = useMemo(() => groups.reduce((sum, x) => sum + Number(x.remainingWeightKg || 0), 0), [groups]);
+  const totalClaim = useMemo(() => groups.reduce((sum, x) => sum + Number(x.shortageWeightKg || 0), 0), [groups]);
+  const totalSettled = useMemo(() => groups.reduce((sum, x) => sum + Number(x.settledWeightKg || 0), 0), [groups]);
 
-  const openSettlement = (claim) => {
+  const openSettlement = (group, item) => {
     setModal({
-      claim,
+      group,
+      item,
       method: 'TAMBAHAN_FISIK',
-      fulfilledWeightKg: String(Number(claim.remainingWeightKg || 0)),
-      stackCode: claim.sourceStackCode || '',
+      fulfilledWeightKg: String(Number(item.remainingWeightKg || 0)),
+      stackCode: item.sourceStackCode || '',
       replacementBagCount: '',
       withdrawnOldWeightKg: '',
       referenceNo: '',
@@ -67,8 +69,8 @@ const PemenuhanKlaim = () => {
     setModal({
       ...modal,
       method,
-      fulfilledWeightKg: method === 'GANTI_KARUNG' ? '' : String(Number(modal.claim.remainingWeightKg || 0)),
-      stackCode: modal.claim.sourceStackCode || modal.stackCode || '',
+      fulfilledWeightKg: method === 'GANTI_KARUNG' ? '' : String(Number(modal.item.remainingWeightKg || 0)),
+      stackCode: modal.item.sourceStackCode || modal.stackCode || '',
       replacementBagCount: '',
       withdrawnOldWeightKg: '',
       note: '',
@@ -81,7 +83,8 @@ const PemenuhanKlaim = () => {
 
   const submit = async () => {
     if (!modal) return;
-    const remaining = Number(modal.claim.remainingWeightKg || 0);
+    if (!modal.group.poId) return toast.error('TM/PO sumber belum memiliki ID pengadaan yang valid');
+    const remaining = Number(modal.item.remainingWeightKg || 0);
     const payload = {
       method: modal.method,
       fulfilledWeightKg: Number(modal.fulfilledWeightKg || 0),
@@ -105,13 +108,13 @@ const PemenuhanKlaim = () => {
 
     setSaving(true);
     try {
-      const key = `pemenuhan-klaim-${modal.claim.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const key = `pemenuhan-tm-${modal.group.poId}-${modal.item.productId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const { data } = await api.post(
-        `/inbound-shortage-claims/${modal.claim.id}/settle`,
+        `/inbound-shortage-claim-groups/${modal.group.poId}/${modal.item.productId}/settle`,
         payload,
         { headers: { 'X-Idempotency-Key': key } },
       );
-      toast.success(data.message || 'Pemenuhan klaim berhasil disimpan');
+      toast.success(data.message || 'Pemenuhan klaim TM berhasil disimpan');
       setModal(null);
       await load();
     } catch (e) {
@@ -121,52 +124,64 @@ const PemenuhanKlaim = () => {
     }
   };
 
-  const ClaimCard = ({ claim }) => {
-    const remaining = Number(claim.remainingWeightKg || 0);
-    const history = claim.settlementHistory || [];
-    return <div className="card-surface p-5">
+  const ItemBlock = ({ group, item }) => {
+    const remaining = Number(item.remainingWeightKg || 0);
+    const histories = item.settlementHistory || [];
+    return <div className="rounded-xl border border-[#243044] bg-[#0b0f17]/60 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-mono text-sm font-bold text-[#93c5fd]">{claim.claimNo}</span>
-            <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold ${statusBadge(claim.status)}`}>
-              {String(claim.status || '').replaceAll('_', ' ')}
-            </span>
-          </div>
-          <div className="text-sm font-semibold mt-2">{claim.product}</div>
-          <div className="text-xs text-[#8b93a1] mt-1">
-            {claim.poNo || 'Tanpa TM/PO'} · {claim.supplier || '-'}{claim.polisi ? ` · ${claim.polisi}` : ''}
-          </div>
-          <div className="text-xs text-[#64748b] mt-1">
-            {claim.sourceStackCode ? `Tumpukan asal ${claim.sourceStackCode} · ` : ''}{claim.operationalDate || ''}
-          </div>
+          <div className="font-semibold">{item.product}</div>
+          <div className="font-mono text-[10px] text-[#8b93a1] mt-1">{item.sku} · {item.unit}</div>
         </div>
-        {remaining > 1e-9 && <button onClick={() => openSettlement(claim)} className="btn-primary inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-xs font-semibold">
+        {remaining > 1e-9 && <button onClick={() => openSettlement(group, item)} className="btn-primary inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold">
           <PackageCheck size={15}/> Proses Pemenuhan
         </button>}
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4">
-        <div className="rounded-lg border border-[#243044] p-3"><div className="text-[10px] text-[#8b93a1]">Klaim Awal</div><div className="font-mono font-bold mt-1">{fmt(claim.shortageWeightKg)} kg</div></div>
-        <div className="rounded-lg border border-[#243044] p-3"><div className="text-[10px] text-[#8b93a1]">Sudah Dipenuhi</div><div className="font-mono font-bold text-[#86efac] mt-1">{fmt(claim.settledWeightKg)} kg</div></div>
-        <div className="rounded-lg border border-[#243044] p-3"><div className="text-[10px] text-[#8b93a1]">Sisa Klaim</div><div className="font-mono font-bold text-[#fbbf24] mt-1">{fmt(remaining)} kg</div></div>
-        <div className="rounded-lg border border-[#243044] p-3"><div className="text-[10px] text-[#8b93a1]">Karung Tidak Utuh</div><div className="font-mono font-bold mt-1">{Number(claim.shortBagCount || 0)} karung</div></div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mt-3">
+        <div className="rounded-lg border border-[#243044] p-3"><div className="text-[10px] text-[#8b93a1]">Klaim TM</div><div className="font-mono font-bold mt-1">{fmt(item.shortageWeightKg)} kg</div></div>
+        <div className="rounded-lg border border-[#243044] p-3"><div className="text-[10px] text-[#8b93a1]">Sudah Dipenuhi</div><div className="font-mono font-bold text-[#86efac] mt-1">{fmt(item.settledWeightKg)} kg</div></div>
+        <div className="rounded-lg border border-[#243044] p-3"><div className="text-[10px] text-[#8b93a1]">Sisa Klaim</div><div className="font-mono font-bold text-[#fbbf24] mt-1">{fmt(item.remainingWeightKg)} kg</div></div>
+        <div className="rounded-lg border border-[#243044] p-3"><div className="text-[10px] text-[#8b93a1]">Karung Tidak Utuh</div><div className="font-mono font-bold mt-1">{Number(item.shortBagCount || 0)} karung</div></div>
       </div>
 
-      {history.length > 0 && <div className="mt-4 border-t border-[#1f2937] pt-3">
-        <div className="text-xs font-semibold flex items-center gap-2 mb-2"><History size={14}/> Riwayat Pemenuhan</div>
+      <div className="mt-4">
+        <div className="text-xs font-semibold flex items-center gap-2 mb-2"><Truck size={14}/> Rincian Kendaraan</div>
+        <div className="overflow-x-auto rounded-lg border border-[#1f2937]">
+          <table className="w-full min-w-[820px] text-xs">
+            <thead className="text-[#8b93a1] bg-[#0a0f17]"><tr>
+              <th className="text-left p-2.5">Tanggal</th><th className="text-left p-2.5">No. Polisi</th><th className="text-left p-2.5">Klaim Detail</th><th className="text-left p-2.5">Tumpukan</th>
+              <th className="text-right p-2.5">Karung</th><th className="text-right p-2.5">Seharusnya</th><th className="text-right p-2.5">Aktual</th><th className="text-right p-2.5">Kurang</th><th className="text-right p-2.5">Sisa</th>
+            </tr></thead>
+            <tbody>{(item.details || []).map((detail) => <tr key={detail.claimId} className="border-t border-[#1f2937]">
+              <td className="p-2.5">{detail.operationalDate || '-'}</td>
+              <td className="p-2.5 font-medium">{detail.polisi || '-'}</td>
+              <td className="p-2.5 font-mono text-[10px]">{detail.claimNo || '-'}</td>
+              <td className="p-2.5 font-mono">{detail.sourceStackCode || '-'}</td>
+              <td className="p-2.5 text-right font-mono">{detail.shortBagCount || 0}</td>
+              <td className="p-2.5 text-right font-mono">{fmt(detail.expectedWeightKg)} kg</td>
+              <td className="p-2.5 text-right font-mono">{fmt(detail.actualWeightKg)} kg</td>
+              <td className="p-2.5 text-right font-mono text-[#fca5a5]">{fmt(detail.shortageWeightKg)} kg</td>
+              <td className="p-2.5 text-right font-mono text-[#fbbf24]">{fmt(detail.remainingWeightKg)} kg</td>
+            </tr>)}</tbody>
+          </table>
+        </div>
+        <div className="text-[10px] text-[#64748b] mt-2">Pemenuhan TM dialokasikan otomatis ke rincian kendaraan yang paling lama dan masih memiliki sisa klaim.</div>
+      </div>
+
+      {histories.length > 0 && <div className="mt-4 border-t border-[#1f2937] pt-3">
+        <div className="text-xs font-semibold flex items-center gap-2 mb-2"><History size={14}/> Riwayat Pemenuhan TM</div>
         <div className="space-y-2">
-          {[...history].reverse().map((row) => <div key={row.id || row.settlementNo} className="rounded-lg bg-[#0b0f17] border border-[#1f2937] px-3 py-2 text-xs">
+          {histories.map((row) => <div key={row.id || row.settlementNo} className="rounded-lg bg-[#080c13] border border-[#1f2937] px-3 py-2 text-xs">
             <div className="flex flex-wrap justify-between gap-2">
               <span className="font-medium">{row.settlementNo || row.referenceNo || '-'} · {methodLabel(row.method)}</span>
               <span className="font-mono text-[#86efac]">{fmt(row.fulfilledWeightKg)} kg</span>
             </div>
             <div className="text-[#8b93a1] mt-1">
-              {row.time ? new Date(row.time).toLocaleString('id-ID') : '-'} · {row.operator || '-'}
-              {row.stackCode ? ` · ${row.stackCode}` : ''}
+              {row.time ? new Date(row.time).toLocaleString('id-ID') : '-'} · {row.operator || '-'}{row.stackCode ? ` · ${row.stackCode}` : ''}
             </div>
-            {row.method === 'GANTI_KARUNG' && <div className="text-[#8b93a1] mt-1">
-              {row.replacementBagCount || 0} karung × 50 kg, berat lama ditarik {fmt(row.withdrawnOldWeightKg)} kg
+            {(row.allocations || []).length > 0 && <div className="text-[#8b93a1] mt-1">
+              Alokasi: {row.allocations.map((x) => `${x.polisi || x.claimNo}: ${fmt(x.allocatedWeightKg)} kg`).join(' · ')}
             </div>}
             {row.note && <div className="text-[#cbd5e1] mt-1">{row.note}</div>}
           </div>)}
@@ -175,12 +190,40 @@ const PemenuhanKlaim = () => {
     </div>;
   };
 
+  const GroupCard = ({ group }) => {
+    const key = group.groupId || group.poId || group.poNo;
+    const isOpen = Boolean(expanded[key]);
+    return <div className="card-surface p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-mono font-bold text-[#93c5fd]">{group.poNo}</span>
+            <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold ${statusBadge(group.status)}`}>{String(group.status || '').replaceAll('_', ' ')}</span>
+          </div>
+          <div className="text-sm font-semibold mt-2">{group.supplier || '-'}</div>
+          <div className="text-xs text-[#8b93a1] mt-1">{(group.items || []).length} komoditi · {(group.items || []).reduce((n, x) => n + (x.details || []).length, 0)} kendaraan dengan kekurangan</div>
+        </div>
+        <button onClick={() => setExpanded((prev) => ({ ...prev, [key]: !isOpen }))} className="inline-flex items-center gap-2 rounded-lg border border-[#294263] px-3 py-2 text-xs text-[#93c5fd]">
+          {isOpen ? <ChevronUp size={14}/> : <ChevronDown size={14}/>} {isOpen ? 'Tutup Rincian' : 'Lihat Rincian'}
+        </button>
+      </div>
+
+      <div className="grid grid-cols-3 gap-2 mt-4">
+        <div className="rounded-lg border border-[#243044] p-3"><div className="text-[10px] text-[#8b93a1]">Total Kekurangan</div><div className="font-mono font-bold mt-1">{fmt(group.shortageWeightKg)} kg</div></div>
+        <div className="rounded-lg border border-[#243044] p-3"><div className="text-[10px] text-[#8b93a1]">Sudah Dipenuhi</div><div className="font-mono font-bold text-[#86efac] mt-1">{fmt(group.settledWeightKg)} kg</div></div>
+        <div className="rounded-lg border border-[#243044] p-3"><div className="text-[10px] text-[#8b93a1]">Sisa TM</div><div className="font-mono font-bold text-[#fbbf24] mt-1">{fmt(group.remainingWeightKg)} kg</div></div>
+      </div>
+
+      {isOpen && <div className="space-y-3 mt-4">{(group.items || []).map((item) => <ItemBlock key={item.productId} group={group} item={item}/>)}</div>}
+    </div>;
+  };
+
   return <div className="space-y-6">
     <div className="flex flex-wrap items-end justify-between gap-3">
       <div>
         <div className="label-mono mb-2">Operasional Penerimaan</div>
         <h1 className="font-display text-3xl sm:text-4xl font-bold">Pemenuhan Klaim Kekurangan</h1>
-        <p className="text-sm text-[#8b93a1] mt-2">Penyelesaian kekurangan timbang beras 50 kg setelah TM/PO penerimaan selesai. TM/PO asal tidak diubah.</p>
+        <p className="text-sm text-[#8b93a1] mt-2">Klaim dikelompokkan per TM/PO. Detail kendaraan tetap tersimpan dan pemenuhan dapat dilakukan bertahap.</p>
       </div>
       <button onClick={load} disabled={loading} className="inline-flex items-center gap-2 rounded-lg border border-[#294263] px-3 py-2 text-xs text-[#93c5fd] disabled:opacity-50">
         <RefreshCcw size={14} className={loading ? 'animate-spin' : ''}/> Refresh
@@ -195,34 +238,38 @@ const PemenuhanKlaim = () => {
 
     <div className="rounded-xl border border-[#854d0e] bg-[#451a03]/20 px-4 py-3 text-xs text-[#fbbf24] flex gap-2">
       <AlertTriangle size={16} className="shrink-0 mt-0.5"/>
-      <div><b>Tambahan Fisik</b> menambah stok sebesar kg yang diterima. <b>Ganti Karung</b> menambah hanya selisih antara karung 50 kg pengganti dan berat karung lama yang ditarik. <b>Administratif</b> menyelesaikan klaim tanpa menambah stok.</div>
+      <div>Satu TM tampil sebagai satu kelompok seperti kerusakan PO. Jika beberapa mobil kekurangan, seluruh rincian tetap terlihat. Pemenuhan sebagian akan mengurangi sisa TM dan dialokasikan ke rincian kendaraan secara otomatis.</div>
     </div>
 
     <section>
-      <div className="flex items-center gap-2 mb-3"><Scale size={18}/><h2 className="font-display text-xl font-bold">Klaim Aktif</h2><span className="text-xs text-[#8b93a1]">({openClaims.length})</span></div>
+      <div className="flex items-center gap-2 mb-3"><Scale size={18}/><h2 className="font-display text-xl font-bold">TM dengan Klaim Aktif</h2><span className="text-xs text-[#8b93a1]">({openGroups.length})</span></div>
       {loading ? <div className="card-surface p-10 text-center text-[#8b93a1]">Memuat klaim...</div> :
-        <div className="space-y-3">{openClaims.length ? openClaims.map((claim) => <ClaimCard key={claim.id} claim={claim}/>) : <div className="card-surface p-8 text-center text-[#86efac]"><CheckCircle2 className="mx-auto mb-2" size={24}/>Tidak ada klaim kekurangan yang belum diselesaikan.</div>}</div>}
+        <div className="space-y-3">{openGroups.length ? openGroups.map((group) => <GroupCard key={group.groupId || group.poNo} group={group}/>) : <div className="card-surface p-8 text-center text-[#86efac]"><CheckCircle2 className="mx-auto mb-2" size={24}/>Tidak ada TM dengan klaim kekurangan aktif.</div>}</div>}
     </section>
 
-    {completedClaims.length > 0 && <section>
+    {completedGroups.length > 0 && <section>
       <button onClick={() => setShowCompleted((v) => !v)} className="flex items-center gap-2 text-sm font-semibold text-[#93c5fd]">
-        <History size={16}/>{showCompleted ? 'Sembunyikan' : 'Tampilkan'} Klaim Selesai ({completedClaims.length})
+        <History size={16}/>{showCompleted ? 'Sembunyikan' : 'Tampilkan'} TM Selesai ({completedGroups.length})
       </button>
-      {showCompleted && <div className="space-y-3 mt-3">{completedClaims.map((claim) => <ClaimCard key={claim.id} claim={claim}/>)}</div>}
+      {showCompleted && <div className="space-y-3 mt-3">{completedGroups.map((group) => <GroupCard key={group.groupId || group.poNo} group={group}/>)}</div>}
     </section>}
 
     {modal && <div className="fixed inset-0 z-[100] bg-black/75 overflow-y-auto flex items-start justify-center p-4 sm:py-6">
       <div className="card-surface w-full max-w-2xl p-6">
         <div className="flex justify-between gap-3">
           <div>
-            <h2 className="font-display text-xl font-bold">Pemenuhan {modal.claim.claimNo}</h2>
-            <p className="text-xs text-[#8b93a1] mt-1">{modal.claim.poNo} · {modal.claim.product}</p>
-            <p className="text-xs text-[#fbbf24] mt-1">Sisa klaim: <b>{fmt(modal.claim.remainingWeightKg)} kg</b></p>
+            <h2 className="font-display text-xl font-bold">Pemenuhan {modal.group.poNo}</h2>
+            <p className="text-xs text-[#8b93a1] mt-1">{modal.group.supplier || '-'} · {modal.item.product}</p>
+            <p className="text-xs text-[#fbbf24] mt-1">Sisa klaim produk pada TM: <b>{fmt(modal.item.remainingWeightKg)} kg</b></p>
           </div>
           <button onClick={() => setModal(null)} className="p-2 rounded-lg border border-[#242f3d] h-fit"><X size={16}/></button>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-5">
+        <div className="mt-4 rounded-lg border border-[#243044] bg-[#0b0f17] px-3 py-2 text-xs text-[#8b93a1]">
+          {(modal.item.details || []).filter((x) => Number(x.remainingWeightKg || 0) > 1e-9).length} rincian kendaraan masih memiliki sisa klaim. Pemenuhan akan dialokasikan ke rincian tertua terlebih dahulu.
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-4">
           {[
             ['TAMBAHAN_FISIK','Tambahan Fisik'],
             ['GANTI_KARUNG','Ganti Karung'],
@@ -234,16 +281,16 @@ const PemenuhanKlaim = () => {
         </div>
 
         {modal.method === 'TAMBAHAN_FISIK' && <div className="space-y-3 mt-4">
-          <div className="rounded-lg border border-[#1d4ed8]/50 bg-[#1e3a8a]/10 px-3 py-2 text-xs text-[#bfdbfe]">Gunakan bila pengirim mengirim tambahan beras untuk menutup kekurangan. Stok bertambah tepat sebesar berat yang diterima.</div>
+          <div className="rounded-lg border border-[#1d4ed8]/50 bg-[#1e3a8a]/10 px-3 py-2 text-xs text-[#bfdbfe]">Jumlah boleh lebih kecil dari sisa klaim. Contoh sisa 35 kg, hari ini datang 10 kg: status TM menjadi Dipenuhi Sebagian dan sisa 25 kg.</div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div><label className="text-xs text-[#8b93a1] block mb-1.5">Berat pemenuhan (kg)</label><input type="number" min="0.01" step="0.01" className={inputCls} value={modal.fulfilledWeightKg} onChange={(e) => setModal({...modal, fulfilledWeightKg:e.target.value})}/></div>
             <div><label className="text-xs text-[#8b93a1] block mb-1.5">Tumpukan tujuan</label><input list="claim-stack-codes" className={inputCls} value={modal.stackCode} onChange={(e) => setModal({...modal,stackCode:e.target.value.toUpperCase()})} placeholder="Contoh 22/A03"/></div>
           </div>
-          <div className="text-xs text-[#8b93a1]">Setara penambahan stok: <b className="text-[#e5e7eb]">{fmt(Number(modal.fulfilledWeightKg || 0) / 50, 4)} {modal.claim.unit}</b>.</div>
+          <div className="text-xs text-[#8b93a1]">Setara penambahan stok: <b className="text-[#e5e7eb]">{fmt(Number(modal.fulfilledWeightKg || 0) / 50, 4)} {modal.item.unit}</b>.</div>
         </div>}
 
         {modal.method === 'GANTI_KARUNG' && <div className="space-y-3 mt-4">
-          <div className="rounded-lg border border-[#854d0e] bg-[#451a03]/20 px-3 py-2 text-xs text-[#fbbf24]">Gunakan bila karung kurang timbang ditarik pengirim lalu diganti karung utuh 50 kg. Sistem hanya menambah selisih bersih agar stok tidak dihitung ganda.</div>
+          <div className="rounded-lg border border-[#854d0e] bg-[#451a03]/20 px-3 py-2 text-xs text-[#fbbf24]">Gunakan bila karung kurang timbang ditarik lalu diganti karung utuh. Sistem menambah selisih bersih dan tetap mengalokasikan pemenuhan ke rincian kendaraan.</div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div><label className="text-xs text-[#8b93a1] block mb-1.5">Jumlah karung pengganti 50 kg</label><input type="number" min="1" step="1" className={inputCls} value={modal.replacementBagCount} onChange={(e) => setModal({...modal,replacementBagCount:e.target.value})}/></div>
             <div><label className="text-xs text-[#8b93a1] block mb-1.5">Total berat karung lama yang ditarik (kg)</label><input type="number" min="0.01" step="0.01" className={inputCls} value={modal.withdrawnOldWeightKg} onChange={(e) => setModal({...modal,withdrawnOldWeightKg:e.target.value})}/></div>
@@ -251,12 +298,11 @@ const PemenuhanKlaim = () => {
           <div className="rounded-lg border border-[#243044] p-3 text-sm">
             Perhitungan: <b>{Number(modal.replacementBagCount || 0)} × 50 kg</b> − <b>{fmt(modal.withdrawnOldWeightKg)} kg</b> = <b className="text-[#86efac]">{fmt(replacementFulfilled)} kg pemenuhan</b>
           </div>
-          <div><label className="text-xs text-[#8b93a1] block mb-1.5">Tumpukan asal/penggantian</label><input list="claim-stack-codes" className={inputCls} value={modal.stackCode} onChange={(e) => setModal({...modal,stackCode:e.target.value.toUpperCase()})} placeholder="Tumpukan asal"/></div>
-          {modal.claim.sourceStackCode && <div className="text-xs text-[#8b93a1]">Untuk menjaga saldo benar, penggantian karung diselesaikan pada tumpukan asal <b className="text-[#e5e7eb]">{modal.claim.sourceStackCode}</b>.</div>}
+          <div><label className="text-xs text-[#8b93a1] block mb-1.5">Tumpukan tempat penggantian diterima</label><input list="claim-stack-codes" className={inputCls} value={modal.stackCode} onChange={(e) => setModal({...modal,stackCode:e.target.value.toUpperCase()})} placeholder="Pilih GBB/MP1"/></div>
         </div>}
 
         {modal.method === 'ADMINISTRATIF' && <div className="space-y-3 mt-4">
-          <div className="rounded-lg border border-[#7f1d1d] bg-[#450a0a]/20 px-3 py-2 text-xs text-[#fca5a5]"><b>Tidak menambah stok fisik.</b> Gunakan hanya jika klaim diselesaikan secara administratif/kompensasi dan barang tidak diterima kembali.</div>
+          <div className="rounded-lg border border-[#7f1d1d] bg-[#450a0a]/20 px-3 py-2 text-xs text-[#fca5a5]"><b>Tidak menambah stok fisik.</b> Gunakan hanya jika kekurangan diselesaikan secara administratif/kompensasi.</div>
           <div><label className="text-xs text-[#8b93a1] block mb-1.5">Berat klaim yang diselesaikan (kg)</label><input type="number" min="0.01" step="0.01" className={inputCls} value={modal.fulfilledWeightKg} onChange={(e) => setModal({...modal,fulfilledWeightKg:e.target.value})}/></div>
         </div>}
 
@@ -269,7 +315,7 @@ const PemenuhanKlaim = () => {
 
         <div className="flex justify-end gap-2 mt-5">
           <button disabled={saving} onClick={() => setModal(null)} className="px-4 py-2 rounded-lg border border-[#242f3d] disabled:opacity-50">Batal</button>
-          <button disabled={saving} onClick={submit} className="btn-primary px-5 py-2 rounded-lg font-semibold disabled:opacity-50">{saving ? 'Menyimpan...' : 'Simpan Pemenuhan'}</button>
+          <button disabled={saving} onClick={submit} className="btn-primary px-5 py-2 rounded-lg font-semibold disabled:opacity-50">{saving ? 'Menyimpan...' : 'Simpan Pemenuhan TM'}</button>
         </div>
       </div>
     </div>}
