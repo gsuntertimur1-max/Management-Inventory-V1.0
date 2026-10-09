@@ -937,6 +937,495 @@ async def list_inbound_shortage_claims(user: dict = Depends(get_current_user)):
     return enriched
 
 
+@router.get("/inbound-shortage-claim-groups")
+async def list_inbound_shortage_claim_groups(user: dict = Depends(get_current_user)):
+    """Satu tampilan induk per TM/PO, dengan rincian kekurangan per kendaraan."""
+    rows = await list_inbound_shortage_claims(user)
+    settlements = await db.inbound_shortage_claim_settlements.find({}, {"_id": 0}).sort("time", -1).to_list(5000)
+
+    settlements_by_item: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    for settlement in settlements:
+        settlements_by_item[
+            (str(settlement.get("poId") or ""), str(settlement.get("productId") or ""))
+        ].append(settlement)
+
+    po_groups: dict[str, dict] = {}
+    for claim in rows:
+        po_id = str(claim.get("poId") or "")
+        po_no = str(claim.get("poNo") or "").strip() or "Tanpa TM/PO"
+        product_id = str(claim.get("productId") or "")
+        po_key = po_id or f"NOPO:{po_no}"
+
+        group = po_groups.setdefault(po_key, {
+            "groupId": po_key,
+            "poId": po_id,
+            "poNo": po_no,
+            "supplier": str(claim.get("supplier") or ""),
+            "items": {},
+            "createdAt": claim.get("createdAt", ""),
+        })
+        if not group.get("supplier") and claim.get("supplier"):
+            group["supplier"] = str(claim.get("supplier") or "")
+        if str(claim.get("createdAt") or "") > str(group.get("createdAt") or ""):
+            group["createdAt"] = claim.get("createdAt", "")
+
+        item = group["items"].setdefault(product_id, {
+            "productId": product_id,
+            "sku": str(claim.get("sku") or ""),
+            "product": str(claim.get("product") or ""),
+            "unit": str(claim.get("unit") or ""),
+            "bagWeightKg": float(claim.get("bagWeightKg", 50) or 50),
+            "shortageWeightKg": 0.0,
+            "settledWeightKg": 0.0,
+            "remainingWeightKg": 0.0,
+            "shortBagCount": 0,
+            "details": [],
+            "sourceStackCodes": set(),
+        })
+        item["shortageWeightKg"] += float(claim.get("shortageWeightKg", 0) or 0)
+        item["settledWeightKg"] += float(claim.get("settledWeightKg", 0) or 0)
+        item["remainingWeightKg"] += float(claim.get("remainingWeightKg", 0) or 0)
+        item["shortBagCount"] += int(claim.get("shortBagCount", 0) or 0)
+        source_stack = str(claim.get("sourceStackCode") or "").strip().upper()
+        if source_stack:
+            item["sourceStackCodes"].add(source_stack)
+        item["details"].append({
+            "claimId": claim.get("id", ""),
+            "claimNo": claim.get("claimNo", ""),
+            "createdAt": claim.get("createdAt", ""),
+            "operationalDate": claim.get("operationalDate", ""),
+            "inboundLoadId": claim.get("inboundLoadId", ""),
+            "polisi": claim.get("polisi", ""),
+            "sourceStackCode": source_stack,
+            "shortBagCount": int(claim.get("shortBagCount", 0) or 0),
+            "expectedWeightKg": float(claim.get("expectedWeightKg", 0) or 0),
+            "actualWeightKg": float(claim.get("actualWeightKg", 0) or 0),
+            "shortageWeightKg": float(claim.get("shortageWeightKg", 0) or 0),
+            "settledWeightKg": float(claim.get("settledWeightKg", 0) or 0),
+            "remainingWeightKg": float(claim.get("remainingWeightKg", 0) or 0),
+            "reason": claim.get("reason", ""),
+            "status": claim.get("status", ""),
+        })
+
+    result = []
+    for group in po_groups.values():
+        items = []
+        for item in group["items"].values():
+            item["shortageWeightKg"] = round(item["shortageWeightKg"], 6)
+            item["settledWeightKg"] = round(item["settledWeightKg"], 6)
+            item["remainingWeightKg"] = round(item["remainingWeightKg"], 6)
+            item["sourceStackCodes"] = sorted(item["sourceStackCodes"])
+            item["sourceStackCode"] = item["sourceStackCodes"][0] if len(item["sourceStackCodes"]) == 1 else ""
+            item["details"] = sorted(item["details"], key=lambda row: str(row.get("createdAt") or ""))
+            item["settlementHistory"] = settlements_by_item.get(
+                (str(group.get("poId") or ""), str(item.get("productId") or "")), []
+            )
+            item["status"] = (
+                "SELESAI"
+                if item["remainingWeightKg"] <= 1e-9
+                else ("DIPENUHI_SEBAGIAN" if item["settledWeightKg"] > 1e-9 else "BELUM_DISELESAIKAN")
+            )
+            items.append(item)
+        items.sort(key=lambda row: (str(row.get("product") or ""), str(row.get("sku") or "")))
+        group["items"] = items
+        group["shortageWeightKg"] = round(sum(item["shortageWeightKg"] for item in items), 6)
+        group["settledWeightKg"] = round(sum(item["settledWeightKg"] for item in items), 6)
+        group["remainingWeightKg"] = round(sum(item["remainingWeightKg"] for item in items), 6)
+        group["status"] = (
+            "SELESAI"
+            if group["remainingWeightKg"] <= 1e-9
+            else ("DIPENUHI_SEBAGIAN" if group["settledWeightKg"] > 1e-9 else "BELUM_DISELESAIKAN")
+        )
+        result.append(group)
+
+    result.sort(key=lambda row: str(row.get("createdAt") or ""), reverse=True)
+    return result
+
+
+@router.post("/inbound-shortage-claim-groups/{po_id}/{product_id}/settle")
+async def settle_inbound_shortage_claim_group(
+    po_id: str,
+    product_id: str,
+    body: ShortageClaimSettlementInput,
+    request: Request,
+    user: dict = Depends(require_write),
+):
+    """Pemenuhan satu TM + produk; dialokasikan ke rincian kendaraan tertua lebih dulu."""
+    method = str(body.method or "").strip().upper()
+
+    async def action():
+        claims = await db.inbound_shortage_claims.find(
+            {"poId": po_id, "productId": product_id},
+            {"_id": 0},
+        ).sort("createdAt", 1).to_list(5000)
+        if not claims:
+            raise HTTPException(status_code=404, detail="Klaim TM/PO tidak ditemukan")
+
+        product = await db.products.find_one({"id": product_id}, {"_id": 0})
+        if not product:
+            raise HTTPException(status_code=404, detail="Produk klaim tidak ditemukan")
+        if not is_rice_50kg_product(product):
+            raise HTTPException(status_code=400, detail="Pemenuhan klaim ini hanya berlaku untuk beras kemasan 50 kg")
+
+        claim_states = []
+        group_remaining = 0.0
+        source_stacks: list[str] = []
+        source_tx_by_claim: dict[str, dict] = {}
+        for claim in claims:
+            history = list(claim.get("settlementHistory") or [])
+            settled = sum(float(item.get("fulfilledWeightKg", 0) or 0) for item in history)
+            if not history:
+                settled = float(claim.get("settledWeightKg", 0) or 0)
+            shortage = float(claim.get("shortageWeightKg", 0) or 0)
+            remaining = max(shortage - settled, 0.0)
+            group_remaining += remaining
+
+            source_stack = str(claim.get("sourceStackCode") or "").strip().upper()
+            source_tx = None
+            if not source_stack or not claim.get("channel") or not claim.get("exp"):
+                source_tx = await db.transactions.find_one(
+                    {
+                        "operation_id": claim.get("operation_id"),
+                        "product_id": product_id,
+                        "type": "MASUK",
+                        "kondisi": "BAIK",
+                    },
+                    {"_id": 0},
+                )
+                source_tx_by_claim[str(claim.get("id") or "")] = source_tx or {}
+                if not source_stack:
+                    source_stack = str((source_tx or {}).get("stackCode") or "").strip().upper()
+            if source_stack:
+                source_stacks.append(source_stack)
+
+            claim_states.append({
+                "claim": claim,
+                "settled": settled,
+                "remaining": remaining,
+                "sourceStackCode": source_stack,
+                "sourceTx": source_tx or source_tx_by_claim.get(str(claim.get("id") or ""), {}),
+            })
+
+        group_remaining = round(group_remaining, 6)
+        if group_remaining <= 1e-9:
+            raise HTTPException(status_code=409, detail="Klaim TM/PO ini sudah diselesaikan")
+
+        unique_stacks = sorted(set(source_stacks))
+        default_stack = unique_stacks[0] if len(unique_stacks) == 1 else ""
+        target_stack = str(body.stackCode or default_stack).strip().upper()
+        fulfilled_kg = 0.0
+        stock_added_qty = 0.0
+        replacement_expected_kg = 0.0
+
+        if method == "TAMBAHAN_FISIK":
+            fulfilled_kg = float(body.fulfilledWeightKg or 0)
+            if fulfilled_kg <= 1e-9:
+                raise HTTPException(status_code=400, detail="Berat pemenuhan fisik wajib lebih dari 0 kg")
+            if not target_stack:
+                raise HTTPException(status_code=400, detail="Pilih tumpukan tujuan pemenuhan fisik")
+            if target_stack not in await valid_stack_codes():
+                raise HTTPException(status_code=400, detail="Tumpukan tujuan tidak valid")
+            stock_added_qty = fulfilled_kg / 50.0
+        elif method == "GANTI_KARUNG":
+            if int(body.replacementBagCount or 0) <= 0:
+                raise HTTPException(status_code=400, detail="Jumlah karung pengganti wajib diisi")
+            if float(body.withdrawnOldWeightKg or 0) <= 0:
+                raise HTTPException(status_code=400, detail="Berat karung lama yang ditarik wajib diisi")
+            replacement_expected_kg = float(body.replacementBagCount or 0) * 50.0
+            withdrawn_kg = float(body.withdrawnOldWeightKg or 0)
+            if withdrawn_kg >= replacement_expected_kg - 1e-9:
+                raise HTTPException(status_code=400, detail="Berat karung lama harus lebih kecil dari berat karung pengganti")
+            fulfilled_kg = replacement_expected_kg - withdrawn_kg
+            if not target_stack:
+                raise HTTPException(status_code=400, detail="Pilih tumpukan tempat karung pengganti diterima")
+            if target_stack not in await valid_stack_codes():
+                raise HTTPException(status_code=400, detail="Tumpukan tujuan tidak valid")
+            stock_added_qty = fulfilled_kg / 50.0
+        elif method == "ADMINISTRATIF":
+            fulfilled_kg = float(body.fulfilledWeightKg or 0)
+            if fulfilled_kg <= 1e-9:
+                raise HTTPException(status_code=400, detail="Berat klaim yang diselesaikan wajib lebih dari 0 kg")
+            if len(str(body.note or "").strip()) < 3:
+                raise HTTPException(status_code=400, detail="Catatan penyelesaian administratif wajib diisi")
+        else:
+            raise HTTPException(status_code=400, detail="Metode pemenuhan klaim tidak dikenal")
+
+        fulfilled_kg = round(fulfilled_kg, 6)
+        if fulfilled_kg > group_remaining + 1e-9:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Sisa klaim TM/PO hanya {group_remaining:g} kg; pemenuhan tidak boleh melebihi sisa klaim.",
+            )
+
+        first_claim = claims[0]
+        first_state = claim_states[0]
+        await ensure_channel_stock(product)
+        channel = normalize_channel(
+            first_claim.get("channel") or (first_state.get("sourceTx") or {}).get("channel"),
+            normalize_channel(product.get("channel")),
+        )
+        exp = str(first_claim.get("exp") or (first_state.get("sourceTx") or {}).get("exp") or "").strip()
+        po_no = str(first_claim.get("poNo") or "")
+        supplier = str(first_claim.get("supplier") or "")
+        op_now = operational_now()
+        settlement_no = str(body.referenceNo or "").strip()
+        if not settlement_no:
+            settlement_no = f"PK-{op_now.strftime('%Y%m%d')}-{await next_sequence('shortage-claim-settlement', 0):04d}"
+        settlement_id = new_id()
+        operation_id = new_id()
+        transaction_id = new_id()
+        time = now_iso()
+        operator = user.get("name", "")
+
+        remaining_to_allocate = fulfilled_kg
+        allocations = []
+        for state in claim_states:
+            if remaining_to_allocate <= 1e-9:
+                break
+            if state["remaining"] <= 1e-9:
+                continue
+            take = min(state["remaining"], remaining_to_allocate)
+            allocations.append({
+                "claimId": state["claim"].get("id", ""),
+                "claimNo": state["claim"].get("claimNo", ""),
+                "polisi": state["claim"].get("polisi", ""),
+                "sourceStackCode": state["sourceStackCode"],
+                "allocatedWeightKg": round(take, 6),
+            })
+            remaining_to_allocate -= take
+        if remaining_to_allocate > 1e-6:
+            raise HTTPException(status_code=409, detail="Sisa klaim berubah. Muat ulang halaman lalu coba kembali.")
+
+        product_incremented = False
+        stack_incremented = False
+        transaction_inserted = False
+        lot_inserted = False
+        settlement_inserted = False
+        updated_claims: list[dict] = []
+        try:
+            transaction = {
+                "id": transaction_id,
+                "operation_id": operation_id,
+                "time": time,
+                "operational_date": op_now.strftime("%Y-%m-%d"),
+                "ref": settlement_no,
+                "parent_document": po_no,
+                "po_no": po_no,
+                "type": "MASUK" if stock_added_qty > 1e-9 else "PENYESUAIAN",
+                "document_type": (
+                    "PEMENUHAN_KLAIM_GANTI_KARUNG"
+                    if method == "GANTI_KARUNG"
+                    else ("PEMENUHAN_KLAIM_FISIK" if method == "TAMBAHAN_FISIK" else "PENYELESAIAN_KLAIM_ADMIN")
+                ),
+                "kondisi": "BAIK",
+                "product_id": product.get("id", ""),
+                "product": product.get("name", ""),
+                "sku": product.get("sku", ""),
+                "change": stock_added_qty,
+                "good_change": stock_added_qty,
+                "damaged_change": 0,
+                "unit": product.get("unit", ""),
+                "weight": 50.0,
+                "total_weight": fulfilled_kg,
+                "secondary": product.get("secondary", ""),
+                "secondaryQty": float(product.get("secondaryQty", 0) or 0),
+                "channel": channel,
+                "exp": exp,
+                "stackCode": target_stack if stock_added_qty > 1e-9 else "",
+                "receipt_location": target_stack if stock_added_qty > 1e-9 else "",
+                "penerima": supplier,
+                "polisi": "MULTI" if len({str(x.get("polisi") or "") for x in claims if x.get("polisi")}) > 1 else str(first_claim.get("polisi") or ""),
+                "operator": operator,
+                "shortage_claim_group_po_id": po_id,
+                "shortage_claim_group_po_no": po_no,
+                "shortage_claim_ids": [row["claimId"] for row in allocations],
+                "claim_fulfilled_weight_kg": fulfilled_kg,
+                "claim_settlement_method": method,
+                "replacement_bag_count": int(body.replacementBagCount or 0),
+                "withdrawn_old_weight_kg": float(body.withdrawnOldWeightKg or 0),
+                "keterangan": str(body.note or "").strip(),
+            }
+
+            if stock_added_qty > 1e-9:
+                result = await db.products.update_one(
+                    {"id": product["id"]},
+                    {"$inc": {"stock": stock_added_qty, f"channelStock.{channel}.stock": stock_added_qty}},
+                )
+                if result.matched_count == 0:
+                    raise HTTPException(status_code=409, detail="Master produk berubah. Muat ulang lalu coba kembali.")
+                product_incremented = True
+                await allocate_stock_to_stack(product, target_stack, stock_added_qty, operator)
+                stack_incremented = True
+
+            await db.transactions.insert_one(dict(transaction))
+            transaction_inserted = True
+
+            if stock_added_qty > 1e-9:
+                from backend.stack_lots import record_receipt_lots
+                await record_receipt_lots(None, {"transactions": [transaction]})
+                lot_inserted = True
+
+            allocation_by_claim = {row["claimId"]: row for row in allocations}
+            for state in claim_states:
+                claim = state["claim"]
+                allocation = allocation_by_claim.get(str(claim.get("id") or ""))
+                if not allocation:
+                    continue
+                original = {
+                    "id": claim.get("id", ""),
+                    "status": claim.get("status", "BELUM_DISELESAIKAN"),
+                    "settledWeightKg": claim.get("settledWeightKg", 0.0),
+                    "remainingWeightKg": claim.get("remainingWeightKg", claim.get("shortageWeightKg", 0.0)),
+                    "sourceStackCode": claim.get("sourceStackCode", ""),
+                    "channel": claim.get("channel", ""),
+                    "exp": claim.get("exp", ""),
+                    "updatedAt": claim.get("updatedAt", ""),
+                    "updatedBy": claim.get("updatedBy", ""),
+                }
+                take = float(allocation["allocatedWeightKg"])
+                settled_after = state["settled"] + take
+                shortage = float(claim.get("shortageWeightKg", 0) or 0)
+                remaining_after = max(shortage - settled_after, 0.0)
+                status = "SELESAI" if remaining_after <= 1e-9 else "DIPENUHI_SEBAGIAN"
+                event = {
+                    "id": new_id(),
+                    "groupSettlementId": settlement_id,
+                    "settlementNo": settlement_no,
+                    "operationId": operation_id,
+                    "time": time,
+                    "method": method,
+                    "fulfilledWeightKg": take,
+                    "groupFulfilledWeightKg": fulfilled_kg,
+                    "stockAddedQty": stock_added_qty,
+                    "stackCode": target_stack if stock_added_qty > 1e-9 else "",
+                    "replacementBagCount": int(body.replacementBagCount or 0),
+                    "replacementExpectedWeightKg": replacement_expected_kg,
+                    "withdrawnOldWeightKg": float(body.withdrawnOldWeightKg or 0),
+                    "referenceNo": str(body.referenceNo or "").strip(),
+                    "note": str(body.note or "").strip(),
+                    "operator": operator,
+                }
+                update_result = await db.inbound_shortage_claims.update_one(
+                    {"id": claim.get("id")},
+                    {
+                        "$set": {
+                            "status": status,
+                            "settledWeightKg": settled_after,
+                            "remainingWeightKg": remaining_after,
+                            "sourceStackCode": state["sourceStackCode"],
+                            "channel": channel,
+                            "exp": exp,
+                            "updatedAt": time,
+                            "updatedBy": operator,
+                        },
+                        "$push": {"settlementHistory": event},
+                    },
+                )
+                if update_result.matched_count == 0:
+                    raise HTTPException(status_code=409, detail="Rincian klaim berubah. Muat ulang lalu coba kembali.")
+                updated_claims.append({"original": original, "eventId": event["id"]})
+
+            group_remaining_after = max(group_remaining - fulfilled_kg, 0.0)
+            settlement_doc = {
+                "id": settlement_id,
+                "settlementNo": settlement_no,
+                "operationId": operation_id,
+                "time": time,
+                "poId": po_id,
+                "poNo": po_no,
+                "supplier": supplier,
+                "productId": product_id,
+                "sku": product.get("sku", ""),
+                "product": product.get("name", ""),
+                "unit": product.get("unit", ""),
+                "method": method,
+                "fulfilledWeightKg": fulfilled_kg,
+                "stockAddedQty": stock_added_qty,
+                "stackCode": target_stack if stock_added_qty > 1e-9 else "",
+                "replacementBagCount": int(body.replacementBagCount or 0),
+                "replacementExpectedWeightKg": replacement_expected_kg,
+                "withdrawnOldWeightKg": float(body.withdrawnOldWeightKg or 0),
+                "referenceNo": str(body.referenceNo or "").strip(),
+                "note": str(body.note or "").strip(),
+                "operator": operator,
+                "allocations": allocations,
+                "remainingBeforeKg": group_remaining,
+                "remainingAfterKg": group_remaining_after,
+                "status": "SELESAI" if group_remaining_after <= 1e-9 else "DIPENUHI_SEBAGIAN",
+            }
+            await db.inbound_shortage_claim_settlements.insert_one(settlement_doc)
+            settlement_inserted = True
+
+            return {
+                "ok": True,
+                "poId": po_id,
+                "poNo": po_no,
+                "productId": product_id,
+                "settlementNo": settlement_no,
+                "method": method,
+                "fulfilledWeightKg": fulfilled_kg,
+                "stockAddedQty": stock_added_qty,
+                "stackCode": target_stack if stock_added_qty > 1e-9 else "",
+                "remainingWeightKg": group_remaining_after,
+                "status": settlement_doc["status"],
+                "allocations": allocations,
+                "message": (
+                    f"Klaim {po_no} selesai"
+                    if group_remaining_after <= 1e-9
+                    else f"Klaim {po_no} dipenuhi sebagian; sisa {group_remaining_after:g} kg"
+                ),
+            }
+        except Exception:
+            if settlement_inserted:
+                await db.inbound_shortage_claim_settlements.delete_many({"id": settlement_id})
+            for updated in reversed(updated_claims):
+                original = updated["original"]
+                await db.inbound_shortage_claims.update_one(
+                    {"id": original["id"]},
+                    {
+                        "$pull": {"settlementHistory": {"id": updated["eventId"]}},
+                        "$set": {
+                            "status": original["status"],
+                            "settledWeightKg": original["settledWeightKg"],
+                            "remainingWeightKg": original["remainingWeightKg"],
+                            "sourceStackCode": original["sourceStackCode"],
+                            "channel": original["channel"],
+                            "exp": original["exp"],
+                            "updatedAt": original["updatedAt"],
+                            "updatedBy": original["updatedBy"],
+                        },
+                    },
+                )
+            if lot_inserted:
+                await db.stack_lots.delete_many({"sourceTransactionId": transaction_id})
+            if transaction_inserted:
+                await db.transactions.delete_many({"id": transaction_id})
+            if stack_incremented:
+                try:
+                    await decrease_stack_allocation(product["id"], target_stack, stock_added_qty, "Sistem (rollback pemenuhan klaim TM)")
+                except Exception:
+                    pass
+            if product_incremented:
+                await db.products.update_one(
+                    {"id": product["id"]},
+                    {"$inc": {"stock": -stock_added_qty, f"channelStock.{channel}.stock": -stock_added_qty}},
+                )
+            raise
+
+    from backend.operational_guards import idempotent_operation, lock_keys
+    return await idempotent_operation(
+        request,
+        user,
+        f"shortage-claim-group-settlement:{po_id}:{product_id}",
+        lock_keys([
+            f"shortage-claim-group:{po_id}:{product_id}",
+            f"product:{product_id}",
+            f"main-stack:{str(body.stackCode or '').strip().upper()}:{product_id}" if body.stackCode else "",
+        ]),
+        action,
+    )
+
+
 @router.get("/inbound-shortage-claim-options")
 async def inbound_shortage_claim_options(user: dict = Depends(get_current_user)):
     return {"stackCodes": sorted(await valid_stack_codes())}
