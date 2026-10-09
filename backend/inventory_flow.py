@@ -1201,11 +1201,14 @@ async def settle_inbound_shortage_claim(
                 )
             raise
 
+    guard_claim = await db.inbound_shortage_claims.find_one({"id": claim_id}, {"_id": 0, "productId": 1})
+    if not guard_claim:
+        raise HTTPException(status_code=404, detail="Klaim kekurangan tidak ditemukan")
     return await idempotent_operation(
         request,
         user,
         f"shortage-claim-settlement:{claim_id}",
-        lock_keys([f"shortage-claim:{claim_id}", f"product:{claim_id}"]),
+        lock_keys([f"shortage-claim:{claim_id}", f"product:{guard_claim.get('productId', '')}"]),
         action,
     )
 
