@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutGrid, Boxes, Layers, ArrowLeftRight, Send, History, ClipboardList, Truck, MonitorSmartphone, Users, Settings, PlusCircle, LogOut, Menu, ChevronDown, PackageSearch, Workflow, ShoppingCart, ShieldCheck, ClipboardCheck, TriangleAlert, RefreshCcw, Activity, CalendarClock, PackageX, Store, ShoppingBag, PackagePlus, Link2, FileInput, Sun, Moon } from 'lucide-react';
+import { LayoutGrid, Boxes, Layers, ArrowLeftRight, Send, History, ClipboardList, Truck, MonitorSmartphone, Users, Settings, PlusCircle, LogOut, Menu, ChevronDown, PackageSearch, Workflow, ShoppingCart, ShieldCheck, ClipboardCheck, TriangleAlert, RefreshCcw, Activity, CalendarClock, PackageX, Store, ShoppingBag, PackagePlus, Link2, FileInput, Sun, Moon, Scale } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { hasPermission, roleLabel } from '../lib/permissions';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from './ui/sheet';
@@ -33,6 +33,7 @@ const NAV_GROUPS = [
       { to: '/temuan-kerusakan', label: 'Temuan Kerusakan', icon: TriangleAlert, permission: 'operations' },
       { to: '/retur-pemasok', label: 'Retur / Ganti Pemasok', icon: RefreshCcw, permission: 'operations' },
       { to: '/penerimaan', label: 'Penerimaan', icon: Truck, permission: 'inbound' },
+      { to: '/pemenuhan-klaim', label: 'Pemenuhan Klaim', icon: Scale, permission: 'inbound' },
       { to: '/pengeluaran', label: 'Pengeluaran', icon: Send, permission: 'outboundPage' },
       { to: '/monitoring-so', label: 'Monitoring SO', icon: ClipboardList, permission: 'outboundPage' },
       { to: '/koreksi-operasional', label: 'Koreksi Operasional', icon: ShieldCheck, permission: 'corrections' },
