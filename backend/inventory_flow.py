@@ -31,7 +31,6 @@ from backend.server import (
     has_role_permission,
 )
 from backend.stack_allocations import allocate_stock_to_stack, decrease_stack_allocation, valid_stack_codes
-from backend.operational_guards import idempotent_operation, lock_keys
 from backend.work_time_costs import handling_fee, holiday_from_settings, normalize_unloading_group, work_split
 
 router = APIRouter(prefix="/api")
@@ -1200,6 +1199,9 @@ async def settle_inbound_shortage_claim(
                     {"$inc": {"stock": -stock_added_qty, f"channelStock.{channel}.stock": -stock_added_qty}},
                 )
             raise
+
+    # Lazy import avoids the existing operational_guards -> inventory_flow dependency cycle.
+    from backend.operational_guards import idempotent_operation, lock_keys
 
     guard_claim = await db.inbound_shortage_claims.find_one({"id": claim_id}, {"_id": 0, "productId": 1})
     if not guard_claim:
