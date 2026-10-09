@@ -78,7 +78,7 @@ const Penerimaan = () => {
     try {
       const [loadsResponse, claimsResponse] = await Promise.all([
         api.get('/inbound-loads'),
-        api.get('/inbound-shortage-claims'),
+        api.get('/inbound-shortage-claim-groups'),
       ]);
       setLoads(Array.isArray(loadsResponse.data) ? loadsResponse.data : []);
       setShortageClaims(Array.isArray(claimsResponse.data) ? claimsResponse.data : []);
@@ -414,21 +414,29 @@ const Penerimaan = () => {
 
     {shortageClaims.length > 0 && <section>
       <div className="flex items-center gap-2 mb-3"><AlertTriangle size={17}/><h2 className="font-display text-xl font-bold">Klaim Kekurangan Beras 50 kg</h2></div>
-      <div className="card-surface overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead className="text-[#8b93a1]"><tr><th className="text-left p-3">Klaim</th><th className="text-left p-3">PO / Pengirim</th><th className="text-left p-3">Produk</th><th className="text-right p-3">Karung Tidak Utuh</th><th className="text-right p-3">Seharusnya</th><th className="text-right p-3">Aktual</th><th className="text-right p-3">Selisih</th><th className="text-left p-3">Status</th></tr></thead>
-          <tbody>{shortageClaims.slice(0,20).map((claim) => <tr key={claim.id} className="border-t border-[#1f2937]">
-            <td className="p-3 font-mono">{claim.claimNo}</td>
-            <td className="p-3"><div className="font-medium">{claim.poNo || '—'}</div><div className="text-[10px] text-[#8b93a1]">{claim.supplier || '—'}{claim.polisi ? ` · ${claim.polisi}` : ''}</div></td>
-            <td className="p-3"><div>{claim.product}</div><div className="font-mono text-[10px] text-[#8b93a1]">{claim.sku}</div></td>
-            <td className="p-3 text-right font-mono">{formatNum(claim.shortBagCount)}</td>
-            <td className="p-3 text-right font-mono">{formatNum(claim.expectedWeightKg)} kg</td>
-            <td className="p-3 text-right font-mono">{formatNum(claim.actualWeightKg)} kg</td>
-            <td className="p-3 text-right font-mono font-bold text-[#fbbf24]">{formatNum(claim.shortageWeightKg)} kg</td>
-            <td className="p-3"><span className="rounded-full border border-[#92400e] px-2 py-1 text-[10px] text-[#fbbf24]">{String(claim.status || '').replaceAll('_',' ')}</span></td>
-          </tr>)}</tbody>
-        </table>
-      </div>
+      <div className="space-y-3">{shortageClaims.slice(0,20).map((group) => <div key={group.groupId || group.poNo} className="card-surface p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="font-mono font-bold text-[#93c5fd]">{group.poNo || '—'}</div>
+            <div className="text-xs text-[#8b93a1] mt-1">{group.supplier || '—'} · {(group.items || []).reduce((sum, item) => sum + (item.details || []).length, 0)} kendaraan memiliki kekurangan</div>
+          </div>
+          <div className="text-right"><div className="text-[10px] text-[#8b93a1]">Sisa Klaim TM</div><div className="font-mono font-bold text-[#fbbf24]">{formatNum(group.remainingWeightKg)} kg</div></div>
+        </div>
+        <div className="mt-3 overflow-x-auto rounded-lg border border-[#1f2937]">
+          <table className="w-full min-w-[760px] text-xs">
+            <thead className="text-[#8b93a1] bg-[#0b0f17]"><tr><th className="text-left p-2.5">Produk</th><th className="text-right p-2.5">Total Kurang</th><th className="text-right p-2.5">Dipenuhi</th><th className="text-right p-2.5">Sisa</th><th className="text-left p-2.5">Rincian Mobil</th></tr></thead>
+            <tbody>{(group.items || []).map((item) => <tr key={item.productId} className="border-t border-[#1f2937]">
+              <td className="p-2.5"><div>{item.product}</div><div className="font-mono text-[10px] text-[#8b93a1]">{item.sku}</div></td>
+              <td className="p-2.5 text-right font-mono">{formatNum(item.shortageWeightKg)} kg</td>
+              <td className="p-2.5 text-right font-mono text-[#86efac]">{formatNum(item.settledWeightKg)} kg</td>
+              <td className="p-2.5 text-right font-mono text-[#fbbf24]">{formatNum(item.remainingWeightKg)} kg</td>
+              <td className="p-2.5"><div className="space-y-1">{(item.details || []).map((detail) => <div key={detail.claimId} className="text-[10px] text-[#8b93a1]">
+                <span className="font-medium text-[#cbd5e1]">{detail.polisi || 'Tanpa nopol'}</span> · {detail.claimNo} · kurang {formatNum(detail.shortageWeightKg)} kg · sisa {formatNum(detail.remainingWeightKg)} kg
+              </div>)}</div></td>
+            </tr>)}</tbody>
+          </table>
+        </div>
+      </div>)}</div>
     </section>}
 
     {startModal && <div className="fixed inset-0 z-[95] bg-black/75 overflow-y-auto flex items-start justify-center p-4 sm:py-6"><div className="card-surface w-full max-w-lg p-6">
