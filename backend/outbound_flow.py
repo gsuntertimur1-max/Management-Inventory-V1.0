@@ -107,6 +107,12 @@ class SOQuantityCorrectionInput(BaseModel):
     reason: str = Field(min_length=3, max_length=500)
 
 
+class DocumentNumberCorrectionInput(BaseModel):
+    oldDocumentNo: str
+    newDocumentNo: str
+    reason: str = Field(min_length=3, max_length=500)
+
+
 class OutboundEditInput(BaseModel):
     items: List[OutboundItemInput] = Field(min_length=1)
     documents: List[str] = Field(min_length=1, max_length=20)
@@ -599,6 +605,289 @@ async def correct_outbound_document_quantity(body: SOQuantityCorrectionInput, us
             )
 
     return await _so_balance(document_no)
+
+
+def _replace_document_number(value, old_no: str, new_no: str):
+    return new_no if _doc_key(value) == old_no else value
+
+
+def _replace_document_number_list(values, old_no: str, new_no: str) -> list:
+    result = []
+    for value in values or []:
+        revised = _replace_document_number(value, old_no, new_no)
+        if revised not in result:
+            result.append(revised)
+    return result
+
+
+def _replace_document_number_map(mapping, old_no: str, new_no: str) -> dict:
+    result = {}
+    for key, value in (mapping or {}).items():
+        revised_key = new_no if _doc_key(key) == old_no else key
+        result[revised_key] = value
+    return result
+
+
+def _rewrite_document_link_sources(link: dict, old_no: str, new_no: str) -> dict:
+    revised = dict(link)
+    if "sourceDocumentNo" in revised:
+        revised["sourceDocumentNo"] = _replace_document_number(revised.get("sourceDocumentNo"), old_no, new_no)
+    if "sourceDocumentNos" in revised:
+        revised["sourceDocumentNos"] = _replace_document_number_list(revised.get("sourceDocumentNos"), old_no, new_no)
+    if "sources" in revised:
+        revised["sources"] = [
+            {
+                **dict(source),
+                "sourceDocumentNo": _replace_document_number(source.get("sourceDocumentNo"), old_no, new_no),
+            }
+            for source in (revised.get("sources") or [])
+        ]
+    return revised
+
+
+def _rewrite_load_document_number(load: dict, old_no: str, new_no: str, event: dict) -> dict:
+    revised = dict(load)
+    revised["ref"] = _replace_document_number(revised.get("ref"), old_no, new_no)
+    revised["documents"] = _replace_document_number_list(revised.get("documents") or [], old_no, new_no)
+    if "request_document" in revised:
+        revised["request_document"] = _replace_document_number(revised.get("request_document"), old_no, new_no)
+
+    revised["items"] = [
+        {
+            **dict(item),
+            "documentNo": _replace_document_number(item.get("documentNo"), old_no, new_no),
+        }
+        for item in (revised.get("items") or [])
+    ]
+
+    for field in ("document_parties", "so_document_parties", "document_progress", "so_document_progress"):
+        if field in revised:
+            revised[field] = _replace_document_number_map(revised.get(field), old_no, new_no)
+
+    revised["document_links"] = [
+        _rewrite_document_link_sources(link, old_no, new_no)
+        for link in (revised.get("document_links") or [])
+    ]
+    revised["document_number_correction_history"] = [
+        *(revised.get("document_number_correction_history") or []),
+        event,
+    ]
+    revised["last_document_number_correction"] = event
+    revised["updated_at"] = event["time"]
+    return revised
+
+
+def _rewrite_surat_jalan_document_number(sj: dict, old_no: str, new_no: str, event: dict) -> dict:
+    revised = dict(sj)
+    revised["ref"] = _replace_document_number(revised.get("ref"), old_no, new_no)
+    revised["documents"] = _replace_document_number_list(revised.get("documents") or [], old_no, new_no)
+    if "request_document" in revised:
+        revised["request_document"] = _replace_document_number(revised.get("request_document"), old_no, new_no)
+    revised["items"] = [
+        {
+            **dict(item),
+            "documentNo": _replace_document_number(item.get("documentNo"), old_no, new_no),
+        }
+        for item in (revised.get("items") or [])
+    ]
+    for field in ("document_parties", "so_document_parties"):
+        if field in revised:
+            revised[field] = _replace_document_number_map(revised.get(field), old_no, new_no)
+    revised["document_number_correction_history"] = [
+        *(revised.get("document_number_correction_history") or []),
+        event,
+    ]
+    revised["last_document_number_correction"] = event
+    return revised
+
+
+@router.put("/operational-corrections/outbound/{load_id}/document-number")
+async def correct_outbound_document_number(
+    load_id: str,
+    body: DocumentNumberCorrectionInput,
+    user: dict = Depends(require_admin),
+):
+    """Koreksi salah ketik nomor dokumen tanpa mengubah stok atau kuantum.
+
+    Berlaku untuk antrean Menunggu, Sedang Dimuat, dan transaksi Selesai.
+    Semua snapshot dokumen, pemuatan, Surat Jalan, dan transaksi referensi
+    dikoreksi sebagai satu kesatuan dengan rollback kompensasi bila gagal.
+    """
+    old_no = _doc_key(body.oldDocumentNo)
+    new_no = _doc_key(body.newDocumentNo)
+    if not old_no or not new_no:
+        raise HTTPException(status_code=400, detail="Nomor dokumen lama dan baru wajib diisi")
+    if old_no == new_no:
+        raise HTTPException(status_code=400, detail="Nomor dokumen baru masih sama dengan nomor lama")
+
+    old_type = _document_type(old_no)
+    new_type = _document_type(new_no)
+    if old_type != new_type:
+        raise HTTPException(status_code=400, detail=f"Jenis dokumen harus tetap {old_type}")
+
+    anchor = await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
+    if not anchor:
+        raise HTTPException(status_code=404, detail="Data pemuatan tidak ditemukan")
+    if anchor.get("status") not in {"Menunggu", "Sedang Dimuat", "Selesai"}:
+        raise HTTPException(status_code=409, detail="Koreksi nomor hanya tersedia untuk Menunggu, Sedang Dimuat, atau Selesai")
+
+    anchor_numbers = {
+        _doc_key(value)
+        for value in [
+            anchor.get("ref"),
+            *(anchor.get("documents") or []),
+            *[item.get("documentNo") for item in (anchor.get("items") or [])],
+        ]
+        if _doc_key(value)
+    }
+    if old_no not in anchor_numbers:
+        raise HTTPException(status_code=400, detail="Nomor dokumen lama tidak terdapat pada pemuatan yang dipilih")
+
+    master_conflict = await db.outbound_documents.find_one({"documentNo": new_no}, {"_id": 0, "id": 1})
+    load_conflict = await db.outbound_loads.find_one(
+        {
+            "$or": [
+                {"ref": new_no},
+                {"documents": new_no},
+                {"items.documentNo": new_no},
+                {"document_links.no": new_no},
+            ]
+        },
+        {"_id": 0, "id": 1},
+    )
+    if master_conflict or load_conflict:
+        raise HTTPException(status_code=409, detail="Nomor dokumen baru sudah digunakan")
+
+    load_query = {
+        "$or": [
+            {"ref": old_no},
+            {"documents": old_no},
+            {"items.documentNo": old_no},
+            {"request_document": old_no},
+            {"document_links.sourceDocumentNo": old_no},
+            {"document_links.sourceDocumentNos": old_no},
+            {"document_links.sources.sourceDocumentNo": old_no},
+        ]
+    }
+    sj_query = {
+        "$or": [
+            {"ref": old_no},
+            {"documents": old_no},
+            {"items.documentNo": old_no},
+            {"request_document": old_no},
+        ]
+    }
+    transaction_query = {
+        "$or": [
+            {"ref": old_no},
+            {"source_document": old_no},
+            {"parent_document": old_no},
+            {"request_document": old_no},
+        ]
+    }
+
+    masters = await db.outbound_documents.find({"documentNo": old_no}, {"_id": 0}).to_list(100)
+    loads = await db.outbound_loads.find(load_query, {"_id": 0}).to_list(5000)
+    surat_jalan = await db.surat_jalan.find(sj_query, {"_id": 0}).to_list(5000)
+    transactions = await db.transactions.find(transaction_query, {"_id": 0}).to_list(10000)
+
+    if not masters and not loads and not surat_jalan and not transactions:
+        raise HTTPException(status_code=404, detail="Referensi nomor dokumen lama tidak ditemukan")
+
+    timestamp = now_iso()
+    event = {
+        "id": new_id(),
+        "time": timestamp,
+        "by": user.get("name", ""),
+        "reason": body.reason.strip(),
+        "oldDocumentNo": old_no,
+        "newDocumentNo": new_no,
+        "statusAtCorrection": anchor.get("status", ""),
+    }
+
+    replacements = []
+    audit_id = new_id()
+    audit_written = False
+    try:
+        for master in masters:
+            candidate = dict(master)
+            candidate["documentNo"] = new_no
+            candidate["numberCorrectionHistory"] = [
+                *(candidate.get("numberCorrectionHistory") or []),
+                event,
+            ]
+            candidate["lastNumberCorrection"] = event
+            candidate["updatedAt"] = timestamp
+            candidate["updatedBy"] = user.get("name", "")
+            result = await db.outbound_documents.replace_one({"id": master.get("id")}, candidate, upsert=False)
+            if not result.matched_count:
+                raise HTTPException(status_code=409, detail="Master dokumen berubah saat koreksi")
+            replacements.append((db.outbound_documents, "id", master.get("id"), master))
+
+        for load in loads:
+            candidate = _rewrite_load_document_number(load, old_no, new_no, event)
+            result = await db.outbound_loads.replace_one({"id": load.get("id")}, candidate, upsert=False)
+            if not result.matched_count:
+                raise HTTPException(status_code=409, detail="Pemuatan berubah saat koreksi nomor")
+            replacements.append((db.outbound_loads, "id", load.get("id"), load))
+
+        for sj in surat_jalan:
+            candidate = _rewrite_surat_jalan_document_number(sj, old_no, new_no, event)
+            result = await db.surat_jalan.replace_one({"id": sj.get("id")}, candidate, upsert=False)
+            if not result.matched_count:
+                raise HTTPException(status_code=409, detail="Surat Jalan berubah saat koreksi nomor")
+            replacements.append((db.surat_jalan, "id", sj.get("id"), sj))
+
+        for transaction in transactions:
+            candidate = dict(transaction)
+            for field in ("ref", "source_document", "parent_document", "request_document"):
+                if field in candidate:
+                    candidate[field] = _replace_document_number(candidate.get(field), old_no, new_no)
+            result = await db.transactions.replace_one({"id": transaction.get("id")}, candidate, upsert=False)
+            if not result.matched_count:
+                raise HTTPException(status_code=409, detail="Riwayat transaksi berubah saat koreksi nomor")
+            replacements.append((db.transactions, "id", transaction.get("id"), transaction))
+
+        await db.transactions.insert_one({
+            "id": audit_id,
+            "operation_id": audit_id,
+            "time": timestamp,
+            "ref": new_no,
+            "source_document": new_no,
+            "type": "KOREKSI",
+            "kondisi": "DOKUMEN",
+            "document_type": "KOREKSI_NOMOR_DOKUMEN",
+            "parent_document": old_no,
+            "product": f"Koreksi nomor {old_type}",
+            "change": 0,
+            "unit": "",
+            "operator": user.get("name", ""),
+            "keterangan": body.reason.strip(),
+            "correction_reason": body.reason.strip(),
+            "old_document_no": old_no,
+            "new_document_no": new_no,
+            "affected_load_ids": [load.get("id") for load in loads if load.get("id")],
+            "affected_surat_jalan_ids": [sj.get("id") for sj in surat_jalan if sj.get("id")],
+            "correction_event_id": event["id"],
+        })
+        audit_written = True
+    except Exception:
+        if audit_written:
+            await db.transactions.delete_one({"id": audit_id})
+        for collection, key, value, snapshot in reversed(replacements):
+            await collection.replace_one({key: value}, snapshot, upsert=True)
+        raise
+
+    return {
+        "ok": True,
+        "oldDocumentNo": old_no,
+        "newDocumentNo": new_no,
+        "affectedLoads": len(loads),
+        "affectedSuratJalan": len(surat_jalan),
+        "affectedTransactions": len(transactions),
+        "masterUpdated": bool(masters),
+        "eventId": event["id"],
+    }
 
 
 def _weighing_entries(average: float, minimum: float, maximum: float) -> list[dict]:
