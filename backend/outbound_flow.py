@@ -2469,9 +2469,11 @@ async def settle_outbound_documents(body: MultiSettlementInput, user: dict = Dep
             })
 
         if items:
+            admin_cr = _administrative_cr_link(load, source_document)
             resolved.append({
                 "loadId": load["id"],
                 "sourceDocumentNo": source_document,
+                "crDocumentNo": str((admin_cr or {}).get("no") or ""),
                 "items": items,
                 "load": load,
             })
@@ -2499,6 +2501,7 @@ async def settle_outbound_documents(body: MultiSettlementInput, user: dict = Dep
                 source_items = [dict(item) for item in allocation["items"]]
                 source_payloads.append({
                     "sourceDocumentNo": allocation["sourceDocumentNo"],
+                    "crDocumentNo": allocation.get("crDocumentNo", ""),
                     "items": source_items,
                 })
                 for item in source_items:
@@ -2514,6 +2517,7 @@ async def settle_outbound_documents(body: MultiSettlementInput, user: dict = Dep
                         "kondisi": "—",
                         "document_type": "SO",
                         "parent_document": allocation["sourceDocumentNo"],
+                        "parent_cr_no": allocation.get("crDocumentNo", ""),
                         "product": item["name"],
                         "change": 0,
                         "settled_qty": item["qty"],
@@ -2534,6 +2538,7 @@ async def settle_outbound_documents(body: MultiSettlementInput, user: dict = Dep
                 "no": document_no,
                 "sourceDocumentNo": source_numbers[0] if len(source_numbers) == 1 else "",
                 "sourceDocumentNos": source_numbers,
+                "crDocumentNos": list(dict.fromkeys([row.get("crDocumentNo", "") for row in source_payloads if row.get("crDocumentNo")])),
                 "sources": source_payloads,
                 "time": timestamp,
                 "party": party,
@@ -2895,11 +2900,13 @@ async def settle_outbound_document(load_id: str, body: SettlementInput, user: di
         if float(item.qty) > float(source.get("qty", 0) or 0) - returned - sold + 1e-9:
             raise HTTPException(status_code=400, detail=f"Jumlah SO {source.get('name', '')} melebihi sisa dokumen sumber")
         items.append({"productId": item.productId, "name": source.get("name", ""), "unit": source.get("unit", ""), "channel": source.get("channel", ""), "qty": float(item.qty)})
-    link = {"id": new_id(), "type": "SO", "no": document_no, "party": party, "sourceDocumentNo": source_document, "time": now_iso(), "items": items, "note": body.note.strip(), "operator": user.get("name", "")}
+    admin_cr = _administrative_cr_link(load, source_document)
+    cr_document_no = str((admin_cr or {}).get("no") or "")
+    link = {"id": new_id(), "type": "SO", "no": document_no, "party": party, "sourceDocumentNo": source_document, "crDocumentNo": cr_document_no, "time": now_iso(), "items": items, "note": body.note.strip(), "operator": user.get("name", "")}
     prospective = {**load, "document_links": [*load.get("document_links", []), link]}
     try:
         await db.outbound_loads.update_one({"id": load_id}, {"$push": {"document_links": link}, "$set": {"document_status": _document_link_status(prospective)}})
-        await db.transactions.insert_many([{"id": new_id(), "load_id": load_id, "time": link["time"], "ref": document_no, "type": "DOKUMEN", "kondisi": "—", "document_type": "SO", "parent_document": source_document, "product": item["name"], "change": 0, "settled_qty": item["qty"], "unit": item["unit"], "channel": item.get("channel", ""), "penerima": party, "pengambil": load.get("pengambil", ""), "polisi": load.get("polisi", ""), "operator": user.get("name", ""), "keterangan": body.note.strip()} for item in items])
+        await db.transactions.insert_many([{"id": new_id(), "load_id": load_id, "time": link["time"], "ref": document_no, "type": "DOKUMEN", "kondisi": "—", "document_type": "SO", "parent_document": source_document, "parent_cr_no": cr_document_no, "product": item["name"], "change": 0, "settled_qty": item["qty"], "unit": item["unit"], "channel": item.get("channel", ""), "penerima": party, "pengambil": load.get("pengambil", ""), "polisi": load.get("polisi", ""), "operator": user.get("name", ""), "keterangan": body.note.strip()} for item in items])
         return link
     except Exception:
         await db.transactions.delete_many({"load_id": load_id, "ref": document_no, "document_type": "SO"})
