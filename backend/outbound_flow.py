@@ -200,9 +200,11 @@ class ConsignmentReturnInput(BaseModel):
     items: List[ReturnItemInput] = Field(default_factory=list, max_length=100)
     note: str = ""
     returnType: Literal["CR", "RETUR"] = "CR"
-    # CR administratif mencatat nomor dokumen penutup ketika seluruh CT sudah
-    # direalisasikan melalui SO. Tidak ada mutasi stok/tumpukan pada mode ini.
+    # CR administratif adalah dokumen payung. Saat dibuat tidak ada mutasi stok.
+    # SO dan/atau realisasi fisik kemudian menghabiskan saldo administratif CR.
     administrativeOnly: bool = False
+    physicalRealization: bool = False
+    crDocumentNo: str = ""
 
 
 class SalesReturnInput(BaseModel):
@@ -1865,7 +1867,10 @@ def _linked_totals(load: dict, product_id: str, source_document_no: str = "") ->
         for item in link.get("items", []):
             if item.get("productId") != product_id:
                 continue
-            if link.get("type") in {"CR", "RETUR"}:
+            if (
+                link.get("type") in {"RETUR", "CR_FISIK"}
+                or (link.get("type") == "CR" and not link.get("administrativeOnly"))
+            ):
                 returned += float(item.get("goodQty", 0) or 0) + float(item.get("damagedQty", 0) or 0)
             elif link.get("type") == "SO":
                 sold += float(item.get("qty", 0) or 0)
@@ -1886,11 +1891,29 @@ def _all_source_documents_settled(load: dict) -> bool:
     return True
 
 
+def _administrative_cr_link(load: dict, source_document_no: str = "") -> dict | None:
+    target = str(source_document_no or load.get("ref") or "").strip()
+    for link in reversed(load.get("document_links") or []):
+        if link.get("type") != "CR" or not link.get("administrativeOnly"):
+            continue
+        link_source = str(link.get("sourceDocumentNo") or load.get("ref") or "").strip()
+        if not target or link_source == target:
+            return link
+    return None
+
+
 def _document_link_status(load: dict) -> str:
     if _all_source_documents_settled(load):
         return "Selesai Dokumen"
     links = list(load.get("document_links") or [])
-    if any(link.get("type") == "SO" for link in links):
+    has_admin_cr = any(link.get("type") == "CR" and link.get("administrativeOnly") for link in links)
+    has_so = any(link.get("type") == "SO" for link in links)
+    has_cr_physical = any(link.get("type") == "CR_FISIK" for link in links)
+    if has_admin_cr:
+        if has_so or has_cr_physical:
+            return "CR Tercatat · Penyelesaian Sebagian"
+        return "CR Tercatat · Menunggu SO/Fisik"
+    if has_so:
         return "SO Sebagian · Belum Selesai"
     return_link = next((link for link in reversed(links) if link.get("type") in {"CR", "RETUR"}), None)
     if return_link:
@@ -1903,54 +1926,54 @@ async def create_consignment_return(load_id: str, body: ConsignmentReturnInput, 
     load = await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
     if not load or load.get("document_type") not in {"CT", "MEMO", "ND"} or load.get("status") != "Selesai":
         raise HTTPException(status_code=400, detail="Pengembalian hanya dapat dibuat dari CT, Memo, atau ND yang sudah selesai dimuat")
+
     expected_return = "CR" if load.get("document_type") == "CT" else "RETUR"
     if body.returnType != expected_return:
         raise HTTPException(status_code=400, detail=f"Dokumen {load.get('document_type')} harus menggunakan {expected_return}")
+
     document_no = body.documentNo.strip()
     valid_prefix = ("CR",) if body.returnType == "CR" else ("RT", "RET", "RM")
     if not document_no.upper().startswith(valid_prefix):
         raise HTTPException(status_code=400, detail=f"Nomor pengembalian harus berupa dokumen {body.returnType}")
-    if await db.outbound_loads.find_one({"$or": [{"ref": document_no}, {"document_links.no": document_no}]}):
-        raise HTTPException(status_code=409, detail="Nomor dokumen pengembalian sudah digunakan")
-    if len({item.productId for item in body.items}) != len(body.items):
-        raise HTTPException(status_code=400, detail="Produk retur tidak boleh dicatat lebih dari satu baris")
+
     source_document = _resolve_source_document(load, body.sourceDocumentNo)
     original = _source_product_totals(load, source_document)
     if not original:
         raise HTTPException(status_code=400, detail="Dokumen sumber tidak memiliki komoditas yang dapat diselesaikan")
 
+    # ------------------------------------------------------------------
+    # CT: catat CR sebagai dokumen payung administratif, tanpa stok masuk.
+    # Kuantum CR mengikuti kuantum CT sumber. Sesudahnya saldo CR dapat
+    # dihabiskan oleh SO dan/atau realisasi fisik.
+    # ------------------------------------------------------------------
     if body.administrativeOnly:
         if load.get("document_type") != "CT" or body.returnType != "CR":
             raise HTTPException(status_code=400, detail="CR administratif hanya berlaku untuk dokumen CT")
-        if any(
-            link.get("type") == "CR"
-            and str(link.get("sourceDocumentNo") or load.get("ref") or "").strip() == source_document
-            for link in (load.get("document_links") or [])
-        ):
-            raise HTTPException(status_code=409, detail="CT ini sudah memiliki dokumen CR")
+        if body.physicalRealization:
+            raise HTTPException(status_code=400, detail="Mode CR administratif dan realisasi fisik tidak dapat dipakai bersamaan")
+        if _administrative_cr_link(load, source_document):
+            raise HTTPException(status_code=409, detail="CT ini sudah memiliki dokumen CR administratif")
+        if await db.outbound_loads.find_one({
+            "$or": [
+                {"ref": document_no},
+                {"document_links": {"$elemMatch": {"no": document_no, "type": {"$ne": "CR_FISIK"}}}},
+            ]
+        }):
+            raise HTTPException(status_code=409, detail="Nomor CR sudah digunakan")
 
         administrative_items = []
         for product_id, source in original.items():
-            returned, sold = _linked_totals(load, product_id, source_document)
             source_qty = float(source.get("qty", 0) or 0)
-            if returned > 1e-9:
-                raise HTTPException(
-                    status_code=409,
-                    detail="CR administratif tidak dapat dipakai karena sudah ada pengembalian fisik pada CT ini",
-                )
-            if sold + 1e-9 < source_qty:
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        f"CR administratif hanya dapat dicatat jika seluruh {source.get('name', 'komoditas')} "
-                        f"sudah ter-SO ({sold:g} dari {source_qty:g} {source.get('unit', '')})"
-                    ),
-                )
+            returned, sold = _linked_totals(load, product_id, source_document)
+            if returned + sold > source_qty + 1e-9:
+                raise HTTPException(status_code=409, detail="Realisasi dokumen sumber melebihi kuantum CT")
             administrative_items.append({
                 "productId": product_id,
                 "name": source.get("name", ""),
                 "unit": source.get("unit", ""),
                 "channel": source.get("channel", ""),
+                "qty": source_qty,
+                "administrativeQty": source_qty,
                 "goodQty": 0,
                 "damagedQty": 0,
                 "stackCode": "",
@@ -1977,7 +2000,7 @@ async def create_consignment_return(load_id: str, body: ConsignmentReturnInput, 
             {"$push": {"document_links": link}, "$set": {"document_status": status, "updated_at": timestamp}},
         )
         if not result.modified_count:
-            raise HTTPException(status_code=409, detail="Data CT berubah saat CR administratif disimpan. Muat ulang lalu coba lagi.")
+            raise HTTPException(status_code=409, detail="Data CT berubah saat CR disimpan. Muat ulang lalu coba lagi.")
 
         try:
             await db.transactions.insert_many([
@@ -1992,6 +2015,7 @@ async def create_consignment_return(load_id: str, body: ConsignmentReturnInput, 
                     "parent_document": source_document,
                     "product": item["name"],
                     "change": 0,
+                    "administrative_qty": item["administrativeQty"],
                     "good_change": 0,
                     "damaged_change": 0,
                     "unit": item["unit"],
@@ -2016,14 +2040,188 @@ async def create_consignment_return(load_id: str, body: ConsignmentReturnInput, 
             raise
         return link
 
+    # ------------------------------------------------------------------
+    # CT: realisasi fisik dari CR administratif yang sudah tercatat.
+    # Nomor CR tetap sama. Hanya tahap ini yang menambah stok/tumpukan.
+    # ------------------------------------------------------------------
+    if body.physicalRealization:
+        if load.get("document_type") != "CT" or body.returnType != "CR":
+            raise HTTPException(status_code=400, detail="Realisasi fisik CR hanya berlaku untuk dokumen CT")
+
+        cr_no = str(body.crDocumentNo or document_no or "").strip()
+        admin_cr = _administrative_cr_link(load, source_document)
+        if not admin_cr:
+            raise HTTPException(status_code=409, detail="Catat nomor CR administratif terlebih dahulu sebelum realisasi fisik")
+        if cr_no and cr_no != str(admin_cr.get("no") or "").strip():
+            raise HTTPException(status_code=400, detail=f"Realisasi fisik harus memakai nomor CR {admin_cr.get('no', '')}")
+        cr_no = str(admin_cr.get("no") or "").strip()
+
+        if len({item.productId for item in body.items}) != len(body.items):
+            raise HTTPException(status_code=400, detail="Produk realisasi fisik CR tidak boleh dicatat lebih dari satu baris")
+
+        link_items, stock_changes, stack_changes = [], [], []
+        link_applied = False
+        physical_link = None
+        try:
+            for item in body.items:
+                source = original.get(item.productId)
+                if not source:
+                    raise HTTPException(status_code=400, detail="Produk tidak terdapat pada CT sumber")
+                placements = [placement for placement in item.placements if float(placement.goodQty) > 0] or (
+                    [ReturnPlacementInput(goodQty=item.goodQty, stackCode=item.stackCode)] if item.goodQty else []
+                )
+                good_qty = sum(float(placement.goodQty) for placement in placements)
+                damaged_qty = float(item.damagedQty)
+                qty = good_qty + damaged_qty
+                if qty <= 0:
+                    continue
+
+                returned, sold = _linked_totals(load, item.productId, source_document)
+                remaining = max(float(source.get("qty", 0) or 0) - returned - sold, 0)
+                if qty > remaining + 1e-9:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Realisasi fisik {source.get('name', '')} melebihi sisa CR ({remaining:g} {source.get('unit', '')})",
+                    )
+
+                product = await db.products.find_one({"id": item.productId}, {"_id": 0})
+                if not product:
+                    raise HTTPException(status_code=404, detail="Produk realisasi fisik CR tidak ditemukan")
+                channel = normalize_channel(source.get("channel"), normalize_channel(product.get("channel")))
+                await ensure_channel_stock(product)
+
+                if good_qty:
+                    for placement in placements:
+                        if placement.stackCode.strip().upper() not in await valid_stack_codes():
+                            raise HTTPException(status_code=400, detail=f"Pilih lokasi tumpukan untuk barang Good {source.get('name', '')}")
+                    await db.products.update_one(
+                        {"id": item.productId},
+                        {"$inc": {"stock": good_qty, f"channelStock.{channel}.stock": good_qty}},
+                    )
+                    stock_changes.append((item.productId, "stock", good_qty, channel))
+                    for placement in placements:
+                        stack_code = placement.stackCode.strip().upper()
+                        await allocate_stock_to_stack(product, stack_code, float(placement.goodQty), user.get("name", ""))
+                        stack_changes.append((item.productId, stack_code, float(placement.goodQty)))
+
+                if damaged_qty:
+                    await db.products.update_one(
+                        {"id": item.productId},
+                        {"$inc": {"damaged": damaged_qty, f"channelStock.{channel}.damaged": damaged_qty}},
+                    )
+                    stock_changes.append((item.productId, "damaged", damaged_qty, channel))
+
+                link_items.append({
+                    "productId": item.productId,
+                    "name": source.get("name", ""),
+                    "unit": source.get("unit", ""),
+                    "channel": channel,
+                    "goodQty": good_qty,
+                    "damagedQty": damaged_qty,
+                    "stackCode": placements[0].stackCode.strip().upper() if len(placements) == 1 else "",
+                    "placements": [
+                        {"goodQty": float(placement.goodQty), "stackCode": placement.stackCode.strip().upper()}
+                        for placement in placements
+                    ],
+                })
+
+            if not link_items:
+                raise HTTPException(status_code=400, detail="Isi jumlah barang yang benar-benar kembali secara fisik")
+
+            timestamp = now_iso()
+            physical_link = {
+                "id": new_id(),
+                "type": "CR_FISIK",
+                "no": cr_no,
+                "crDocumentNo": cr_no,
+                "crLinkId": admin_cr.get("id", ""),
+                "sourceDocumentNo": source_document,
+                "time": timestamp,
+                "items": link_items,
+                "note": body.note.strip(),
+                "operator": user.get("name", ""),
+                "administrativeOnly": False,
+                "physicalReturn": True,
+            }
+            prospective = {**load, "document_links": [*load.get("document_links", []), physical_link]}
+            status = _document_link_status(prospective)
+            result = await db.outbound_loads.update_one(
+                {"id": load_id},
+                {"$push": {"document_links": physical_link}, "$set": {"document_status": status, "updated_at": timestamp}},
+            )
+            if not result.modified_count:
+                raise HTTPException(status_code=409, detail="Data CT berubah saat realisasi fisik CR. Muat ulang lalu coba lagi.")
+            link_applied = True
+
+            await db.transactions.insert_many([
+                {
+                    "id": new_id(),
+                    "load_id": load_id,
+                    "time": timestamp,
+                    "ref": cr_no,
+                    "type": "MASUK",
+                    "kondisi": "PENGEMBALIAN",
+                    "document_type": "CR_FISIK",
+                    "parent_document": source_document,
+                    "parent_cr_no": cr_no,
+                    "document_link_id": physical_link["id"],
+                    "product": item["name"],
+                    "change": item["goodQty"] + item["damagedQty"],
+                    "good_change": item["goodQty"],
+                    "damaged_change": item["damagedQty"],
+                    "unit": item["unit"],
+                    "channel": item["channel"],
+                    "penerima": load.get("party", ""),
+                    "operator": user.get("name", ""),
+                    "keterangan": body.note.strip(),
+                    "physical_return": True,
+                }
+                for item in link_items
+            ])
+            return physical_link
+        except Exception:
+            if physical_link:
+                await db.transactions.delete_many({"document_link_id": physical_link.get("id")})
+            if link_applied and physical_link:
+                await db.outbound_loads.update_one(
+                    {"id": load_id},
+                    {
+                        "$pull": {"document_links": {"id": physical_link["id"]}},
+                        "$set": {"document_status": load.get("document_status", "Selesai"), "updated_at": now_iso()},
+                    },
+                )
+            for product_id, stack_code, qty in reversed(stack_changes):
+                try:
+                    await decrease_stack_allocation(product_id, stack_code, qty, "Sistem (rollback realisasi fisik CR)")
+                except Exception:
+                    pass
+            for product_id, field, qty, channel in reversed(stock_changes):
+                await db.products.update_one(
+                    {"id": product_id},
+                    {"$inc": {field: -qty, f"channelStock.{channel}.{field}": -qty}},
+                )
+            raise
+
+    # ------------------------------------------------------------------
+    # Legacy physical CR/RETUR path. Dipertahankan untuk kompatibilitas data
+    # lama dan untuk Memo/ND, tetapi UI CT baru memakai CR administratif dulu.
+    # ------------------------------------------------------------------
+    if await db.outbound_loads.find_one({"$or": [{"ref": document_no}, {"document_links.no": document_no}]}):
+        raise HTTPException(status_code=409, detail="Nomor dokumen pengembalian sudah digunakan")
+    if len({item.productId for item in body.items}) != len(body.items):
+        raise HTTPException(status_code=400, detail="Produk retur tidak boleh dicatat lebih dari satu baris")
+
     link_items, stock_changes, stack_changes = [], [], []
     link_applied = False
+    link = None
     try:
         for item in body.items:
             source = original.get(item.productId)
             if not source:
                 raise HTTPException(status_code=400, detail="Produk retur tidak terdapat pada dokumen sumber yang dipilih")
-            placements = [placement for placement in item.placements if float(placement.goodQty) > 0] or ([ReturnPlacementInput(goodQty=item.goodQty, stackCode=item.stackCode)] if item.goodQty else [])
+            placements = [placement for placement in item.placements if float(placement.goodQty) > 0] or (
+                [ReturnPlacementInput(goodQty=item.goodQty, stackCode=item.stackCode)] if item.goodQty else []
+            )
             good_qty = sum(float(placement.goodQty) for placement in placements)
             qty = good_qty + float(item.damagedQty)
             if qty <= 0:
@@ -2048,27 +2246,78 @@ async def create_consignment_return(load_id: str, body: ConsignmentReturnInput, 
             if item.damagedQty:
                 await db.products.update_one({"id": item.productId}, {"$inc": {"damaged": float(item.damagedQty), f"channelStock.{channel}.damaged": float(item.damagedQty)}})
                 stock_changes.append((item.productId, "damaged", float(item.damagedQty), channel))
-            link_items.append({"productId": item.productId, "name": source.get("name", ""), "unit": source.get("unit", ""), "channel": channel, "goodQty": good_qty, "damagedQty": float(item.damagedQty), "stackCode": placements[0].stackCode.strip().upper() if len(placements) == 1 else "", "placements": [{"goodQty": float(placement.goodQty), "stackCode": placement.stackCode.strip().upper()} for placement in placements]})
+            link_items.append({
+                "productId": item.productId,
+                "name": source.get("name", ""),
+                "unit": source.get("unit", ""),
+                "channel": channel,
+                "goodQty": good_qty,
+                "damagedQty": float(item.damagedQty),
+                "stackCode": placements[0].stackCode.strip().upper() if len(placements) == 1 else "",
+                "placements": [
+                    {"goodQty": float(placement.goodQty), "stackCode": placement.stackCode.strip().upper()}
+                    for placement in placements
+                ],
+            })
         if not link_items:
             raise HTTPException(status_code=400, detail="Isi jumlah barang yang dikembalikan")
-        link = {"id": new_id(), "type": body.returnType, "no": document_no, "sourceDocumentNo": source_document, "time": now_iso(), "items": link_items, "note": body.note.strip(), "operator": user.get("name", "")}
+        link = {
+            "id": new_id(),
+            "type": body.returnType,
+            "no": document_no,
+            "sourceDocumentNo": source_document,
+            "time": now_iso(),
+            "items": link_items,
+            "note": body.note.strip(),
+            "operator": user.get("name", ""),
+        }
         prospective = {**load, "document_links": [*load.get("document_links", []), link]}
-        status = "Selesai Dokumen" if _all_source_documents_settled(prospective) else f"{body.returnType} Tercatat · Menunggu SO"
-        await db.outbound_loads.update_one({"id": load_id}, {"$push": {"document_links": link}, "$set": {"document_status": status}})
+        status = _document_link_status(prospective)
+        await db.outbound_loads.update_one(
+            {"id": load_id},
+            {"$push": {"document_links": link}, "$set": {"document_status": status}},
+        )
         link_applied = True
-        await db.transactions.insert_many([{"id": new_id(), "load_id": load_id, "time": link["time"], "ref": document_no, "type": "MASUK", "kondisi": "PENGEMBALIAN", "document_type": body.returnType, "parent_document": source_document, "product": x["name"], "change": x["goodQty"] + x["damagedQty"], "good_change": x["goodQty"], "damaged_change": x["damagedQty"], "unit": x["unit"], "channel": x["channel"], "penerima": load.get("party", ""), "operator": user.get("name", ""), "keterangan": body.note.strip()} for x in link_items])
+        await db.transactions.insert_many([
+            {
+                "id": new_id(),
+                "load_id": load_id,
+                "time": link["time"],
+                "ref": document_no,
+                "type": "MASUK",
+                "kondisi": "PENGEMBALIAN",
+                "document_type": body.returnType,
+                "parent_document": source_document,
+                "product": x["name"],
+                "change": x["goodQty"] + x["damagedQty"],
+                "good_change": x["goodQty"],
+                "damaged_change": x["damagedQty"],
+                "unit": x["unit"],
+                "channel": x["channel"],
+                "penerima": load.get("party", ""),
+                "operator": user.get("name", ""),
+                "keterangan": body.note.strip(),
+            }
+            for x in link_items
+        ])
         return link
     except Exception:
         await db.transactions.delete_many({"load_id": load_id, "ref": document_no, "document_type": body.returnType})
-        if link_applied:
-            await db.outbound_loads.update_one({"id": load_id}, {"$pull": {"document_links": {"id": link["id"]}}, "$set": {"document_status": load.get("document_status", "Selesai")}})
+        if link_applied and link:
+            await db.outbound_loads.update_one(
+                {"id": load_id},
+                {"$pull": {"document_links": {"id": link["id"]}}, "$set": {"document_status": load.get("document_status", "Selesai")}},
+            )
         for product_id, stack_code, qty in reversed(stack_changes):
             try:
                 await decrease_stack_allocation(product_id, stack_code, qty, "Sistem (rollback retur)")
             except Exception:
                 pass
         for product_id, field, qty, channel in reversed(stock_changes):
-            await db.products.update_one({"id": product_id}, {"$inc": {field: -qty, f"channelStock.{channel}.{field}": -qty}})
+            await db.products.update_one(
+                {"id": product_id},
+                {"$inc": {field: -qty, f"channelStock.{channel}.{field}": -qty}},
+            )
         raise
 
 
@@ -2293,7 +2542,7 @@ async def settle_outbound_documents(body: MultiSettlementInput, user: dict = Dep
                 "operator": user.get("name", ""),
             }
             prospective = {**load, "document_links": [*load.get("document_links", []), link]}
-            next_status = "Selesai Dokumen" if _all_source_documents_settled(prospective) else "SO Sebagian · Belum Selesai"
+            next_status = _document_link_status(prospective)
             result = await db.outbound_loads.update_one(
                 {"id": load_id},
                 {"$push": {"document_links": link}, "$set": {"document_status": next_status}},
@@ -2649,7 +2898,7 @@ async def settle_outbound_document(load_id: str, body: SettlementInput, user: di
     link = {"id": new_id(), "type": "SO", "no": document_no, "party": party, "sourceDocumentNo": source_document, "time": now_iso(), "items": items, "note": body.note.strip(), "operator": user.get("name", "")}
     prospective = {**load, "document_links": [*load.get("document_links", []), link]}
     try:
-        await db.outbound_loads.update_one({"id": load_id}, {"$push": {"document_links": link}, "$set": {"document_status": "Selesai Dokumen" if _all_source_documents_settled(prospective) else "SO Sebagian · Belum Selesai"}})
+        await db.outbound_loads.update_one({"id": load_id}, {"$push": {"document_links": link}, "$set": {"document_status": _document_link_status(prospective)}})
         await db.transactions.insert_many([{"id": new_id(), "load_id": load_id, "time": link["time"], "ref": document_no, "type": "DOKUMEN", "kondisi": "—", "document_type": "SO", "parent_document": source_document, "product": item["name"], "change": 0, "settled_qty": item["qty"], "unit": item["unit"], "channel": item.get("channel", ""), "penerima": party, "pengambil": load.get("pengambil", ""), "polisi": load.get("polisi", ""), "operator": user.get("name", ""), "keterangan": body.note.strip()} for item in items])
         return link
     except Exception:
