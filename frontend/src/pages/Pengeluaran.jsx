@@ -186,10 +186,32 @@ const Pengeluaran = () => {
     if (linkSource !== sourceDocumentNo) return total;
     return total + (link.items || []).filter((item) => item.productId === productId).reduce((sum, item) => sum + (['CR', 'RETUR'].includes(link.type) ? Number(item.goodQty || 0) + Number(item.damagedQty || 0) : Number(item.qty || 0)), 0);
   }, 0);
+  const linkedSoQtyFor = (load, sourceDocumentNo, productId) => (load.document_links || []).reduce((total, link) => {
+    if (link.type !== 'SO') return total;
+    if (Array.isArray(link.sources)) {
+      return total + link.sources
+        .filter((allocation) => allocation.sourceDocumentNo === sourceDocumentNo)
+        .reduce((sourceTotal, allocation) => sourceTotal + (allocation.items || [])
+          .filter((item) => item.productId === productId)
+          .reduce((sum, item) => sum + Number(item.qty || 0), 0), 0);
+    }
+    if ((link.sourceDocumentNo || load.ref || '') !== sourceDocumentNo) return total;
+    return total + (link.items || [])
+      .filter((item) => item.productId === productId)
+      .reduce((sum, item) => sum + Number(item.qty || 0), 0);
+  }, 0);
   const sourceItemsFor = (load, sourceDocumentNo) => {
     const grouped = {};
     (load.items || []).filter((item) => sourceDocumentFor(load, item) === sourceDocumentNo).forEach((item) => { grouped[item.productId] = grouped[item.productId] || { ...item, qty: 0, documentNo: sourceDocumentNo }; grouped[item.productId].qty += Number(item.qty || 0); });
     return Object.values(grouped);
+  };
+  const administrativeCrEligible = (load, sourceDocumentNo) => {
+    if (load.document_type !== 'CT') return false;
+    const items = sourceItemsFor(load, sourceDocumentNo);
+    if (!items.length) return false;
+    const alreadyHasCr = (load.document_links || []).some((link) => link.type === 'CR' && (link.sourceDocumentNo || load.ref || '') === sourceDocumentNo);
+    if (alreadyHasCr) return false;
+    return items.every((item) => linkedSoQtyFor(load, sourceDocumentNo, item.productId) + 1e-9 >= Number(item.qty || 0));
   };
   const remainingQty = (load, source, sourceDocumentNo = sourceDocumentFor(load, source)) => Math.max(Number(source.qty || 0) - linkedUsageFor(load, sourceDocumentNo, source.productId), 0);
   const historyQty = (link, item) => ['CR', 'RETUR', 'SO_RETUR'].includes(link.type)
@@ -371,7 +393,15 @@ const Pengeluaran = () => {
       setDocumentModal({ load, mode, documentNo: '', party: '', note: '', sources: soSourceRowsFor(load) });
       return;
     }
-    setDocumentModal({ load, mode, documentNo: '', note: '', sourceDocumentNo, items: returnItemsFor(load, mode, sourceDocumentNo) });
+    setDocumentModal({
+      load,
+      mode,
+      documentNo: '',
+      note: '',
+      sourceDocumentNo,
+      items: returnItemsFor(load, mode, sourceDocumentNo),
+      administrativeOnly: mode === 'CR' && administrativeCrEligible(load, sourceDocumentNo),
+    });
   };
   const updateDocumentItem = (index, patch) => setDocumentModal((prev) => ({ ...prev, items: prev.items.map((item, i) => i === index ? { ...item, ...patch } : item) }));
   const updateSettlementSource = (index, patch) => setDocumentModal((prev) => ({ ...prev, sources: prev.sources.map((item, i) => i === index ? { ...item, ...patch } : item) }));
@@ -400,7 +430,7 @@ const Pengeluaran = () => {
           sources: Object.values(grouped),
         });
       } else {
-        const payload = { documentNo: documentModal.documentNo, sourceDocumentNo: documentModal.sourceDocumentNo, note: documentModal.note, returnType: documentModal.mode, items: documentModal.items.map((item) => ({ productId: item.productId, goodQty: Number(item.goodQty || 0), damagedQty: Number(item.damagedQty || 0), stackCode: item.stackCode || '', placements: (item.placements || []).map((placement) => ({ goodQty: Number(placement.goodQty || 0), stackCode: placement.stackCode || '' })).filter((placement) => placement.goodQty > 0) })).filter((item) => item.placements.reduce((total, placement) => total + placement.goodQty, 0) + item.goodQty + item.damagedQty > 0) };
+        const payload = { documentNo: documentModal.documentNo, sourceDocumentNo: documentModal.sourceDocumentNo, note: documentModal.note, returnType: documentModal.mode, administrativeOnly: Boolean(documentModal.mode === 'CR' && documentModal.administrativeOnly), items: documentModal.items.map((item) => ({ productId: item.productId, goodQty: Number(item.goodQty || 0), damagedQty: Number(item.damagedQty || 0), stackCode: item.stackCode || '', placements: (item.placements || []).map((placement) => ({ goodQty: Number(placement.goodQty || 0), stackCode: placement.stackCode || '' })).filter((placement) => placement.goodQty > 0) })).filter((item) => item.placements.reduce((total, placement) => total + placement.goodQty, 0) + item.goodQty + item.damagedQty > 0) };
         if (documentModal.mode === 'SO_RETUR') await createSalesReturn(documentModal.load.id, { ...payload, sourceDocumentNo: documentModal.sourceDocumentNo });
         else await createConsignmentReturn(documentModal.load.id, payload);
       }
@@ -788,7 +818,7 @@ const Pengeluaran = () => {
                       {Object.entries(load.document_parties || load.so_document_parties || {}).map(([doc, recipient]) => <div key={doc} className="font-mono mt-1 text-[#c7d2fe]">↳ {doc} → {recipient || '—'}</div>)}
                       {(load.documents || [load.ref]).filter(Boolean).map((doc) => <DocumentBalance key={doc} documentNo={doc} />)}
                       {load.request_document && <div className="font-mono mt-1 text-[#fbbf24]">↳ Dasar: {load.request_document}</div>}
-                      {(load.document_links || []).map((link) => <div key={link.id} className="font-mono mt-1 text-[#4ade80]">↳ {link.type} · {link.no}{link.party ? ` · ${link.party}` : ''}</div>)}
+                      {(load.document_links || []).map((link) => <div key={link.id} className="font-mono mt-1 text-[#4ade80]">↳ {link.type} · {link.no}{link.administrativeOnly ? ' · Administratif (nihil fisik)' : ''}{link.party ? ` · ${link.party}` : ''}</div>)}
                       {['CT', 'MEMO', 'ND'].includes(load.document_type) && <details className="mt-2 rounded-lg border border-[#263244] bg-[#0b0f17]">
                         <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-semibold text-[#93c5fd]">History Dokumen · {(load.document_links || []).length} rangkaian</summary>
                         <div className="border-t border-[#263244] px-3 py-2 space-y-3">
@@ -801,8 +831,10 @@ const Pengeluaran = () => {
                                 {item.name}: Awal <b>{formatNum(item.qty)} {item.unit}</b> · Sisa <b className="text-[#fbbf24]">{formatNum(remainingQty(load, item, sourceDocumentNo))} {item.unit}</b>
                               </div>)}</div>
                               {historyLinks.length > 0 ? <div className="mt-2 space-y-1 border-t border-[#1d2735] pt-2">{historyLinks.map((link, linkIndex) => <div key={`${link.id || link.no}-${linkIndex}`} className="text-[10px]">
-                                <div className="font-mono text-[#4ade80]">{link.type} · {link.no}{link.party ? ` → ${link.party}` : ''}</div>
-                                {(link.historyItems || []).map((item, itemIndex) => <div key={`${item.productId || item.name}-${itemIndex}`} className="pl-2 text-[#8b93a1]">↳ {item.name || sourceItems.find((row) => row.productId === item.productId)?.name || 'Komoditi'} · {formatNum(historyQty(link, item))} {item.unit || sourceItems.find((row) => row.productId === item.productId)?.unit || ''}</div>)}
+                                <div className="font-mono text-[#4ade80]">{link.type} · {link.no}{link.administrativeOnly ? ' · Administratif (nihil fisik)' : ''}{link.party ? ` → ${link.party}` : ''}</div>
+                                {link.administrativeOnly
+                                  ? <div className="pl-2 text-[#8b93a1]">↳ Seluruh komoditas sudah ter-SO · tidak ada mutasi stok fisik</div>
+                                  : (link.historyItems || []).map((item, itemIndex) => <div key={`${item.productId || item.name}-${itemIndex}`} className="pl-2 text-[#8b93a1]">↳ {item.name || sourceItems.find((row) => row.productId === item.productId)?.name || 'Komoditi'} · {formatNum(historyQty(link, item))} {item.unit || sourceItems.find((row) => row.productId === item.productId)?.unit || ''}</div>)}
                               </div>)}</div> : <div className="mt-2 text-[10px] text-[#6b7688]">Belum ada SO/CR/Retur yang ditautkan.</div>}
                             </div>;
                           })}
@@ -996,7 +1028,7 @@ const Pengeluaran = () => {
       <Dialog open={Boolean(documentModal)} onOpenChange={(open) => { if (!open && !busyId) setDocumentModal(null); }}>
         <DialogContent className="max-w-2xl max-h-[calc(100dvh-2rem)] sm:max-h-[90vh] overflow-y-auto overscroll-contain touch-pan-y border-[#242f3d] bg-[#0d121b] text-[#e7ebf2]">
           <DialogHeader>
-            <DialogTitle>{documentModal?.mode === 'SO_RETUR' ? 'Retur Barang dari SO' : documentModal?.mode === 'CR' ? 'Pengembalian Barang Konsinyasi (CR)' : documentModal?.mode === 'RETUR' ? 'Retur Barang Memo' : 'Tautkan Dokumen Penjualan (SO)'}</DialogTitle>
+            <DialogTitle>{documentModal?.mode === 'SO_RETUR' ? 'Retur Barang dari SO' : documentModal?.mode === 'CR' && documentModal?.administrativeOnly ? 'Catat CR Administratif (Nihil Fisik)' : documentModal?.mode === 'CR' ? 'Pengembalian Barang Konsinyasi (CR)' : documentModal?.mode === 'RETUR' ? 'Retur Barang Memo' : 'Tautkan Dokumen Penjualan (SO)'}</DialogTitle>
             <DialogDescription className="text-[#8b93a1]">
               {documentModal?.mode === 'SO'
                 ? `Satu nomor SO dapat mengambil saldo dari beberapa ${documentModal?.load?.document_type || 'dokumen'} sekaligus. Isi kuantum pada sumber yang digunakan.`
@@ -1008,7 +1040,7 @@ const Pengeluaran = () => {
               <label className="text-sm block mb-1">Dokumen sumber</label>
               <select value={documentModal.sourceDocumentNo} onChange={(e) => {
                 const sourceDocumentNo = e.target.value;
-                setDocumentModal({ ...documentModal, sourceDocumentNo, items: returnItemsFor(documentModal.load, documentModal.mode, sourceDocumentNo) });
+                setDocumentModal({ ...documentModal, sourceDocumentNo, items: returnItemsFor(documentModal.load, documentModal.mode, sourceDocumentNo), administrativeOnly: documentModal.mode === 'CR' && administrativeCrEligible(documentModal.load, sourceDocumentNo) });
               }} className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5">
                 {(documentModal.load.documents || [documentModal.load.ref]).map((doc) => <option key={doc} value={doc}>{doc}</option>)}
               </select>
@@ -1060,21 +1092,27 @@ const Pengeluaran = () => {
                 <span className="font-mono font-semibold text-[#60a5fa]">{formatNum((documentModal.sources || []).reduce((sum, row) => sum + Number(row.qty || 0), 0))}</span>
               </div>
             </div> : <div className="space-y-3">
-              {documentModal.items.map((item, index) => <div key={item.productId} className="rounded-lg border border-[#202a38] bg-[#0b0f17] p-3">
-                <div className="flex justify-between gap-3 mb-2"><span className="text-sm font-semibold">{item.name}</span><span className="text-xs text-[#8b93a1]">Sisa {formatNum(item.remaining)} {item.unit}</span></div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <div><label className="text-xs text-[#8b93a1]">Kembali Good</label><input type="number" min="0" max={item.remaining} value={item.goodQty} onChange={(e) => updateDocumentItem(index, { goodQty: e.target.value })} className="w-full mt-1 bg-[#0d121b] border border-[#242f3d] rounded-lg px-3 py-2" /></div>
-                  <div><label className="text-xs text-[#8b93a1]">Kembali Damage</label><input type="number" min="0" max={item.remaining} value={item.damagedQty} onChange={(e) => updateDocumentItem(index, { damagedQty: e.target.value })} className="w-full mt-1 bg-[#0d121b] border border-[#242f3d] rounded-lg px-3 py-2" /></div>
-                  <div><label className="text-xs text-[#8b93a1]">Tumpukan barang Good</label><select value={item.stackCode} onChange={(e) => updateDocumentItem(index, { stackCode: e.target.value })} className="w-full mt-1 bg-[#0d121b] border border-[#242f3d] rounded-lg px-2 py-2"><option value="">Pilih lokasi...</option>{STACKS.map((code) => <option key={code}>{code}</option>)}</select></div>
-                </div>
-              </div>)}
+              {documentModal.mode === 'CR' && documentModal.administrativeOnly
+                ? <div className="rounded-lg border border-[#166534] bg-[#07170f] p-4">
+                    <div className="text-sm font-semibold text-[#86efac]">CR administratif · nihil fisik</div>
+                    <div className="mt-1 text-xs text-[#a7f3d0]">Seluruh komoditas pada CT sumber sudah 100% ter-SO. Nomor CR tetap dicatat untuk kelengkapan administrasi, tetapi stok, tumpukan, lot, Bon Muat, dan Surat Jalan tidak berubah.</div>
+                    <div className="mt-3 space-y-1">{documentModal.items.map((item) => <div key={item.productId} className="flex justify-between gap-3 text-xs"><span>{item.name}</span><span className="font-mono text-[#86efac]">{formatNum(item.remaining)} {item.unit} kembali fisik</span></div>)}</div>
+                  </div>
+                : documentModal.items.map((item, index) => <div key={item.productId} className="rounded-lg border border-[#202a38] bg-[#0b0f17] p-3">
+                    <div className="flex justify-between gap-3 mb-2"><span className="text-sm font-semibold">{item.name}</span><span className="text-xs text-[#8b93a1]">Sisa {formatNum(item.remaining)} {item.unit}</span></div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <div><label className="text-xs text-[#8b93a1]">Kembali Good</label><input type="number" min="0" max={item.remaining} value={item.goodQty} onChange={(e) => updateDocumentItem(index, { goodQty: e.target.value })} className="w-full mt-1 bg-[#0d121b] border border-[#242f3d] rounded-lg px-3 py-2" /></div>
+                      <div><label className="text-xs text-[#8b93a1]">Kembali Damage</label><input type="number" min="0" max={item.remaining} value={item.damagedQty} onChange={(e) => updateDocumentItem(index, { damagedQty: e.target.value })} className="w-full mt-1 bg-[#0d121b] border border-[#242f3d] rounded-lg px-3 py-2" /></div>
+                      <div><label className="text-xs text-[#8b93a1]">Tumpukan barang Good</label><select value={item.stackCode} onChange={(e) => updateDocumentItem(index, { stackCode: e.target.value })} className="w-full mt-1 bg-[#0d121b] border border-[#242f3d] rounded-lg px-2 py-2"><option value="">Pilih lokasi...</option>{STACKS.map((code) => <option key={code}>{code}</option>)}</select></div>
+                    </div>
+                  </div>)}
             </div>}
 
             <textarea rows="2" value={documentModal.note} onChange={(e) => setDocumentModal({ ...documentModal, note: e.target.value })} placeholder="Catatan (opsional)" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5" />
           </div>}
           <DialogFooter>
             <button disabled={Boolean(busyId)} onClick={() => setDocumentModal(null)} className="px-4 py-2 border border-[#242f3d] rounded-lg">Batal</button>
-            <button disabled={Boolean(busyId)} onClick={saveLinkedDocument} className="btn-primary px-4 py-2 rounded-lg disabled:opacity-50">{busyId ? 'Menyimpan...' : documentModal?.mode === 'SO' ? 'Simpan Alokasi SO' : 'Simpan Dokumen'}</button>
+            <button disabled={Boolean(busyId)} onClick={saveLinkedDocument} className="btn-primary px-4 py-2 rounded-lg disabled:opacity-50">{busyId ? 'Menyimpan...' : documentModal?.mode === 'SO' ? 'Simpan Alokasi SO' : documentModal?.mode === 'CR' && documentModal?.administrativeOnly ? 'Simpan CR Administratif' : 'Simpan Dokumen'}</button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
