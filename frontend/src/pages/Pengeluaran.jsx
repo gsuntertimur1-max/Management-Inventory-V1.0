@@ -205,7 +205,7 @@ const Pengeluaran = () => {
     if (link.type === 'SO' && Array.isArray(link.sources)) {
       return (link.sources || [])
         .filter((source) => source.sourceDocumentNo === sourceDocumentNo)
-        .map((source) => ({ ...link, historyItems: source.items || [] }));
+        .map((source) => ({ ...link, historyItems: source.items || [], historyCrDocumentNo: source.crDocumentNo || link.crDocumentNo || '' }));
     }
     const linkSource = link.sourceDocumentNo || load.ref || '';
     return linkSource === sourceDocumentNo ? [{ ...link, historyItems: link.items || [] }] : [];
@@ -834,7 +834,7 @@ const Pengeluaran = () => {
                       {Object.entries(load.document_parties || load.so_document_parties || {}).map(([doc, recipient]) => <div key={doc} className="font-mono mt-1 text-[#c7d2fe]">↳ {doc} → {recipient || '—'}</div>)}
                       {(load.documents || [load.ref]).filter(Boolean).map((doc) => <DocumentBalance key={doc} documentNo={doc} />)}
                       {load.request_document && <div className="font-mono mt-1 text-[#fbbf24]">↳ Dasar: {load.request_document}</div>}
-                      {(load.document_links || []).map((link) => <div key={link.id} className="font-mono mt-1 text-[#4ade80]">↳ {link.type === 'CR_FISIK' ? 'CR · Realisasi Fisik' : link.type} · {link.no}{link.administrativeOnly ? ' · Dokumen Payung' : ''}{link.party ? ` · ${link.party}` : ''}</div>)}
+                      {(load.document_links || []).map((link) => <div key={link.id} className="font-mono mt-1 text-[#4ade80]">↳ {link.type === 'CR_FISIK' ? 'CR · Realisasi Fisik' : link.type} · {link.no}{link.administrativeOnly ? ' · Dokumen Payung' : ''}{(link.crDocumentNo || (link.crDocumentNos || [])[0]) ? ` · via ${link.crDocumentNo || (link.crDocumentNos || [])[0]}` : ''}{link.party ? ` · ${link.party}` : ''}</div>)}
                       {['CT', 'MEMO', 'ND'].includes(load.document_type) && <details className="mt-2 rounded-lg border border-[#263244] bg-[#0b0f17]">
                         <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-semibold text-[#93c5fd]">History Dokumen · {(load.document_links || []).length} rangkaian</summary>
                         <div className="border-t border-[#263244] px-3 py-2 space-y-3">
@@ -847,7 +847,7 @@ const Pengeluaran = () => {
                                 {item.name}: Awal <b>{formatNum(item.qty)} {item.unit}</b> · Sisa <b className="text-[#fbbf24]">{formatNum(remainingQty(load, item, sourceDocumentNo))} {item.unit}</b>
                               </div>)}</div>
                               {historyLinks.length > 0 ? <div className="mt-2 space-y-1 border-t border-[#1d2735] pt-2">{historyLinks.map((link, linkIndex) => <div key={`${link.id || link.no}-${linkIndex}`} className="text-[10px]">
-                                <div className="font-mono text-[#4ade80]">{link.type === 'CR_FISIK' ? 'CR · Realisasi Fisik' : link.type} · {link.no}{link.administrativeOnly ? ' · Dokumen Payung' : ''}{link.party ? ` → ${link.party}` : ''}</div>
+                                <div className="font-mono text-[#4ade80]">{link.type === 'CR_FISIK' ? 'CR · Realisasi Fisik' : link.type} · {link.no}{link.administrativeOnly ? ' · Dokumen Payung' : ''}{link.historyCrDocumentNo ? ` · via ${link.historyCrDocumentNo}` : ''}{link.party ? ` → ${link.party}` : ''}</div>
                                 {link.administrativeOnly
                                   ? (link.historyItems || []).map((item, itemIndex) => <div key={`${item.productId || item.name}-${itemIndex}`} className="pl-2 text-[#8b93a1]">↳ {item.name || sourceItems.find((row) => row.productId === item.productId)?.name || 'Komoditi'} · CR {formatNum(item.administrativeQty ?? item.qty ?? sourceItems.find((row) => row.productId === item.productId)?.qty ?? 0)} {item.unit || sourceItems.find((row) => row.productId === item.productId)?.unit || ''} · belum menambah stok</div>)
                                   : (link.historyItems || []).map((item, itemIndex) => <div key={`${item.productId || item.name}-${itemIndex}`} className="pl-2 text-[#8b93a1]">↳ {item.name || sourceItems.find((row) => row.productId === item.productId)?.name || 'Komoditi'} · {formatNum(historyQty(link, item))} {item.unit || sourceItems.find((row) => row.productId === item.productId)?.unit || ''}</div>)}
