@@ -197,9 +197,12 @@ class ReturnItemInput(BaseModel):
 class ConsignmentReturnInput(BaseModel):
     documentNo: str
     sourceDocumentNo: str = ""
-    items: List[ReturnItemInput] = Field(min_length=1)
+    items: List[ReturnItemInput] = Field(default_factory=list, max_length=100)
     note: str = ""
     returnType: Literal["CR", "RETUR"] = "CR"
+    # CR administratif mencatat nomor dokumen penutup ketika seluruh CT sudah
+    # direalisasikan melalui SO. Tidak ada mutasi stok/tumpukan pada mode ini.
+    administrativeOnly: bool = False
 
 
 class SalesReturnInput(BaseModel):
@@ -1915,6 +1918,104 @@ async def create_consignment_return(load_id: str, body: ConsignmentReturnInput, 
     original = _source_product_totals(load, source_document)
     if not original:
         raise HTTPException(status_code=400, detail="Dokumen sumber tidak memiliki komoditas yang dapat diselesaikan")
+
+    if body.administrativeOnly:
+        if load.get("document_type") != "CT" or body.returnType != "CR":
+            raise HTTPException(status_code=400, detail="CR administratif hanya berlaku untuk dokumen CT")
+        if any(
+            link.get("type") == "CR"
+            and str(link.get("sourceDocumentNo") or load.get("ref") or "").strip() == source_document
+            for link in (load.get("document_links") or [])
+        ):
+            raise HTTPException(status_code=409, detail="CT ini sudah memiliki dokumen CR")
+
+        administrative_items = []
+        for product_id, source in original.items():
+            returned, sold = _linked_totals(load, product_id, source_document)
+            source_qty = float(source.get("qty", 0) or 0)
+            if returned > 1e-9:
+                raise HTTPException(
+                    status_code=409,
+                    detail="CR administratif tidak dapat dipakai karena sudah ada pengembalian fisik pada CT ini",
+                )
+            if sold + 1e-9 < source_qty:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"CR administratif hanya dapat dicatat jika seluruh {source.get('name', 'komoditas')} "
+                        f"sudah ter-SO ({sold:g} dari {source_qty:g} {source.get('unit', '')})"
+                    ),
+                )
+            administrative_items.append({
+                "productId": product_id,
+                "name": source.get("name", ""),
+                "unit": source.get("unit", ""),
+                "channel": source.get("channel", ""),
+                "goodQty": 0,
+                "damagedQty": 0,
+                "stackCode": "",
+                "placements": [],
+            })
+
+        timestamp = now_iso()
+        link = {
+            "id": new_id(),
+            "type": "CR",
+            "no": document_no,
+            "sourceDocumentNo": source_document,
+            "time": timestamp,
+            "items": administrative_items,
+            "note": body.note.strip(),
+            "operator": user.get("name", ""),
+            "administrativeOnly": True,
+            "physicalReturn": False,
+        }
+        prospective = {**load, "document_links": [*load.get("document_links", []), link]}
+        status = _document_link_status(prospective)
+        result = await db.outbound_loads.update_one(
+            {"id": load_id},
+            {"$push": {"document_links": link}, "$set": {"document_status": status, "updated_at": timestamp}},
+        )
+        if not result.modified_count:
+            raise HTTPException(status_code=409, detail="Data CT berubah saat CR administratif disimpan. Muat ulang lalu coba lagi.")
+
+        try:
+            await db.transactions.insert_many([
+                {
+                    "id": new_id(),
+                    "load_id": load_id,
+                    "time": timestamp,
+                    "ref": document_no,
+                    "type": "DOKUMEN",
+                    "kondisi": "ADMINISTRATIF",
+                    "document_type": "CR",
+                    "parent_document": source_document,
+                    "product": item["name"],
+                    "change": 0,
+                    "good_change": 0,
+                    "damaged_change": 0,
+                    "unit": item["unit"],
+                    "channel": item["channel"],
+                    "penerima": load.get("party", ""),
+                    "operator": user.get("name", ""),
+                    "keterangan": body.note.strip(),
+                    "administrative_only": True,
+                    "physical_return": False,
+                    "document_link_id": link["id"],
+                }
+                for item in administrative_items
+            ])
+        except Exception:
+            await db.outbound_loads.update_one(
+                {"id": load_id},
+                {
+                    "$pull": {"document_links": {"id": link["id"]}},
+                    "$set": {"document_status": load.get("document_status", "Selesai"), "updated_at": now_iso()},
+                },
+            )
+            raise
+        return link
+
     link_items, stock_changes, stack_changes = [], [], []
     link_applied = False
     try:
