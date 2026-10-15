@@ -120,6 +120,11 @@ class OutboundEditInput(BaseModel):
     pengambil: str = ""
 
 
+class VehiclePlateCorrectionInput(BaseModel):
+    polisi: str = Field(min_length=1, max_length=30)
+    reason: str = Field(min_length=3, max_length=500)
+
+
 class DailyLoadingSettlementInput(BaseModel):
     recipient: Literal["BURUH", "HARIAN"]
     group: str = ""
@@ -1507,6 +1512,90 @@ async def edit_outbound_load(load_id: str, body: OutboundEditInput, user: dict =
     except Exception:
         await db.outbound_loads.replace_one({"id": load_id}, dict(load), upsert=False)
         raise
+    return await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
+
+
+@router.put("/outbound-loads/{load_id}/vehicle-plate")
+async def change_outbound_vehicle_plate(
+    load_id: str,
+    body: VehiclePlateCorrectionInput,
+    user: dict = Depends(require_write),
+):
+    """Ganti plat kendaraan ketika pemuatan sedang berjalan tanpa menyentuh stok/dokumen."""
+    load = await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
+    if not load:
+        raise HTTPException(status_code=404, detail="Data pemuatan tidak ditemukan")
+    if load.get("status") != "Sedang Dimuat":
+        raise HTTPException(status_code=409, detail="Plat nomor hanya dapat diganti saat status Sedang Dimuat")
+
+    old_plate = str(load.get("polisi") or "").strip().upper()
+    new_plate = " ".join(str(body.polisi or "").strip().upper().split())
+    reason = body.reason.strip()
+    if not new_plate:
+        raise HTTPException(status_code=400, detail="Plat nomor baru wajib diisi")
+    if new_plate == old_plate:
+        raise HTTPException(status_code=400, detail="Plat nomor baru masih sama dengan plat nomor saat ini")
+
+    timestamp = now_iso()
+    event_id = new_id()
+    event = {
+        "id": event_id,
+        "time": timestamp,
+        "by": user.get("name", ""),
+        "oldPlate": old_plate,
+        "newPlate": new_plate,
+        "reason": reason,
+        "statusAtCorrection": load.get("status", ""),
+    }
+
+    result = await db.outbound_loads.update_one(
+        {"id": load_id, "status": "Sedang Dimuat", "polisi": load.get("polisi", "")},
+        {
+            "$set": {
+                "polisi": new_plate,
+                "updated_at": timestamp,
+                "last_vehicle_plate_correction": event,
+            },
+            "$push": {"vehicle_plate_history": event},
+        },
+    )
+    if not result.modified_count:
+        raise HTTPException(status_code=409, detail="Data kendaraan berubah saat koreksi. Muat ulang lalu coba lagi.")
+
+    audit_id = new_id()
+    try:
+        await db.transactions.insert_one({
+            "id": audit_id,
+            "operation_id": audit_id,
+            "load_id": load_id,
+            "time": timestamp,
+            "ref": load.get("ref", ""),
+            "type": "KOREKSI",
+            "kondisi": "DOKUMEN",
+            "document_type": "KOREKSI_PLAT_KENDARAAN",
+            "product": "Koreksi plat kendaraan pemuatan",
+            "change": 0,
+            "unit": "",
+            "operator": user.get("name", ""),
+            "keterangan": reason,
+            "correction_reason": reason,
+            "old_plate": old_plate,
+            "new_plate": new_plate,
+            "bon_no": load.get("bon_no", ""),
+            "antrian": load.get("antrian", ""),
+            "correction_event_id": event_id,
+        })
+    except Exception:
+        await db.outbound_loads.update_one(
+            {"id": load_id, "polisi": new_plate},
+            {
+                "$set": {"polisi": load.get("polisi", ""), "updated_at": load.get("updated_at", "")},
+                "$pull": {"vehicle_plate_history": {"id": event_id}},
+                "$unset": {"last_vehicle_plate_correction": ""},
+            },
+        )
+        raise
+
     return await db.outbound_loads.find_one({"id": load_id}, {"_id": 0})
 
 
