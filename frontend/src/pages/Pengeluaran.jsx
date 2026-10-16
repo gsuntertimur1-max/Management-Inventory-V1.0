@@ -90,7 +90,7 @@ const DocumentBalance = ({ documentNo }) => {
 };
 
 const Pengeluaran = () => {
-  const { user, outboundLoads, suratJalan, settings, stackAllocations, startOutboundLoad, completeOutboundLoad, createConsignmentReturn, createSalesReturn, settleOutboundDocument, settleOutboundDocuments, correctOutboundSettlement, cancelOutboundLoad, editOutboundLoad, changeOutboundVehiclePlate, correctOutboundStack, correctOutboundDocumentNumber, refreshOutboundLoads, refreshOutboundSnapshot } = useData();
+  const { user, outboundLoads, suratJalan, settings, stackAllocations, startOutboundLoad, completeOutboundLoad, createConsignmentReturn, createSalesReturn, settleOutboundDocument, settleOutboundDocuments, correctOutboundSettlement, cancelOutboundLoad, editOutboundLoad, recordLoadingFeePayment, changeOutboundVehiclePlate, correctOutboundStack, correctOutboundDocumentNumber, refreshOutboundLoads, refreshOutboundSnapshot } = useData();
   const STACKS = stackCodes(settings?.warehouses);
   const navigate = useNavigate();
   const [filter, setFilter] = useState('Semua Status');
@@ -556,7 +556,20 @@ const Pengeluaran = () => {
     const amount = Number(paymentModal.amount || 0);
     if (amount <= 0) return toast.error('Nominal pembayaran harus diisi');
     setCostBusy(true);
-    try { await api.post(`/outbound-loads/${paymentModal.load.id}/loading-fee-payment`, { amount, method: paymentModal.method, payer: paymentModal.payer, note: paymentModal.note }); toast.success('Pembayaran biaya muat dicatat'); setPaymentModal(null); await refreshOutboundLoads(); } catch (e) { toast.error(apiError(e)); } finally { setCostBusy(false); }
+    try {
+      await recordLoadingFeePayment(paymentModal.load.id, {
+        amount,
+        method: paymentModal.method,
+        payer: paymentModal.payer,
+        note: paymentModal.note,
+      });
+      toast.success('Pembayaran biaya muat dicatat');
+      setPaymentModal(null);
+    } catch (e) {
+      toast.error(apiError(e));
+    } finally {
+      setCostBusy(false);
+    }
   };
 
   const openEdit = (load) => setEditModal({
