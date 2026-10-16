@@ -82,6 +82,301 @@ def _consignment_arrangement(layout: dict, item: dict) -> str:
     return " ; ".join(parts) if parts else "Belum dicatat"
 
 
+
+@router.get("/export/purchase-order/{po_id}/receiving-recap.pdf")
+async def export_purchase_order_receiving_recap_pdf(po_id: str, user: dict = Depends(get_current_user)):
+    """Rekap penerimaan per PO/TM: satu baris per mobil, subtotal per hari."""
+    po = await db.purchase_orders.find_one({"id": po_id}, {"_id": 0})
+    if not po:
+        raise HTTPException(status_code=404, detail="PO/TM tidak ditemukan")
+
+    loads = await db.inbound_loads.find(
+        {"poId": po_id, "status": "Selesai"},
+        {"_id": 0},
+    ).sort("completedAt", 1).to_list(5000)
+    if not loads:
+        raise HTTPException(status_code=404, detail="Belum ada kendaraan penerimaan yang selesai untuk PO/TM ini")
+
+    settings = await db.settings.find_one({"_id": "app"}, {"_id": 0}) or {}
+    warehouse = settings.get("warehouse") or "Gudang Sunter Timur I & II"
+    warehouse_head = settings.get("warehouseHead") or "Irsa Maulian Nugraha"
+
+    po_items = {str(item.get("productId") or ""): item for item in (po.get("items") or [])}
+    product_names = []
+    for item in po.get("items") or []:
+        name = str(item.get("name") or "").strip()
+        if name and name not in product_names:
+            product_names.append(name)
+
+    def local_dt(value):
+        try:
+            parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+            return parsed.replace(tzinfo=JAKARTA_TZ) if parsed.tzinfo is None else parsed.astimezone(JAKARTA_TZ)
+        except (ValueError, TypeError):
+            return operational_now()
+
+    def vehicle_values(load: dict) -> dict:
+        actual_items = list(load.get("actualItems") or [])
+        sj_koli = 0.0
+        sj_netto = 0.0
+        received_koli = 0.0
+        bad_koli = 0.0
+        bad_netto = 0.0
+        shortage_netto = 0.0
+        good_koli = 0.0
+        good_netto = 0.0
+        stacks = []
+        for item in actual_items:
+            product_id = str(item.get("productId") or "")
+            po_item = po_items.get(product_id, {})
+            weight = float(po_item.get("weight", 0) or 0)
+            document_qty = float(item.get("documentActualQty", item.get("plannedQty", 0)) or 0)
+            damaged_qty = float(item.get("damagedQty", 0) or 0)
+            physical_good_qty = float(item.get("goodQty", 0) or 0)
+            shortage_kg = float(item.get("shortageClaimWeightKg", 0) or 0)
+
+            sj_koli += document_qty
+            sj_netto += document_qty * weight
+            received_koli += document_qty
+            bad_koli += damaged_qty
+            bad_netto += damaged_qty * weight
+            shortage_netto += shortage_kg
+            good_koli += max(document_qty - damaged_qty, 0)
+            good_netto += physical_good_qty * weight
+
+            stack = str(item.get("stackCode") or "").strip().upper()
+            if stack and stack not in stacks:
+                stacks.append(stack)
+
+        completed = local_dt(load.get("completedAt") or load.get("createdAt"))
+        note_parts = []
+        if load.get("driver"):
+            note_parts.append(f"Sopir: {load.get('driver')}")
+        if load.get("keterangan"):
+            note_parts.append(str(load.get("keterangan")))
+        return {
+            "date_key": completed.strftime("%Y-%m-%d"),
+            "date_label": completed.strftime("%d-%m-%Y"),
+            "polisi": str(load.get("polisi") or "-").upper(),
+            "sj_koli": sj_koli,
+            "sj_netto": sj_netto,
+            "received_koli": received_koli,
+            "bad_koli": bad_koli,
+            "bad_netto": bad_netto,
+            "shortage_netto": shortage_netto,
+            "good_koli": good_koli,
+            "good_netto": good_netto,
+            "stacks": ", ".join(stacks) if stacks else "-",
+            "weighing": float(load.get("grossWeight", 0) or 0) if load.get("weighingForm") else 0.0,
+            "note": " · ".join(note_parts) or "-",
+        }
+
+    rows = [vehicle_values(load) for load in loads]
+    grouped = {}
+    for row in rows:
+        grouped.setdefault(row["date_key"], []).append(row)
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(A4),
+        leftMargin=7 * mm,
+        rightMargin=7 * mm,
+        topMargin=9 * mm,
+        bottomMargin=10 * mm,
+        title=f"Rekap Penerimaan {po.get('no', '')}",
+    )
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        "po-recap-title", parent=styles["Title"], fontName="Helvetica-Bold",
+        fontSize=14, leading=16, alignment=TA_CENTER, spaceAfter=5,
+    )
+    meta_label = ParagraphStyle(
+        "po-recap-meta-label", parent=styles["BodyText"], fontName="Helvetica-Bold",
+        fontSize=7, leading=9,
+    )
+    meta_value = ParagraphStyle(
+        "po-recap-meta-value", parent=styles["BodyText"], fontName="Helvetica",
+        fontSize=7, leading=9,
+    )
+    tiny = ParagraphStyle(
+        "po-recap-tiny", parent=styles["BodyText"], fontName="Helvetica",
+        fontSize=5.2, leading=6.2, alignment=TA_CENTER,
+    )
+    tiny_left = ParagraphStyle(
+        "po-recap-tiny-left", parent=tiny, alignment=TA_LEFT,
+    )
+    tiny_bold = ParagraphStyle(
+        "po-recap-tiny-bold", parent=tiny, fontName="Helvetica-Bold",
+    )
+
+    first_date = rows[0]["date_label"]
+    last_date = rows[-1]["date_label"]
+    period = first_date if first_date == last_date else f"{first_date} s.d. {last_date}"
+
+    story = [
+        Paragraph("REKAPITULASI PENERIMAAN BARANG", title_style),
+        Spacer(1, 2 * mm),
+    ]
+    meta = Table([
+        [Paragraph("Nomor PO/TM", meta_label), Paragraph(str(po.get("no") or "-"), meta_value),
+         Paragraph("Supplier", meta_label), Paragraph(str(po.get("supplier") or "-"), meta_value)],
+        [Paragraph("Jenis Barang", meta_label), Paragraph("<br/>".join(escape(x) for x in product_names) or "-", meta_value),
+         Paragraph("Gudang", meta_label), Paragraph(str(warehouse), meta_value)],
+        [Paragraph("Periode Penerimaan", meta_label), Paragraph(period, meta_value),
+         Paragraph("Jumlah Kendaraan", meta_label), Paragraph(_num(len(rows)), meta_value)],
+    ], colWidths=[28 * mm, 94 * mm, 31 * mm, 116 * mm])
+    meta.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 1.5 * mm),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 1.5 * mm),
+        ("TOPPADDING", (0, 0), (-1, -1), 0.8 * mm),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0.8 * mm),
+    ]))
+    story.extend([meta, Spacer(1, 4 * mm)])
+
+    header1 = [
+        "NO", "TGL", "NOPOL", "SURAT JALAN", "", "PENERIMAAN", "", "", "",
+        "TERIMA BAIK", "", "TUMPUKAN", "UJI TIMBANG", "KETERANGAN MITRA",
+    ]
+    header2 = [
+        "", "", "", "KOLI", "NETTO / KG", "TERIMA KOLI", "BS KOLI", "BS NETTO / KG",
+        "KURANG NETTO / KG", "KOLI", "TOTAL / KG", "", "", "",
+    ]
+    table_data = [
+        [Paragraph(x, tiny_bold) if x else "" for x in header1],
+        [Paragraph(x, tiny_bold) if x else "" for x in header2],
+    ]
+    subtotal_rows = []
+    row_number = 1
+
+    grand = {
+        "sj_koli": 0.0, "sj_netto": 0.0, "received_koli": 0.0, "bad_koli": 0.0,
+        "bad_netto": 0.0, "shortage_netto": 0.0, "good_koli": 0.0, "good_netto": 0.0,
+    }
+    grand_weighing = []
+
+    for date_key in sorted(grouped):
+        day_rows = grouped[date_key]
+        day = {key: 0.0 for key in grand}
+        day_weighing = []
+        for row in day_rows:
+            for key in day:
+                day[key] += float(row[key] or 0)
+                grand[key] += float(row[key] or 0)
+            if row["weighing"] > 0:
+                day_weighing.append(row["weighing"])
+                grand_weighing.append(row["weighing"])
+            table_data.append([
+                Paragraph(str(row_number), tiny),
+                Paragraph(row["date_label"], tiny),
+                Paragraph(escape(row["polisi"]), tiny),
+                Paragraph(_num(row["sj_koli"]), tiny),
+                Paragraph(_num(row["sj_netto"]), tiny),
+                Paragraph(_num(row["received_koli"]), tiny),
+                Paragraph(_num(row["bad_koli"]) if row["bad_koli"] else "-", tiny),
+                Paragraph(_num(row["bad_netto"]) if row["bad_netto"] else "-", tiny),
+                Paragraph(_num(row["shortage_netto"]) if row["shortage_netto"] else "-", tiny),
+                Paragraph(_num(row["good_koli"]), tiny),
+                Paragraph(_num(row["good_netto"]), tiny),
+                Paragraph(escape(row["stacks"]), tiny),
+                Paragraph(_num(row["weighing"]) if row["weighing"] else "-", tiny),
+                Paragraph(escape(row["note"]), tiny_left),
+            ])
+            row_number += 1
+
+        subtotal_index = len(table_data)
+        subtotal_rows.append(subtotal_index)
+        day_label = day_rows[0]["date_label"]
+        day_avg = sum(day_weighing) / len(day_weighing) if day_weighing else 0
+        table_data.append([
+            Paragraph(f"TOTAL TANGGAL {day_label}", tiny_bold), "", "",
+            Paragraph(_num(day["sj_koli"]), tiny_bold),
+            Paragraph(_num(day["sj_netto"]), tiny_bold),
+            Paragraph(_num(day["received_koli"]), tiny_bold),
+            Paragraph(_num(day["bad_koli"]) if day["bad_koli"] else "-", tiny_bold),
+            Paragraph(_num(day["bad_netto"]) if day["bad_netto"] else "-", tiny_bold),
+            Paragraph(_num(day["shortage_netto"]) if day["shortage_netto"] else "-", tiny_bold),
+            Paragraph(_num(day["good_koli"]), tiny_bold),
+            Paragraph(_num(day["good_netto"]), tiny_bold),
+            "",
+            Paragraph(_num(day_avg) if day_avg else "-", tiny_bold),
+            "",
+        ])
+
+    grand_index = len(table_data)
+    grand_avg = sum(grand_weighing) / len(grand_weighing) if grand_weighing else 0
+    table_data.append([
+        Paragraph("TOTAL KESELURUHAN", tiny_bold), "", "",
+        Paragraph(_num(grand["sj_koli"]), tiny_bold),
+        Paragraph(_num(grand["sj_netto"]), tiny_bold),
+        Paragraph(_num(grand["received_koli"]), tiny_bold),
+        Paragraph(_num(grand["bad_koli"]) if grand["bad_koli"] else "-", tiny_bold),
+        Paragraph(_num(grand["bad_netto"]) if grand["bad_netto"] else "-", tiny_bold),
+        Paragraph(_num(grand["shortage_netto"]) if grand["shortage_netto"] else "-", tiny_bold),
+        Paragraph(_num(grand["good_koli"]), tiny_bold),
+        Paragraph(_num(grand["good_netto"]), tiny_bold),
+        "",
+        Paragraph(_num(grand_avg) if grand_avg else "-", tiny_bold),
+        "",
+    ])
+
+    col_widths = [
+        8 * mm, 18 * mm, 24 * mm, 14 * mm, 18 * mm, 17 * mm, 14 * mm,
+        18 * mm, 19 * mm, 15 * mm, 20 * mm, 24 * mm, 17 * mm, 32 * mm,
+    ]
+    table = LongTable(table_data, colWidths=col_widths, repeatRows=2, hAlign="CENTER")
+    style = [
+        ("GRID", (0, 0), (-1, -1), 0.45, colors.black),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("BACKGROUND", (0, 0), (-1, 1), colors.HexColor("#E7EFF3")),
+        ("TEXTCOLOR", (0, 0), (-1, 1), colors.black),
+        ("SPAN", (0, 0), (0, 1)), ("SPAN", (1, 0), (1, 1)), ("SPAN", (2, 0), (2, 1)),
+        ("SPAN", (3, 0), (4, 0)), ("SPAN", (5, 0), (8, 0)), ("SPAN", (9, 0), (10, 0)),
+        ("SPAN", (11, 0), (11, 1)), ("SPAN", (12, 0), (12, 1)), ("SPAN", (13, 0), (13, 1)),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0.8 * mm),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0.8 * mm),
+        ("TOPPADDING", (0, 0), (-1, -1), 1.0 * mm),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 1.0 * mm),
+    ]
+    for index in subtotal_rows:
+        style.extend([
+            ("SPAN", (0, index), (2, index)),
+            ("BACKGROUND", (0, index), (-1, index), colors.HexColor("#D9EAF7")),
+            ("LINEABOVE", (0, index), (-1, index), 0.8, colors.black),
+        ])
+    style.extend([
+        ("SPAN", (0, grand_index), (2, grand_index)),
+        ("BACKGROUND", (0, grand_index), (-1, grand_index), colors.HexColor("#C6E0B4")),
+        ("LINEABOVE", (0, grand_index), (-1, grand_index), 1.0, colors.black),
+        ("LINEBELOW", (0, grand_index), (-1, grand_index), 1.0, colors.black),
+    ])
+    table.setStyle(TableStyle(style))
+    story.append(table)
+
+    story.extend([
+        Spacer(1, 10 * mm),
+        Table([
+            ["", Paragraph(f"Jakarta, {operational_now().strftime('%d %B %Y')}", ParagraphStyle("sig-date", parent=meta_value, alignment=TA_CENTER))],
+            ["", Paragraph("Kepala Gudang<br/>Gudang Sunter Timur I &amp; II", ParagraphStyle("sig-role", parent=meta_value, alignment=TA_CENTER, leading=10))],
+            ["", Spacer(1, 18 * mm)],
+            ["", Paragraph(f"<b>{escape(str(warehouse_head))}</b>", ParagraphStyle("sig-name", parent=meta_value, alignment=TA_CENTER))],
+        ], colWidths=[145 * mm, 100 * mm]),
+    ])
+
+    def footer(canvas_obj, doc_obj):
+        canvas_obj.saveState()
+        canvas_obj.setFont("Helvetica", 6)
+        canvas_obj.setFillColor(colors.HexColor("#666666"))
+        canvas_obj.drawString(8 * mm, 5.5 * mm, f"PEPEG · {po.get('no', '')}")
+        canvas_obj.drawRightString(landscape(A4)[0] - 8 * mm, 5.5 * mm, f"Halaman {doc_obj.page}")
+        canvas_obj.restoreState()
+
+    doc.build(story, onFirstPage=footer, onLaterPages=footer)
+    safe_no = str(po.get("no") or "PO-TM").replace("/", "-").replace("\\", "-").replace(" ", "_")
+    return _pdf_response(buffer, f"rekap_penerimaan_{safe_no}.pdf")
+
+
 @router.get("/export/consignment-stock-card.pdf")
 async def export_consignment_stock_card_pdf(destination: str, user: dict = Depends(get_current_user)):
     location = destination.strip()
