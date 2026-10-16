@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { Plus, X, Trash2, PackageCheck } from 'lucide-react';
+import { Plus, X, Trash2, PackageCheck, Search, FileDown } from 'lucide-react';
 import { useData } from '../context/DataContext';
-import api, { apiError } from '../lib/api';
+import api, { apiError, downloadApiFile } from '../lib/api';
 import { formatRp, formatDate, formatNum } from '../mock';
 import { toast } from 'sonner';
 import { packagingText, quantityFromInput, quantityIsValid, totalWeight } from '../lib/packaging';
@@ -31,6 +31,8 @@ const PurchaseOrder = () => {
   const [modal, setModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ supplier: '', no: '', items: [newRow()] });
+  const [query, setQuery] = useState('');
+  const [downloadingId, setDownloadingId] = useState('');
   const [page, setPage] = useState(1);
 
   const setItem = (index, patch) => {
@@ -57,13 +59,43 @@ const PurchaseOrder = () => {
   })), [form.items, products]);
 
   const total = selectedItems.reduce((sum, item) => sum + (item.product?.cost || 0) * Number(item.qty || 0), 0);
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredPurchaseOrders = useMemo(() => purchaseOrders.filter((po) => {
+    if (!normalizedQuery) return true;
+    const text = [
+      po.no,
+      po.supplier,
+      po.status,
+      po.date,
+      ...(po.items || []).flatMap((item) => [item.name, item.sku, item.unit]),
+    ].filter(Boolean).join(' ').toLowerCase();
+    return text.includes(normalizedQuery);
+  }), [purchaseOrders, normalizedQuery]);
   const pageSize = 10;
-  const paginatedPurchaseOrders = purchaseOrders.slice((page - 1) * pageSize, page * pageSize);
+  const paginatedPurchaseOrders = filteredPurchaseOrders.slice((page - 1) * pageSize, page * pageSize);
 
   useEffect(() => {
-    const maxPage = Math.max(1, Math.ceil(purchaseOrders.length / pageSize));
+    setPage(1);
+  }, [query]);
+
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(filteredPurchaseOrders.length / pageSize));
     if (page > maxPage) setPage(maxPage);
-  }, [purchaseOrders.length, page]);
+  }, [filteredPurchaseOrders.length, page]);
+
+  const downloadReceivingRecap = async (po) => {
+    if (downloadingId) return;
+    setDownloadingId(po.id);
+    try {
+      const safeNo = String(po.no || 'PO-TM').replace(/[^a-zA-Z0-9_-]+/g, '-');
+      await downloadApiFile(`/export/purchase-order/${po.id}/receiving-recap.pdf`, `rekap_penerimaan_${safeNo}.pdf`);
+      toast.success(`Rekap penerimaan ${po.no} berhasil diunduh`);
+    } catch (e) {
+      toast.error(apiError(e));
+    } finally {
+      setDownloadingId('');
+    }
+  };
 
   const cancelRemaining = async (po) => {
     const reason = window.prompt(`Alasan pembatalan sisa PO ${po.no}:`);
@@ -126,11 +158,24 @@ const PurchaseOrder = () => {
       </div>
 
       <div className="card-surface p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+          <div className="relative w-full sm:max-w-md">
+            <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6b7688]" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Cari nomor PO/TM, supplier, barang, SKU..."
+              className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg pl-9 pr-10 py-2.5 text-sm outline-none focus:border-[#2563eb]"
+            />
+            {query && <button type="button" onClick={() => setQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#6b7688] hover:text-white" title="Hapus pencarian"><X size={14} /></button>}
+          </div>
+          <div className="text-xs text-[#6b7688]">{formatNum(filteredPurchaseOrders.length)} PO/TM ditemukan</div>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm tbl">
             <thead><tr className="text-left border-b border-[#1a222e]">{['No. PO', 'Tanggal', 'Supplier', 'Barang Dipesan', 'Progres Penerimaan', 'Total Nilai', 'Status', ...((canManageMasterData || canInbound) ? ['Aksi'] : [])].map((h) => <th key={h} className="py-2.5 pr-4 font-semibold whitespace-nowrap">{h}</th>)}</tr></thead>
             <tbody>
-              {purchaseOrders.length === 0 ? <tr><td colSpan={(canManageMasterData || canInbound) ? 8 : 7} className="py-8 text-center text-[#6b7688]">Belum ada PO. Buat PO baru untuk mencatat rencana pengadaan.</td></tr> : paginatedPurchaseOrders.map((po) => {
+              {filteredPurchaseOrders.length === 0 ? <tr><td colSpan={(canManageMasterData || canInbound) ? 8 : 7} className="py-8 text-center text-[#6b7688]">{purchaseOrders.length === 0 ? 'Belum ada PO. Buat PO baru untuk mencatat rencana pengadaan.' : 'PO/TM yang dicari tidak ditemukan.'}</td></tr> : paginatedPurchaseOrders.map((po) => {
                 const ordered = (po.items || []).reduce((a, it) => a + Number(it.qty || 0), 0);
                 const received = (po.items || []).reduce((a, it) => a + Number(it.receivedQty || 0), 0);
                 const pct = ordered > 0 ? Math.min((received / ordered) * 100, 100) : 0;
@@ -156,14 +201,14 @@ const PurchaseOrder = () => {
                     </td>
                     <td className="py-3 pr-4 font-mono whitespace-nowrap">{formatRp(po.total)}</td>
                     <td className="py-3 pr-4"><span className="text-xs px-2.5 py-1 rounded-full font-medium whitespace-nowrap" style={{ background: `${color}22`, color }}>{po.status}</span></td>
-                    {(canManageMasterData || canInbound) && <td className="py-3 pr-4"><div className="flex flex-wrap gap-2">{canInbound && !['Selesai', 'Dibatalkan', 'Diterima Sebagian · Sisa Dibatalkan'].includes(po.status) && <button onClick={() => navigate('/catat?mode=masuk')} className="text-xs px-3 py-2 rounded-lg border border-[#2563eb] text-[#60a5fa] hover:bg-[#2563eb]/10">Tambah Kendaraan</button>}{canInbound && <button onClick={() => navigate('/penerimaan')} className="text-xs px-3 py-2 rounded-lg border border-[#294263] text-[#93c5fd] hover:bg-[#2563eb]/10">Kelola Bongkar</button>}{canManageMasterData && !['Selesai', 'Dibatalkan', 'Diterima Sebagian · Sisa Dibatalkan'].includes(po.status) && <button onClick={() => cancelRemaining(po)} className="text-xs px-3 py-2 rounded-lg border border-[#ef4444] text-[#f87171] hover:bg-[#ef4444]/10">Batalkan Sisa</button>}</div></td>}
+                    {(canManageMasterData || canInbound) && <td className="py-3 pr-4"><div className="flex flex-wrap gap-2">{canInbound && !['Selesai', 'Dibatalkan', 'Diterima Sebagian · Sisa Dibatalkan'].includes(po.status) && <button onClick={() => navigate('/catat?mode=masuk')} className="text-xs px-3 py-2 rounded-lg border border-[#2563eb] text-[#60a5fa] hover:bg-[#2563eb]/10">Tambah Kendaraan</button>}{canInbound && <button onClick={() => navigate('/penerimaan')} className="text-xs px-3 py-2 rounded-lg border border-[#294263] text-[#93c5fd] hover:bg-[#2563eb]/10">Kelola Bongkar</button>}{canInbound && received > 0 && <button disabled={downloadingId === po.id} onClick={() => downloadReceivingRecap(po)} className="inline-flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg border border-[#22c55e]/60 text-[#4ade80] hover:bg-[#22c55e]/10 disabled:opacity-50"><FileDown size={13} /> {downloadingId === po.id ? 'Menyiapkan...' : 'Download PDF'}</button>}{canManageMasterData && !['Selesai', 'Dibatalkan', 'Diterima Sebagian · Sisa Dibatalkan'].includes(po.status) && <button onClick={() => cancelRemaining(po)} className="text-xs px-3 py-2 rounded-lg border border-[#ef4444] text-[#f87171] hover:bg-[#ef4444]/10">Batalkan Sisa</button>}</div></td>}
                   </tr>
                 );
               })}
             </tbody>
           </table>
         </div>
-        <PaginationControls page={page} totalItems={purchaseOrders.length} pageSize={pageSize} onChange={setPage} label="purchase order" />
+        <PaginationControls page={page} totalItems={filteredPurchaseOrders.length} pageSize={pageSize} onChange={setPage} label="purchase order" />
       </div>
 
       {modal && createPortal(
