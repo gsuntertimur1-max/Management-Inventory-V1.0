@@ -25,6 +25,8 @@ from backend.inventory_flow import (
     _unloading_user_key,
     is_rice_50kg_product,
     receive_stock,
+    historical_backdate_min_date,
+    historical_backdate_label,
 )
 from backend.correction_receipts import enrich_receipt_result
 from backend.stack_lots import record_receipt_lots
@@ -272,9 +274,11 @@ async def start_inbound_load(
             started = started.astimezone(now.tzinfo)
         if started > now:
             raise HTTPException(status_code=400, detail="Waktu mulai aktual tidak boleh berada di masa depan")
-        days_back = (now.date() - started.date()).days
-        if days_back < 0 or days_back > 7:
-            raise HTTPException(status_code=400, detail="Backdate waktu mulai bongkar hanya diizinkan maksimal 7 hari ke belakang")
+        if started.date() < historical_backdate_min_date(now, user):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Backdate waktu mulai bongkar hanya diizinkan maksimal {historical_backdate_label(user)} ke belakang",
+            )
     else:
         started = now
 
@@ -436,8 +440,11 @@ async def complete_inbound_load(load_id: str, body: InboundLoadComplete, user: d
                 raise HTTPException(status_code=400, detail="Waktu selesai aktual tidak boleh lebih awal dari waktu mulai bongkar")
             if completed_at.date() != started_at.date():
                 raise HTTPException(status_code=400, detail="Untuk penerimaan historis, waktu mulai dan selesai harus pada tanggal operasional yang sama")
-            if (current_now.date() - completed_at.date()).days > 7:
-                raise HTTPException(status_code=400, detail="Penerimaan historis hanya dapat dicatat maksimal 7 hari ke belakang")
+            if completed_at.date() < historical_backdate_min_date(current_now, user):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Penerimaan historis hanya dapat dicatat maksimal {historical_backdate_label(user)} ke belakang",
+                )
         else:
             if historical_start:
                 raise HTTPException(status_code=400, detail="Isi waktu selesai aktual untuk penerimaan yang dimulai pada tanggal sebelumnya")
