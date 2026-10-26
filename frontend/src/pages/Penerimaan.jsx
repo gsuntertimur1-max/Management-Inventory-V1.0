@@ -100,6 +100,8 @@ const Penerimaan = () => {
     [loads],
   );
   const canBackdateStart = ['Administrator', 'Superadmin', 'Supervisor', 'Admin', 'Admin Operasional'].includes(String(user?.role || ''));
+  const isSuperadmin = String(user?.role || '').trim().toLowerCase() === 'superadmin';
+  const backdateLimitLabel = isSuperadmin ? '3 bulan' : '7 hari';
   const historyPageSize = 10;
   const paginatedHistory = history.slice((historyPage - 1) * historyPageSize, historyPage * historyPageSize);
 
@@ -452,7 +454,7 @@ const Penerimaan = () => {
         <button type="button" onClick={() => setStartModal({ ...startModal, useActualTime: true })} className={`rounded-lg border px-3 py-2.5 text-xs font-semibold ${startModal.useActualTime ? 'border-[#b45309] bg-[#78350f]/15 text-[#fbbf24]' : 'border-[#374151] text-[#cbd5e1]'}`}>Waktu Aktual / Backdate</button>
       </div>
       {startModal.useActualTime ? <div className="space-y-3 mt-4">
-        <div className="rounded-lg border border-[#b45309]/60 bg-[#78350f]/10 px-3 py-2 text-xs text-[#fbbf24]">Gunakan hanya bila pekerjaan memang sudah dimulai lebih awal tetapi terlambat dicatat. Backdate dapat digunakan maksimal 7 hari ke belakang dan seluruh perubahan disimpan dalam audit.</div>
+        <div className="rounded-lg border border-[#b45309]/60 bg-[#78350f]/10 px-3 py-2 text-xs text-[#fbbf24]">{`Gunakan hanya bila pekerjaan memang sudah dimulai lebih awal tetapi terlambat dicatat. Backdate dapat digunakan maksimal ${backdateLimitLabel} ke belakang dan seluruh perubahan disimpan dalam audit.`}</div>
         <div><label className="text-xs text-[#8b93a1] block mb-1.5">Waktu mulai aktual</label><input type="datetime-local" value={startModal.actualStartAt} onChange={(e) => setStartModal({ ...startModal, actualStartAt: e.target.value })} className="w-full bg-[#0b0f17] border border-[#7c5a1f] rounded-lg px-3 py-2.5 text-sm"/></div>
         <div><label className="text-xs text-[#8b93a1] block mb-1.5">Alasan koreksi waktu</label><textarea rows={3} value={startModal.reason} onChange={(e) => setStartModal({ ...startModal, reason: e.target.value })} placeholder="Contoh: bongkar aktual mulai pukul 14.00, terlambat dicatat di PEPEG" className="w-full bg-[#0b0f17] border border-[#7c5a1f] rounded-lg px-3 py-2.5 text-sm"/></div>
       </div> : <div className="mt-4 rounded-lg border border-[#243044] bg-[#0a0f17] px-3 py-2 text-xs text-[#8b93a1]">PEPEG akan memakai waktu saat tombol konfirmasi ditekan.</div>}
