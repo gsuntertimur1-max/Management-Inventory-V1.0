@@ -106,6 +106,28 @@ def _unloading_user_key(user: dict) -> str:
     return str(user.get("id") or user.get("username") or user.get("name") or "").strip()
 
 
+def historical_backdate_min_date(now: datetime, user: dict):
+    """Superadmin: 3 bulan kalender. Admin Operasional: tetap 7 hari."""
+    if canonical_role(user.get("role")) != ROLE_SUPERADMIN:
+        return now.date() - timedelta(days=7)
+
+    year = now.year
+    month = now.month - 3
+    while month <= 0:
+        month += 12
+        year -= 1
+    if month == 12:
+        next_month = datetime(year + 1, 1, 1, tzinfo=now.tzinfo)
+    else:
+        next_month = datetime(year, month + 1, 1, tzinfo=now.tzinfo)
+    last_day = (next_month - timedelta(days=1)).day
+    return now.date().replace(year=year, month=month, day=min(now.day, last_day))
+
+
+def historical_backdate_label(user: dict) -> str:
+    return "3 bulan" if canonical_role(user.get("role")) == ROLE_SUPERADMIN else "7 hari"
+
+
 @router.post("/unloading-sessions/start")
 async def start_unloading_session(user: dict = Depends(require_write)):
     user_key = _unloading_user_key(user)
@@ -622,8 +644,11 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
             parsed_operational = parsed_operational.astimezone(current_now.tzinfo)
         if parsed_operational > current_now:
             raise HTTPException(status_code=400, detail="Waktu operasional historis tidak boleh berada di masa depan")
-        if (current_now.date() - parsed_operational.date()).days > 7:
-            raise HTTPException(status_code=400, detail="Penerimaan historis hanya dapat dicatat maksimal 7 hari ke belakang")
+        if parsed_operational.date() < historical_backdate_min_date(current_now, user):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Penerimaan historis hanya dapat dicatat maksimal {historical_backdate_label(user)} ke belakang",
+            )
         op_now = parsed_operational
     unloading_session = None
     if body.unloadingSessionId.strip():
