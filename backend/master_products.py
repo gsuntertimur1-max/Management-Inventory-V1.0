@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from backend.server import db, new_id, require_master_write
+from backend.server import db, new_id, now_iso, require_master_write
 
 router = APIRouter(prefix="/api")
 
@@ -113,25 +113,91 @@ async def update_master_product(product_id: str, body: MasterProductBody, user: 
     current = await db.products.find_one({"id": product_id}, {"_id": 0})
     if not current:
         raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
-    has_allocations = await db.stack_allocations.find_one({"productId": product_id})
     if master["channel"] != (current.get("channel") or "KOM").upper() and (float(current.get("stock", 0) or 0) > 0 or float(current.get("damaged", 0) or 0) > 0):
         raise HTTPException(status_code=400, detail="Saluran default tidak dapat diubah selama masih ada saldo stok. Gunakan koreksi transaksi bila diperlukan.")
+
     packaging_changed = (
         float(current.get("secondaryQty", 0) or 0) != float(master.get("secondaryQty", 0) or 0)
         or str(current.get("secondary", "") or "").strip() != master.get("secondary", "")
     )
-    if has_allocations and packaging_changed:
-        raise HTTPException(
-            status_code=400,
-            detail="Kemasan sekunder tidak dapat diubah selama produk masih dialokasikan pada tumpukan",
-        )
+    allocations = []
+    if packaging_changed:
+        allocations = await db.stack_allocations.find({"productId": product_id}, {"_id": 0}).to_list(5000)
+        if allocations and (float(master.get("secondaryQty", 0) or 0) <= 0 or not str(master.get("secondary") or "").strip()):
+            raise HTTPException(
+                status_code=400,
+                detail="Produk yang masih berada di tumpukan wajib memiliki kemasan sekunder dan isi per kemasan lebih dari 0",
+            )
+
     duplicate = await db.products.find_one({"sku": master["sku"], "id": {"$ne": product_id}})
     if duplicate:
         raise HTTPException(status_code=409, detail="SKU sudah digunakan")
 
-    result = await db.products.update_one({"id": product_id}, {"$set": master})
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
+    timestamp = now_iso()
+    updated_allocations = []
+    audit_id = ""
+    try:
+        result = await db.products.update_one({"id": product_id}, {"$set": master})
+        if result.matched_count == 0:
+            raise HTTPException(status_code=404, detail="Produk tidak ditemukan")
+
+        if packaging_changed and allocations:
+            per_secondary = float(master.get("secondaryQty", 0) or 0)
+            secondary_name = str(master.get("secondary") or "").strip()
+            for allocation in allocations:
+                primary_qty = float(allocation.get("primaryQty", 0) or 0)
+                secondary_count = int(primary_qty // per_secondary)
+                primary_remainder = primary_qty - (secondary_count * per_secondary)
+                changes = {
+                    "secondary": secondary_name,
+                    "secondaryQty": per_secondary,
+                    "secondaryCount": secondary_count,
+                    "primaryRemainder": primary_remainder,
+                    "length": 0,
+                    "width": 0,
+                    "height": 0,
+                    "arrangements": [],
+                    "extraSecondary": 0,
+                    "extraPrimary": primary_remainder,
+                    "arrangementAdjusted": True,
+                    "updatedAt": timestamp,
+                    "packagingConversionUpdatedAt": timestamp,
+                    "packagingConversionUpdatedBy": user.get("name", ""),
+                }
+                allocation_result = await db.stack_allocations.update_one({"id": allocation["id"]}, {"$set": changes})
+                if allocation_result.matched_count == 0:
+                    raise RuntimeError("Alokasi tumpukan berubah saat konversi kemasan")
+                updated_allocations.append(allocation)
+
+            audit_id = new_id()
+            await db.transactions.insert_one({
+                "id": audit_id,
+                "operation_id": audit_id,
+                "time": timestamp,
+                "ref": master.get("sku", ""),
+                "type": "KOREKSI",
+                "kondisi": "MASTER",
+                "document_type": "KOREKSI_KONVERSI_KEMASAN",
+                "product": master.get("name", ""),
+                "product_id": product_id,
+                "change": 0,
+                "unit": master.get("unit", ""),
+                "operator": user.get("name", ""),
+                "old_secondary": str(current.get("secondary") or ""),
+                "old_secondary_qty": float(current.get("secondaryQty", 0) or 0),
+                "new_secondary": master.get("secondary", ""),
+                "new_secondary_qty": float(master.get("secondaryQty", 0) or 0),
+                "affected_stack_ids": [row.get("id") for row in allocations if row.get("id")],
+                "keterangan": "Konversi kemasan diubah; stok primer tetap dan representasi dus/karung pada tumpukan dihitung ulang.",
+            })
+    except Exception:
+        if audit_id:
+            await db.transactions.delete_one({"id": audit_id})
+        for allocation in updated_allocations:
+            await db.stack_allocations.replace_one({"id": allocation["id"]}, allocation, upsert=True)
+        await db.products.replace_one({"id": product_id}, current, upsert=True)
+        raise
+
     return await db.products.find_one({"id": product_id}, {"_id": 0})
 
 
