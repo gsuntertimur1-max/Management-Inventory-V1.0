@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Save, Building2, Bell, Palette, Database, Plus, Trash2, Warehouse, Link2, MapPin, CalendarDays } from 'lucide-react';
+import { Save, Building2, Bell, Palette, Database, Plus, Trash2, Warehouse, Link2, MapPin, CalendarDays, Upload } from 'lucide-react';
 import { DEFAULT_CATEGORIES } from '../mock';
 import { useData } from '../context/DataContext';
 import api, { apiError } from '../lib/api';
@@ -43,6 +43,10 @@ const Pengaturan = () => {
   const [warehouses, setWarehouses] = useState(warehousesFromSettings(settings?.warehouses));
   const [locations, setLocations] = useState(settings?.locations || DEFAULT_LOCATIONS);
   const [holidays, setHolidays] = useState(settings?.holidays || []);
+  const [signatureAvailable, setSignatureAvailable] = useState(Boolean(settings?.warehouseHeadSignatureAvailable));
+  const [signaturePreview, setSignaturePreview] = useState('');
+  const [signatureRevision, setSignatureRevision] = useState(0);
+  const [uploadingSignature, setUploadingSignature] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const [savingCategories, setSavingCategories] = useState(false);
   const [savingToggle, setSavingToggle] = useState('');
@@ -59,7 +63,65 @@ const Pengaturan = () => {
     setWarehouses(warehousesFromSettings(settings?.warehouses));
     setLocations(settings?.locations || DEFAULT_LOCATIONS);
     setHolidays(settings?.holidays || []);
-  }, [settings?.warehouse, settings?.address, settings?.warehouseHead, settings?.categories, settings?.warehouses, settings?.locations, settings?.holidays]);
+    setSignatureAvailable(Boolean(settings?.warehouseHeadSignatureAvailable));
+  }, [settings?.warehouse, settings?.address, settings?.warehouseHead, settings?.categories, settings?.warehouses, settings?.locations, settings?.holidays, settings?.warehouseHeadSignatureAvailable]);
+
+  useEffect(() => {
+    let active = true;
+    let objectUrl = '';
+    if (!signatureAvailable) {
+      setSignaturePreview('');
+      return undefined;
+    }
+    api.get('/settings/warehouse-head-signature', { responseType: 'blob' })
+      .then(({ data }) => {
+        if (!active) return;
+        objectUrl = URL.createObjectURL(data);
+        setSignaturePreview(objectUrl);
+      })
+      .catch(() => { if (active) setSignaturePreview(''); });
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [signatureAvailable, signatureRevision]);
+
+  const uploadWarehouseHeadSignature = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    if (!['image/png', 'image/jpeg'].includes(file.type)) return toast.error('Tanda tangan harus berformat PNG atau JPG/JPEG');
+    if (file.size > 1500000) return toast.error('Ukuran tanda tangan maksimal 1,5 MB');
+    setUploadingSignature(true);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      await api.post('/settings/warehouse-head-signature', form);
+      setSignatureAvailable(true);
+      setSignatureRevision((value) => value + 1);
+      toast.success('Tanda tangan Kepala Gudang tersimpan');
+    } catch (e) {
+      toast.error(apiError(e));
+    } finally {
+      setUploadingSignature(false);
+    }
+  };
+
+  const deleteWarehouseHeadSignature = async () => {
+    if (uploadingSignature || !signatureAvailable) return;
+    if (!window.confirm('Hapus tanda tangan Kepala Gudang? Dokumen berikutnya akan mencetak area tanda tangan kosong.')) return;
+    setUploadingSignature(true);
+    try {
+      await api.delete('/settings/warehouse-head-signature');
+      setSignatureAvailable(false);
+      setSignaturePreview('');
+      toast.success('Tanda tangan Kepala Gudang dihapus');
+    } catch (e) {
+      toast.error(apiError(e));
+    } finally {
+      setUploadingSignature(false);
+    }
+  };
 
   const payload = (override = {}) => ({
     warehouse: settings?.warehouse || 'Gudang Sunter Timur I & II',
@@ -265,6 +327,22 @@ const Pengaturan = () => {
                 placeholder="Nama kepala gudang"
                 className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#2563eb] disabled:opacity-60"
               />
+            </div>
+            <div>
+              <label className="text-xs font-medium mb-1.5 block text-[#8b93a1]">Tanda Tangan Kepala Gudang</label>
+              <div className="rounded-xl border border-[#242f3d] bg-white p-3 min-h-[112px] flex items-center justify-center">
+                {signaturePreview
+                  ? <img src={signaturePreview} alt="Tanda tangan Kepala Gudang" className="max-h-24 max-w-full object-contain" />
+                  : <div className="text-xs text-[#6b7280] text-center">Belum ada tanda tangan<br/>Dokumen akan mencetak ruang tanda tangan kosong.</div>}
+              </div>
+              <div className="flex flex-wrap gap-2 mt-2">
+                {isAdmin && <label className={"inline-flex items-center gap-2 rounded-lg border border-[#2563eb] px-3 py-2 text-xs font-semibold text-[#60a5fa] hover:bg-[#2563eb]/10 " + (uploadingSignature ? "opacity-50 pointer-events-none" : "cursor-pointer")}>
+                  <Upload size={14} /> {uploadingSignature ? 'Mengunggah…' : signatureAvailable ? 'Ganti Tanda Tangan' : 'Upload Tanda Tangan'}
+                  <input type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg" className="hidden" disabled={uploadingSignature} onChange={uploadWarehouseHeadSignature} />
+                </label>}
+                {isAdmin && signatureAvailable && <button type="button" disabled={uploadingSignature} onClick={deleteWarehouseHeadSignature} className="inline-flex items-center gap-2 rounded-lg border border-[#ef4444]/60 px-3 py-2 text-xs font-semibold text-[#f87171] hover:bg-[#ef4444]/10 disabled:opacity-50"><Trash2 size={14} /> Hapus</button>}
+              </div>
+              <p className="mt-2 text-[10px] leading-relaxed text-[#6b7688]">PNG/JPG maksimal 1,5 MB. Tanda tangan otomatis dipakai pada Surat Jalan dan dokumen PDF yang memiliki kolom Kepala Gudang. Jika tidak diunggah, gambar tanda tangan dibiarkan kosong.</p>
             </div>
             {isAdmin && (
               <button
