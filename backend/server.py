@@ -878,7 +878,63 @@ async def get_settings(user: dict = Depends(get_current_user)):
         if cleaned and cleaned.lower() not in names:
             result["categories"].append({"name": cleaned, "color": "#64748b", "active": True})
             names.add(cleaned.lower())
+    result["warehouseHeadSignatureAvailable"] = bool(
+        await db.document_assets.find_one({"_id": "warehouse_head_signature"}, {"_id": 1})
+    )
     return result
+
+
+@api_router.get("/settings/warehouse-head-signature")
+async def get_warehouse_head_signature(user: dict = Depends(get_current_user)):
+    asset = await db.document_assets.find_one({"_id": "warehouse_head_signature"})
+    if not asset or not asset.get("data"):
+        raise HTTPException(status_code=404, detail="Tanda tangan Kepala Gudang belum diunggah")
+    return Response(
+        content=bytes(asset["data"]),
+        media_type=str(asset.get("contentType") or "image/png"),
+        headers={"Cache-Control": "private, max-age=300"},
+    )
+
+
+@api_router.post("/settings/warehouse-head-signature")
+async def upload_warehouse_head_signature(
+    file: UploadFile = File(...),
+    admin: dict = Depends(require_admin),
+):
+    content_type = str(file.content_type or "").lower()
+    if content_type not in {"image/png", "image/jpeg", "image/jpg"}:
+        raise HTTPException(status_code=400, detail="Tanda tangan harus berformat PNG atau JPG/JPEG")
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="File tanda tangan kosong")
+    if len(data) > 1_500_000:
+        raise HTTPException(status_code=400, detail="Ukuran tanda tangan maksimal 1,5 MB")
+
+    is_png = data.startswith(b"\x89PNG\r\n\x1a\n")
+    is_jpeg = data.startswith(b"\xff\xd8\xff")
+    if not (is_png or is_jpeg):
+        raise HTTPException(status_code=400, detail="Isi file bukan gambar PNG/JPG yang valid")
+
+    stored_type = "image/png" if is_png else "image/jpeg"
+    await db.document_assets.update_one(
+        {"_id": "warehouse_head_signature"},
+        {"$set": {
+            "data": data,
+            "contentType": stored_type,
+            "filename": str(file.filename or "tanda-tangan-kepala-gudang"),
+            "updatedAt": now_iso(),
+            "updatedBy": admin.get("name", ""),
+        }},
+        upsert=True,
+    )
+    return {"ok": True, "available": True, "contentType": stored_type}
+
+
+@api_router.delete("/settings/warehouse-head-signature")
+async def delete_warehouse_head_signature(admin: dict = Depends(require_admin)):
+    await db.document_assets.delete_one({"_id": "warehouse_head_signature"})
+    return {"ok": True, "available": False}
 
 
 @api_router.put("/settings")
