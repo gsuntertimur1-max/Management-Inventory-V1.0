@@ -1046,7 +1046,11 @@ async def update_settings(body: SettingsBody, admin: dict = Depends(require_admi
     payload["updated_at"] = now_iso()
     payload["updated_by"] = admin["name"]
     await db.settings.update_one({"_id": "app"}, {"$set": payload}, upsert=True)
-    return {**DEFAULT_SETTINGS, **payload}
+    result = {**DEFAULT_SETTINGS, **payload}
+    result["warehouseHeadSignatureAvailable"] = bool(
+        await db.document_assets.find_one({"_id": "warehouse_head_signature"}, {"_id": 1})
+    )
+    return result
 
 
 # ---------- users (admin) ----------
