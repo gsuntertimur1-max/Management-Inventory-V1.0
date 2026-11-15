@@ -12,7 +12,8 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
 from reportlab.pdfbase.pdfmetrics import stringWidth
-from reportlab.platypus import LongTable, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.lib.utils import ImageReader
+from reportlab.platypus import Image as RLImage, LongTable, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from backend.server import JAKARTA_TZ, db, get_current_user, operational_now
 from backend.consignment import DESTINATIONS, consignment_stock, _ensure_destination_access, normalize_consignment_stack_code, _layout_primary_qty
@@ -35,6 +36,86 @@ def _pdf_response(buffer: io.BytesIO, filename: str) -> StreamingResponse:
             "Expires": "0",
         },
     )
+
+
+async def _warehouse_head_signature_data() -> bytes:
+    asset = await db.document_assets.find_one({"_id": "warehouse_head_signature"}, {"data": 1})
+    if not asset or not asset.get("data"):
+        return b""
+    return bytes(asset["data"])
+
+
+def _signature_flowable(data: bytes, max_width: float = 36 * mm, max_height: float = 18 * mm):
+    if not data:
+        return Spacer(1, max_height)
+    try:
+        reader = ImageReader(io.BytesIO(data))
+        image_width, image_height = reader.getSize()
+        if not image_width or not image_height:
+            return Spacer(1, max_height)
+        scale = min(max_width / image_width, max_height / image_height)
+        return RLImage(io.BytesIO(data), width=image_width * scale, height=image_height * scale)
+    except Exception:
+        return Spacer(1, max_height)
+
+
+def _warehouse_signature_block(
+    warehouse_head: str,
+    signature_data: bytes,
+    base_style,
+    style_name: str,
+    role_text: str = "Kepala Gudang Sunter Timur I & II",
+    date_text: str | None = None,
+    width: float = 65 * mm,
+):
+    date_value = date_text or f"Jakarta, {_date(operational_now().isoformat())}"
+    style = ParagraphStyle(style_name, parent=base_style, alignment=TA_CENTER, fontSize=8, leading=10)
+    block = Table([
+        [Paragraph(escape(str(date_value)), style)],
+        [Paragraph(escape(str(role_text)).replace("\n", "<br/>"), style)],
+        [_signature_flowable(signature_data)],
+        [Paragraph(f"<b>{escape(str(warehouse_head))}</b>", style)],
+    ], colWidths=[width])
+    block.setStyle(TableStyle([
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 1),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+    ]))
+    return block
+
+
+def _draw_signature_image(
+    canvas_obj: canvas.Canvas,
+    signature_data: bytes,
+    center_x: float,
+    bottom_y: float,
+    max_width: float = 30 * mm,
+    max_height: float = 14 * mm,
+) -> None:
+    if not signature_data:
+        return
+    try:
+        reader = ImageReader(io.BytesIO(signature_data))
+        image_width, image_height = reader.getSize()
+        if not image_width or not image_height:
+            return
+        scale = min(max_width / image_width, max_height / image_height)
+        width = image_width * scale
+        height = image_height * scale
+        canvas_obj.drawImage(
+            reader,
+            center_x - width / 2,
+            bottom_y,
+            width=width,
+            height=height,
+            preserveAspectRatio=True,
+            mask="auto",
+        )
+    except Exception:
+        return
 
 
 def _num(value) -> str:
@@ -100,6 +181,7 @@ async def export_purchase_order_receiving_recap_pdf(po_id: str, user: dict = Dep
     settings = await db.settings.find_one({"_id": "app"}, {"_id": 0}) or {}
     warehouse = settings.get("warehouse") or "Gudang Sunter Timur I & II"
     warehouse_head = settings.get("warehouseHead") or "Irsa Maulian Nugraha"
+    signature_data = await _warehouse_head_signature_data()
 
     po_items = {str(item.get("productId") or ""): item for item in (po.get("items") or [])}
     product_names = []
@@ -356,12 +438,18 @@ async def export_purchase_order_receiving_recap_pdf(po_id: str, user: dict = Dep
 
     story.extend([
         Spacer(1, 10 * mm),
-        Table([
-            ["", Paragraph(f"Jakarta, {operational_now().strftime('%d %B %Y')}", ParagraphStyle("sig-date", parent=meta_value, alignment=TA_CENTER))],
-            ["", Paragraph("Kepala Gudang<br/>Gudang Sunter Timur I &amp; II", ParagraphStyle("sig-role", parent=meta_value, alignment=TA_CENTER, leading=10))],
-            ["", Spacer(1, 18 * mm)],
-            ["", Paragraph(f"<b>{escape(str(warehouse_head))}</b>", ParagraphStyle("sig-name", parent=meta_value, alignment=TA_CENTER))],
-        ], colWidths=[145 * mm, 100 * mm]),
+        Table([[
+            "",
+            _warehouse_signature_block(
+                warehouse_head,
+                signature_data,
+                meta_value,
+                "po-recap-sign",
+                role_text="Kepala Gudang\nGudang Sunter Timur I & II",
+                date_text=f"Jakarta, {operational_now().strftime('%d %B %Y')}",
+                width=100 * mm,
+            ),
+        ]], colWidths=[145 * mm, 100 * mm]),
     ])
 
     def footer(canvas_obj, doc_obj):
@@ -425,7 +513,7 @@ async def export_consignment_stock_card_pdf(destination: str, user: dict = Depen
         after = entry.get("after", {})
         product = next((item for item in items if item.get("productId") == entry.get("productId")), {})
         history_data.append([_date(entry.get("time"), True), product.get("name", entry.get("productId", "")), _consignment_arrangement(after, product), entry.get("note", ""), entry.get("operator", "")])
-    story += [LongTable(history_data, colWidths=[34 * mm, 66 * mm, 86 * mm, 45 * mm, 38 * mm], repeatRows=1, style=[("BACKGROUND", (0, 0), (-1, 0), SOFT_HEADER), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 7), ("GRID", (0, 0), (-1, -1), .35, colors.grey), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]), Spacer(1, 10 * mm), Table([["", Paragraph(f"Jakarta, {_date(operational_now().isoformat())}<br/><br/>Kepala Gudang Sunter Timur I &amp; II<br/><br/><br/><b>{warehouse_head}</b>", ParagraphStyle("cons-sign", parent=small, alignment=TA_CENTER, fontSize=8, leading=14))]], colWidths=[190 * mm, 65 * mm])]
+    story += [LongTable(history_data, colWidths=[34 * mm, 66 * mm, 86 * mm, 45 * mm, 38 * mm], repeatRows=1, style=[("BACKGROUND", (0, 0), (-1, 0), SOFT_HEADER), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 7), ("GRID", (0, 0), (-1, -1), .35, colors.grey), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]), Spacer(1, 10 * mm), Table([["", _warehouse_signature_block(warehouse_head, signature_data, small, "cons-sign")]], colWidths=[190 * mm, 65 * mm])]
     doc.build(story, onFirstPage=_stack_page, onLaterPages=_stack_page)
     return _pdf_response(buffer, f"kartu_stok_konsinyasi_{short_location.lower()}.pdf")
 
@@ -510,10 +598,7 @@ async def export_consignment_stack_card_pdf(stackCode: str, user: dict = Depends
     story += [
         table,
         Spacer(1, 10 * mm),
-        Table([["", Paragraph(
-            f"Jakarta, {_date(operational_now().isoformat())}<br/><br/>Kepala Gudang Sunter Timur I &amp; II<br/><br/><br/><b>{warehouse_head}</b>",
-            ParagraphStyle("cons-stack-sign", parent=small, alignment=TA_CENTER, fontSize=8, leading=14),
-        )]], colWidths=[190 * mm, 65 * mm]),
+        Table([["", _warehouse_signature_block(warehouse_head, signature_data, small, "cons-stack-sign")]], colWidths=[190 * mm, 65 * mm]),
         PageBreak(),
         Paragraph("RIWAYAT PERUBAHAN SUSUNAN", title),
     ]
@@ -614,7 +699,7 @@ async def export_warehouse_stack_cards_pdf(warehouse: str, user: dict = Depends(
             data.append([Paragraph(str(value),center if col in {0,1,2,4,5,6,7} else small) for col,value in enumerate(row)])
         table=LongTable(data,colWidths=[8*mm,20*mm,25*mm,58*mm,20*mm,18*mm,24*mm,24*mm,42*mm,57*mm],repeatRows=1)
         table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),SOFT_HEADER),("TEXTCOLOR",(0,0),(-1,0),colors.white),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),("GRID",(0,0),(-1,-1),.35,colors.HexColor("#777777")),("VALIGN",(0,0),(-1,-1),"MIDDLE"),("TOPPADDING",(0,0),(-1,-1),5),("BOTTOMPADDING",(0,0),(-1,-1),5)]))
-        story += [table, Spacer(1,10*mm), Table([["",Paragraph(f"Jakarta, {_date(operational_now().isoformat())}<br/><br/>Kepala Gudang Sunter Timur I &amp; II<br/><br/><br/><b>{warehouse_head}</b>",ParagraphStyle("warehouse-card-sign",parent=small,alignment=TA_CENTER,fontSize=8,leading=14))]],colWidths=[190*mm,65*mm])]
+        story += [table, Spacer(1,10*mm), Table([["", _warehouse_signature_block(warehouse_head, signature_data, small, "warehouse-card-sign")]], colWidths=[190 * mm, 65 * mm])]
         if card_index < len(cards)-1: story.append(PageBreak())
     doc.build(story,onFirstPage=_stack_page,onLaterPages=_stack_page)
     return _pdf_response(buffer,f"kartu_tumpukan_{warehouse_code}.pdf")
@@ -650,7 +735,7 @@ async def export_stack_card_pdf(stackCode: str, user: dict = Depends(get_current
     widths = [8, 18, 15, 20, 22, 50, 18, 16, 22, 22, 31, 52]
     table = LongTable(data, colWidths=[x * mm for x in widths], repeatRows=1)
     table.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), SOFT_HEADER), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("GRID", (0, 0), (-1, -1), .35, colors.HexColor("#777777")), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5)]))
-    story += [table, Spacer(1, 10 * mm), Table([["", Paragraph(f"Jakarta, {_date(operational_now().isoformat())}<br/><br/>Kepala Gudang Sunter Timur I &amp; II<br/><br/><br/><b>{warehouse_head}</b>", ParagraphStyle("sign", parent=small, alignment=TA_CENTER, fontSize=8, leading=14))]], colWidths=[190 * mm, 65 * mm])]
+    story += [table, Spacer(1, 10 * mm), Table([["", _warehouse_signature_block(warehouse_head, signature_data, small, "sign")]], colWidths=[190 * mm, 65 * mm])]
     story += [PageBreak(), Paragraph("RIWAYAT PERUBAHAN SUSUNAN", title)]
     hdata = [[Paragraph(escape(x), center) for x in ["WAKTU", "AKSI", "PRODUK", "PERHITUNGAN", "JUMLAH PRIMER", "PETUGAS"]]]
     for entry in history:
@@ -677,7 +762,7 @@ def _stack_page(c: canvas.Canvas, doc):
     c.restoreState()
 
 
-def _draw_sj_copy(c: canvas.Canvas, sj: dict, x: float, y: float, width: float, warehouse_head: str):
+def _draw_sj_copy(c: canvas.Canvas, sj: dict, x: float, y: float, width: float, warehouse_head: str, signature_data: bytes = b""):
     pad = 4 * mm; left = x + pad; right = x + width - pad
     if LOGO.exists(): c.drawImage(str(LOGO), left, y - 17 * mm, width=28 * mm, height=13 * mm, preserveAspectRatio=True, mask="auto")
     c.setFillColor(colors.HexColor("#244B63")); c.setFont("Helvetica-Bold", 7); c.drawString(left + 31 * mm, y - 20 * mm, "09001 - KANWIL DKI JAKARTA BANTEN")
@@ -701,7 +786,7 @@ def _draw_sj_copy(c: canvas.Canvas, sj: dict, x: float, y: float, width: float, 
             c.setFillColor(colors.HexColor("#F3F7F9")); c.rect(left, cy-5*mm, right-left, 5*mm, fill=1, stroke=1); c.setFillColor(colors.HexColor("#244B63")); c.setFont("Helvetica-Bold", 6.5); c.drawString(left+2*mm, cy-3.3*mm, f"Dokumen: {item_doc}"); c.setFillColor(colors.black); cy -= 5*mm; current_doc = item_doc
         c.rect(left, cy-row_h, right-left, row_h); c.setFont("Helvetica-Bold", 6.5); c.drawString(left+2*mm, cy-4*mm, str(item.get("name", ""))[:54]); c.setFont("Helvetica", 5.8); c.drawString(left+2*mm, cy-8*mm, f"SKU {item.get('sku','')} | Lokasi {item.get('location','-')}"); c.setFont("Helvetica-Bold", 7); c.drawRightString(right-2*mm, cy-5*mm, f"{_num(item.get('qty'))} {item.get('unit','')} | {_num(item.get('berat'))} {item.get('measureUnit','kg')}"); c.drawRightString(right-2*mm, cy-10*mm, item.get("sec", "")); cy -= row_h
     box("Nopol / Nama Sopir", f"{sj.get('polisi', '-')} / {sj.get('pengambil', '-')}", 10*mm, 35*mm)
-    c.setFont("Helvetica", 7); c.drawCentredString(left+45*mm, cy-3*mm, "Pengangkut"); c.drawCentredString(right-45*mm, cy-3*mm, "Yang Menyerahkan,"); c.setFont("Helvetica-Bold", 6.5); c.drawCentredString(left+45*mm, cy-8*mm, sj.get("pengambil", "") or "-"); c.drawCentredString(right-45*mm, cy-8*mm, "KOMPLEKS GUDANG SUNTER TIMUR I & II"); c.line(left+25*mm, cy-28*mm, left+65*mm, cy-28*mm); c.drawCentredString(right-45*mm, cy-28*mm, warehouse_head)
+    c.setFont("Helvetica", 7); c.drawCentredString(left+45*mm, cy-3*mm, "Pengangkut"); c.drawCentredString(right-45*mm, cy-3*mm, "Yang Menyerahkan,"); c.setFont("Helvetica-Bold", 6.5); c.drawCentredString(left+45*mm, cy-8*mm, sj.get("pengambil", "") or "-"); c.drawCentredString(right-45*mm, cy-8*mm, "KOMPLEKS GUDANG SUNTER TIMUR I & II"); _draw_signature_image(c, signature_data, right-45*mm, cy-25*mm, 28*mm, 13*mm); c.line(left+25*mm, cy-28*mm, left+65*mm, cy-28*mm); c.drawCentredString(right-45*mm, cy-28*mm, warehouse_head)
     footer_y = 18 * mm; c.setStrokeColor(colors.HexColor("#527D96")); c.line(left, footer_y + 11*mm, right, footer_y + 11*mm); c.setFillColor(colors.HexColor("#244B63")); c.setFont("Helvetica-Bold", 8); c.drawString(left, footer_y + 5*mm, "Delivery Tracking"); c.setFillColor(colors.black); c.setFont("Helvetica", 5.8); c.drawString(left, footer_y, "Dicetak oleh: KOMPLEKS GUDANG SUNTER TIMUR I & II"); c.drawRightString(right, footer_y, f"Tanggal cetak: {_date(operational_now().isoformat(), True)}")
 
 
@@ -713,7 +798,7 @@ async def export_surat_jalan_pdf(sj_id: str, user: dict = Depends(get_current_us
     warehouse_head = settings.get("warehouseHead") or "Irsa Maulian Nugraha"
     buffer = io.BytesIO(); c = canvas.Canvas(buffer, pagesize=landscape(A4)); w, h = landscape(A4)
     c.setDash(2, 2); c.line(w/2, 8*mm, w/2, h-8*mm); c.setDash()
-    _draw_sj_copy(c, sj, 0, h, w/2, warehouse_head); _draw_sj_copy(c, sj, w/2, h, w/2, warehouse_head); c.save()
+    _draw_sj_copy(c, sj, 0, h, w/2, warehouse_head, signature_data); _draw_sj_copy(c, sj, w/2, h, w/2, warehouse_head, signature_data); c.save()
     return _pdf_response(buffer, f"surat_jalan_{(sj.get('ref') or sj.get('no','')).replace('/', '-')}.pdf")
 
 
