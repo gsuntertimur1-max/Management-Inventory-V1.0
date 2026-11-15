@@ -12,7 +12,7 @@ from reportlab.platypus import Paragraph, Table, TableStyle
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 
 from backend.server import db, get_current_user, operational_now
-from backend.pdf_documents import LOGO, THERMAL_LOGO, _date, _num, _measure_unit
+from backend.pdf_documents import LOGO, THERMAL_LOGO, _date, _num, _measure_unit, _warehouse_head_signature_data, _draw_signature_image
 
 router = APIRouter(prefix="/api")
 
@@ -481,6 +481,7 @@ def _draw_sj_half(
     sj: dict,
     items_by_doc: list[tuple[str, list[dict]]],
     warehouse_head: str,
+    signature_data: bytes,
     x0: float,
     page_no: int,
     total_pages: int,
@@ -663,6 +664,7 @@ def _draw_sj_half(
         c.drawCentredString(right_sig, y + 4 * mm, "Yang Menyerahkan,")
         c.setFont("Helvetica-Bold", 6.4)
         c.drawCentredString(right_sig, y, warehouse_name)
+        _draw_signature_image(c, signature_data, right_sig, y - 16.5 * mm, 28 * mm, 13 * mm)
         y -= 19 * mm
         c.setFont("Helvetica-Bold", 7.1)
         c.drawCentredString(left_sig, y, str(sj.get("pengambil") or "-"))
@@ -687,6 +689,7 @@ async def export_surat_jalan_multi_pdf(sj_id: str, user: dict = Depends(get_curr
 
     settings = await db.settings.find_one({"_id": "app"}, {"_id": 0}) or {}
     warehouse_head = settings.get("warehouseHead") or "Irsa Maulian Nugraha"
+    signature_data = await _warehouse_head_signature_data()
     grouped = _sj_item_rows(sj)
 
     # Layout adaptif:
@@ -733,8 +736,8 @@ async def export_surat_jalan_multi_pdf(sj_id: str, user: dict = Depends(get_curr
 
     for page_index, page_rows in enumerate(pages, 1):
         show_signature = page_index == signature_page
-        _draw_sj_half(c, sj, page_rows, warehouse_head, 0, page_index, total_pages, show_signature=show_signature)
-        _draw_sj_half(c, sj, page_rows, warehouse_head, half_w, page_index, total_pages, show_signature=show_signature)
+        _draw_sj_half(c, sj, page_rows, warehouse_head, signature_data, 0, page_index, total_pages, show_signature=show_signature)
+        _draw_sj_half(c, sj, page_rows, warehouse_head, signature_data, half_w, page_index, total_pages, show_signature=show_signature)
 
         c.showPage()
 
