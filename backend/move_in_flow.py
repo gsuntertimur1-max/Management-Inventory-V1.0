@@ -44,7 +44,7 @@ class MoveInDocumentAllocationInput(BaseModel):
 
 def _status(plotting: dict) -> str:
     planned = sum(float(x.get("qty", 0) or 0) for x in plotting.get("items", []))
-    received = sum(float(x.get("qty", 0) or 0) for r in plotting.get("receipts", []) for x in r.get("items", []))
+    received = float(plotting.get("_receivedQty", 0) or 0)
     tm_alloc = sum(float(x.get("qty", 0) or 0) for x in plotting.get("documentAllocations", []) if x.get("documentType") == "TM")
     if received <= 1e-9:
         return "Belum Diterima"
@@ -58,6 +58,34 @@ def _status(plotting: dict) -> str:
 async def _hydrate(doc: dict) -> dict:
     row = dict(doc)
     row.pop("_id", None)
+
+    po = None
+    if row.get("poId"):
+        po = await db.purchase_orders.find_one({"id": row["poId"]}, {"_id": 0})
+    if po:
+        po_items = {str(x.get("productId") or ""): x for x in po.get("items", [])}
+        for item in row.get("items", []):
+            po_item = po_items.get(str(item.get("productId") or ""))
+            if po_item:
+                item["receivedQty"] = float(po_item.get("receivedQty", 0) or 0)
+                item["cancelledQty"] = float(po_item.get("cancelledQty", 0) or 0)
+        row["_receivedQty"] = sum(float(x.get("receivedQty", 0) or 0) for x in po.get("items", []))
+        row["poStatus"] = po.get("status", "")
+        loads = await db.inbound_loads.find({"poId": row["poId"]}, {"_id": 0}).sort("createdAt", -1).to_list(1000)
+        row["inboundLoads"] = loads
+        row["unloadingCostTotal"] = sum(float((x.get("unloadingCost") or {}).get("chargeable", 0) or 0) for x in loads if x.get("status") == "Selesai")
+        row["completedStacks"] = sorted({
+            str(item.get("stackCode") or "").strip()
+            for load in loads if load.get("status") == "Selesai"
+            for item in load.get("items", [])
+            if str(item.get("stackCode") or "").strip()
+        })
+    else:
+        row["_receivedQty"] = sum(float(x.get("qty", 0) or 0) for r in row.get("receipts", []) for x in r.get("items", []))
+        row["inboundLoads"] = []
+        row["unloadingCostTotal"] = 0
+        row["completedStacks"] = []
+
     product_ids = {x.get("productId") for x in row.get("items", []) if x.get("productId")}
     products = {
         p["id"]: p
@@ -112,8 +140,40 @@ async def create_move_in_plotting(body: MoveInPlottingInput, user: dict = Depend
 
     number = await next_sequence(f"move-in-plotting:{date_key}")
     plot_no = f"PLT-IN/{date_key}/{number:03d}"
+    plotting_id = new_id()
+    po_id = new_id()
+    po_items = []
+    for item in items:
+        po_items.append({
+            **item,
+            "receivedQty": 0.0,
+            "cancelledQty": 0.0,
+            "secondary": "",
+            "secondaryQty": 0.0,
+            "cost": 0.0,
+            "channel": "KOM",
+        })
+
+    po_doc = {
+        "id": po_id,
+        "no": plot_no,
+        "supplier": body.senderName.strip(),
+        "date": f"{plotting_date}T00:00:00+07:00",
+        "status": "Belum Diterima",
+        "items": po_items,
+        "total": 0,
+        "sourceType": "MOVE_IN",
+        "moveInPlottingId": plotting_id,
+        "moveInScope": body.scope,
+        "moveInSenderType": body.senderType,
+        "created_by": user.get("name", ""),
+        "created_at": now_iso(),
+    }
+    await db.purchase_orders.insert_one(dict(po_doc))
+
     doc = {
-        "id": new_id(),
+        "id": plotting_id,
+        "poId": po_id,
         "plotNo": plot_no,
         "plottingDate": plotting_date,
         "scope": body.scope,
@@ -131,7 +191,7 @@ async def create_move_in_plotting(body: MoveInPlottingInput, user: dict = Depend
     return await _hydrate(doc)
 
 
-@router.post("/move-in-plottings/{plotting_id}/receipts")
+@router.post("/move-in-plottings/{plotting_id}/receipts", deprecated=True)
 async def add_move_in_receipt(plotting_id: str, body: MoveInReceiptInput, user: dict = Depends(require_write)):
     plotting = await db.move_in_plottings.find_one({"id": plotting_id}, {"_id": 0})
     if not plotting:
@@ -190,12 +250,20 @@ async def add_move_in_document_allocation(plotting_id: str, body: MoveInDocument
     if body.productId not in {x.get("productId") for x in plotting.get("items", [])}:
         raise HTTPException(status_code=400, detail="Produk dokumen tidak termasuk plotting ini")
 
-    received = sum(
-        float(x.get("qty", 0) or 0)
-        for rec in plotting.get("receipts", [])
-        for x in rec.get("items", [])
-        if x.get("productId") == body.productId
-    )
+    if plotting.get("poId"):
+        po = await db.purchase_orders.find_one({"id": plotting["poId"]}, {"_id": 0}) or {}
+        received = sum(
+            float(x.get("receivedQty", 0) or 0)
+            for x in po.get("items", [])
+            if x.get("productId") == body.productId
+        )
+    else:
+        received = sum(
+            float(x.get("qty", 0) or 0)
+            for rec in plotting.get("receipts", [])
+            for x in rec.get("items", [])
+            if x.get("productId") == body.productId
+        )
     allocated_same_type = sum(
         float(x.get("qty", 0) or 0)
         for x in plotting.get("documentAllocations", [])
