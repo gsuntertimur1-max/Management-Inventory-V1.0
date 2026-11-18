@@ -37,6 +37,7 @@ class MoveInReceiptInput(BaseModel):
 class MoveInDocumentAllocationInput(BaseModel):
     documentType: Literal["TM", "MO"]
     documentNo: str = Field(min_length=2, max_length=150)
+    documentDate: str = Field(default="", max_length=20)
     productId: str
     qty: float = Field(gt=0)
     note: str = Field(default="", max_length=500)
@@ -46,11 +47,13 @@ def _status(plotting: dict) -> str:
     planned = sum(float(x.get("qty", 0) or 0) for x in plotting.get("items", []))
     received = float(plotting.get("_receivedQty", 0) or 0)
     tm_alloc = sum(float(x.get("qty", 0) or 0) for x in plotting.get("documentAllocations", []) if x.get("documentType") == "TM")
+    mo_alloc = sum(float(x.get("qty", 0) or 0) for x in plotting.get("documentAllocations", []) if x.get("documentType") == "MO")
+    process_scope = plotting.get("scope") in ("REBAGGING", "REPROSES")
     if received <= 1e-9:
         return "Belum Diterima"
     if received + 1e-9 < planned:
         return "Sebagian Diterima"
-    if tm_alloc + 1e-9 < received:
+    if tm_alloc + 1e-9 < received or (process_scope and mo_alloc + 1e-9 < received):
         return "Fisik Selesai · Dokumen Pending"
     return "Dokumen Lengkap"
 
@@ -259,32 +262,24 @@ async def add_move_in_document_allocation(plotting_id: str, body: MoveInDocument
     if body.productId not in {x.get("productId") for x in plotting.get("items", [])}:
         raise HTTPException(status_code=400, detail="Produk dokumen tidak termasuk plotting ini")
 
-    if plotting.get("poId"):
-        po = await db.purchase_orders.find_one({"id": plotting["poId"]}, {"_id": 0}) or {}
-        received = sum(
-            float(x.get("receivedQty", 0) or 0)
-            for x in po.get("items", [])
-            if x.get("productId") == body.productId
-        )
-    else:
-        received = sum(
-            float(x.get("qty", 0) or 0)
-            for rec in plotting.get("receipts", [])
-            for x in rec.get("items", [])
-            if x.get("productId") == body.productId
-        )
+    planned_qty = sum(
+        float(x.get("qty", 0) or 0)
+        for x in plotting.get("items", [])
+        if x.get("productId") == body.productId
+    )
     allocated_same_type = sum(
         float(x.get("qty", 0) or 0)
         for x in plotting.get("documentAllocations", [])
         if x.get("documentType") == body.documentType and x.get("productId") == body.productId
     )
-    if float(body.qty) > max(received - allocated_same_type, 0) + 1e-9:
-        raise HTTPException(status_code=400, detail="Alokasi dokumen melebihi fisik yang sudah dicatat pada plotting")
+    if float(body.qty) > max(planned_qty - allocated_same_type, 0) + 1e-9:
+        raise HTTPException(status_code=400, detail="Alokasi dokumen melebihi kuantum plotting yang belum tertaut")
 
     allocation = {
         "id": new_id(),
         "documentType": body.documentType,
         "documentNo": body.documentNo.strip().upper(),
+        "documentDate": body.documentDate.strip(),
         "productId": body.productId,
         "qty": float(body.qty),
         "note": body.note.strip(),
