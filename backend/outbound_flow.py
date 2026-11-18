@@ -1787,6 +1787,8 @@ async def complete_outbound_load(load_id: str, body: LoadingCompletionInput | No
                 "operator": user.get("name", ""),
                 "keterangan": load.get("keterangan", ""),
                 "document_type": load.get("document_type", "SO"),
+                "transfer_scope": load.get("transfer_scope", ""),
+                "process_mo_no": load.get("process_mo_no", ""),
                 "parent_document": "",
                 "request_document": load.get("request_document", ""),
                 "consignment_destination": load.get("consignment_destination", ""),
