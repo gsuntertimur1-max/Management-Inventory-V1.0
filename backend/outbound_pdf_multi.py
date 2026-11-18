@@ -62,6 +62,16 @@ def _group_items(load: dict) -> OrderedDict:
     return grouped
 
 
+def _tm_scope_label(value: str) -> str:
+    return {
+        "LOKAL": "Antar Gudang Lokal",
+        "REGIONAL": "Regional",
+        "NASIONAL": "Nasional",
+        "REBAGGING": "Rebagging",
+        "REPROSES": "Reproses",
+    }.get(str(value or "").strip().upper(), str(value or "").strip())
+
+
 def _secondary_text(item: dict) -> str:
     qty = float(item.get("qty", 0) or 0)
     secondary_qty = float(item.get("secondaryQty", 0) or 0)
@@ -141,12 +151,18 @@ async def export_bon_muat_multi_pdf(load_id: str, user: dict = Depends(get_curre
     fields_preview = [
         ("Tanggal", _date(load.get("started_at") or load.get("created_at"), True)),
         ("Dokumen", ", ".join(load.get("documents") or [load.get("ref", "-")])),
+    ]
+    if load.get("document_type") == "TM" and load.get("transfer_scope"):
+        fields_preview.append(("Cakupan TM", _tm_scope_label(load.get("transfer_scope", ""))))
+    if load.get("process_mo_no"):
+        fields_preview.append(("Nomor MO", load.get("process_mo_no")))
+    fields_preview.extend([
         ("Tujuan", load.get("party", "-")),
         ("No Polisi", load.get("polisi", "-")),
         ("Sopir", load.get("pengambil", "-")),
         ("Unit", load.get("unit_loading", "-")),
         ("Rute", _loading_route(load)),
-    ]
+    ])
     value_width = right - (22 * mm)
     for _, value in fields_preview:
         content_height_mm += max(0, len(wrap_text(str(value), "Helvetica-Bold", 8.0, value_width)) - 1) * 4.0
@@ -438,6 +454,8 @@ def _sj_detail_top(sj: dict, content_width: float) -> float:
     y -= 1.6 * mm
     y -= 4.2 * mm
     y -= len(documents) * 4.4 * mm
+    if sj.get("process_mo_no"):
+        y -= 4.4 * mm
     y -= 4.0 * mm
 
     # Header tabel Produk/Kuantitas/Kuantum.
@@ -574,6 +592,10 @@ def _draw_sj_half(
         c.drawString(left, y, document_no)
         c.setFont("Helvetica", 6.4)
         c.drawString(date_x, y, issued)
+        y -= 4.4 * mm
+    if sj.get("process_mo_no"):
+        c.setFont("Helvetica-Bold", 6.7)
+        c.drawString(left, y, f"MO: {sj.get('process_mo_no')} · {_tm_scope_label(sj.get('transfer_scope', ''))}")
         y -= 4.4 * mm
     y -= 4.0 * mm
 
