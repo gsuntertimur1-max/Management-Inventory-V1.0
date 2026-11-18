@@ -43,6 +43,7 @@ const NAV_GROUPS = [
   {
     label: 'Pengadaan', icon: ShoppingCart, items: [
       { to: '/po', label: 'Purchase Order', icon: ClipboardList, permission: 'mainInventory' },
+      { to: '/move-in', label: 'Move In / TM In', icon: FileInput, permission: 'inbound' },
       { to: '/supplier', label: 'Supplier', icon: Truck, permission: 'mainInventory' },
     ],
   },
