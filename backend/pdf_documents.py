@@ -347,6 +347,11 @@ async def export_purchase_order_receiving_recap_pdf(po_id: str, user: dict = Dep
                 docs.append(text)
             return "<br/>".join(escape(x) for x in docs) if docs else "Pending"
 
+        tm_total = sum(float(item.get("qty", 0) or 0) for item in allocations if str(item.get("documentType") or "").upper() == "TM")
+        mo_total = sum(float(item.get("qty", 0) or 0) for item in allocations if str(item.get("documentType") or "").upper() == "MO")
+        admin_summary = f"TM {_num(tm_total)}"
+        if plotting.get("scope") in ("REBAGGING", "REPROSES"):
+            admin_summary += f" · MO {_num(mo_total)}"
         meta_rows = [
             [Paragraph("Nomor Plotting", meta_label), Paragraph(str(po.get("no") or "-"), meta_value),
              Paragraph("Pengirim", meta_label), Paragraph(str(po.get("supplier") or "-"), meta_value)],
@@ -357,7 +362,7 @@ async def export_purchase_order_receiving_recap_pdf(po_id: str, user: dict = Dep
             [Paragraph("Jenis Barang", meta_label), Paragraph("<br/>".join(escape(x) for x in product_names) or "-", meta_value),
              Paragraph("Jumlah Kendaraan", meta_label), Paragraph(_num(len(rows)), meta_value)],
             [Paragraph("Periode Penerimaan", meta_label), Paragraph(period, meta_value),
-             Paragraph("Status Dokumen", meta_label), Paragraph(str(plotting.get("status") or "Lihat halaman Move In"), meta_value)],
+             Paragraph("Alokasi Dokumen", meta_label), Paragraph(admin_summary, meta_value)],
         ]
     else:
         meta_rows = [
