@@ -61,7 +61,8 @@ class OutboundCreateInput(BaseModel):
     kondisi: Literal["BAIK", "RUSAK"] = "BAIK"
     keterangan: str = ""
     documentType: Literal["SO", "TM", "CT", "ND", "MEMO"] = "SO"
-    transferScope: Literal["", "LOKAL", "REGIONAL", "NASIONAL"] = ""
+    transferScope: Literal["", "LOKAL", "REGIONAL", "NASIONAL", "REBAGGING", "REPROSES"] = ""
+    processMoNo: str = Field(default="", max_length=100)
     documents: List[str] = Field(default_factory=list, max_length=20)
     # Penerima/Tujuan melekat pada masing-masing nomor dokumen outbound.
     # party tetap dipertahankan sebagai ringkasan kendaraan/kompatibilitas data lama.
@@ -1037,6 +1038,11 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         raise HTTPException(status_code=400, detail=f"Nomor dokumen tidak sesuai jenis {body.documentType}")
     if body.documentType == "TM" and not body.transferScope:
         raise HTTPException(status_code=400, detail="Pilih cakupan Transfer Move")
+    process_mo_no = str(body.processMoNo or "").strip().upper()
+    if body.documentType == "TM" and body.transferScope in {"REBAGGING", "REPROSES"} and not process_mo_no:
+        raise HTTPException(status_code=400, detail="Nomor MO wajib diisi untuk TM Rebagging/Reproses")
+    if body.documentType != "TM" or body.transferScope not in {"REBAGGING", "REPROSES"}:
+        process_mo_no = ""
     if body.consignmentDestination and body.documentType not in {"MEMO", "ND"}:
         raise HTTPException(status_code=400, detail="Stok Gudang Bazar/E-commerce harus dicatat menggunakan Memo atau ND")
     if body.consignmentDestination and body.consignmentDestination not in {"Gudang Bazar", "Gudang E-commerce"}:
@@ -1228,6 +1234,7 @@ async def create_outbound_load(body: OutboundCreateInput, user: dict = Depends(r
         "keterangan": body.keterangan.strip(),
         "document_type": body.documentType,
         "transfer_scope": body.transferScope if body.documentType == "TM" else "",
+        "process_mo_no": process_mo_no,
         "request_document": body.requestDocument.strip(),
         "dispatch_purpose": body.dispatchPurpose if body.documentType in {"MEMO", "ND"} else "",
         "consignment_destination": body.consignmentDestination.strip(),
@@ -1818,6 +1825,7 @@ async def complete_outbound_load(load_id: str, body: LoadingCompletionInput | No
             "ref": load.get("ref", ""),
             "document_type": load.get("document_type", "SO"),
             "transfer_scope": load.get("transfer_scope", ""),
+            "process_mo_no": load.get("process_mo_no", ""),
             "request_document": load.get("request_document", ""),
             "consignment_destination": load.get("consignment_destination", ""),
             "consignment_zone": load.get("consignment_zone", ""),
