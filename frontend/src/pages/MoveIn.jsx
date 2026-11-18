@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { FileClock, FileText, History, Link2, Plus, RefreshCcw, Truck } from 'lucide-react';
 import { toast } from 'sonner';
 import api, { apiError } from '../lib/api';
@@ -11,17 +12,17 @@ const today = () => new Date().toISOString().slice(0, 10);
 const newItem = () => ({ productId: '', qty: '' });
 
 const sumPlanned = (plotting) => (plotting.items || []).reduce((sum, item) => sum + Number(item.qty || 0), 0);
-const sumReceived = (plotting) => (plotting.receipts || []).reduce((sum, receipt) => sum + (receipt.items || []).reduce((s, item) => s + Number(item.qty || 0), 0), 0);
+const sumReceived = (plotting) => (plotting.items || []).reduce((sum, item) => sum + Number(item.receivedQty || 0), 0);
 const sumDoc = (plotting, type) => (plotting.documentAllocations || []).filter((row) => row.documentType === type).reduce((sum, row) => sum + Number(row.qty || 0), 0);
 
 const MoveIn = () => {
-  const { products, suppliers } = useData();
+  const { products, suppliers, refreshPurchaseOrders } = useData();
+  const navigate = useNavigate();
   const [plottings, setPlottings] = useState([]);
   const [legacy, setLegacy] = useState([]);
   const [query, setQuery] = useState('');
   const [legacyQuery, setLegacyQuery] = useState('');
   const [saving, setSaving] = useState(false);
-  const [activeReceipt, setActiveReceipt] = useState(null);
   const [activeDocument, setActiveDocument] = useState(null);
   const [form, setForm] = useState({
     plottingDate: today(),
@@ -73,6 +74,7 @@ const MoveIn = () => {
       });
       toast.success(`Plotting ${data.plotNo} dibuat`);
       setForm({ plottingDate: today(), scope: 'REGIONAL', senderType: 'GUDANG', senderName: '', items: [newItem()], note: '' });
+      await refreshPurchaseOrders();
       await load();
     } catch (e) { toast.error(apiError(e)); } finally { setSaving(false); }
   };
@@ -95,45 +97,14 @@ const MoveIn = () => {
     ].filter(Boolean).join(' ').toLowerCase().includes(q)).slice(0, 100);
   }, [legacy, legacyQuery]);
 
-  const receiptTotals = (plotting) => {
-    const totals = {};
-    (plotting.receipts || []).forEach((rec) => (rec.items || []).forEach((item) => {
-      totals[item.productId] = Number(totals[item.productId] || 0) + Number(item.qty || 0);
-    }));
-    return totals;
-  };
-
-  const openReceipt = (plotting) => {
-    const totals = receiptTotals(plotting);
-    setActiveReceipt({
-      plotting,
-      receiptDate: today(),
-      vehicleNo: '',
-      note: '',
-      items: (plotting.items || []).map((item) => ({
-        productId: item.productId,
-        name: item.name,
-        unit: item.unit,
-        remaining: Math.max(Number(item.qty || 0) - Number(totals[item.productId] || 0), 0),
-        qty: '',
-      })),
-    });
-  };
-
-  const saveReceipt = async () => {
-    const rows = (activeReceipt?.items || []).filter((row) => Number(row.qty || 0) > 0);
-    if (!rows.length) return toast.error('Isi jumlah fisik yang diterima');
+  const openInbound = async (plotting) => {
+    if (!plotting.poId) return toast.error('Induk penerimaan plotting belum tersedia');
     try {
-      await api.post(`/move-in-plottings/${activeReceipt.plotting.id}/receipts`, {
-        receiptDate: activeReceipt.receiptDate,
-        vehicleNo: activeReceipt.vehicleNo,
-        note: activeReceipt.note,
-        items: rows.map((row) => ({ productId: row.productId, qty: Number(row.qty) })),
-      });
-      toast.success('Progres fisik plotting dicatat. Catatan ini tidak menambah stok dua kali.');
-      setActiveReceipt(null);
-      await load();
-    } catch (e) { toast.error(apiError(e)); }
+      await refreshPurchaseOrders();
+      navigate(`/catat?mode=masuk&poId=${encodeURIComponent(plotting.poId)}`);
+    } catch (e) {
+      toast.error(apiError(e));
+    }
   };
 
   const openDocument = (plotting) => {
@@ -170,7 +141,7 @@ const MoveIn = () => {
     <div>
       <div className="label-mono mb-2">Pengadaan</div>
       <h1 className="font-display text-4xl font-bold">Move In / TM In</h1>
-      <p className="text-sm text-[#8b93a1] mt-2 max-w-4xl">Plotting operasional berdiri sendiri dari MO/TM. MO hanya tersedia untuk Rebagging/Reproses dan dapat ditautkan belakangan. Nomor TM juga dapat menyusul, digabung ke beberapa plotting, atau satu plotting dipecah ke beberapa TM.</p>
+      <p className="text-sm text-[#8b93a1] mt-2 max-w-4xl">Plotting menjadi induk penerimaan seperti PO. Kendaraan, bongkar, biaya bongkar, baik/rusak, dan tumpukan tujuan memakai proses Penerimaan yang sudah berjalan. MO hanya tersedia untuk Rebagging/Reproses; MO/TM dapat ditautkan belakangan tanpa menambah stok dua kali.</p>
     </div>
 
     <section className="card-surface p-5">
@@ -200,7 +171,7 @@ const MoveIn = () => {
 
     <section className="card-surface p-5">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-        <div><div className="font-semibold flex items-center gap-2"><Truck size={17}/> Plotting Aktif & Riwayat</div><div className="text-xs text-[#8b93a1] mt-1">Progres fisik di sini adalah catatan plotting. Mutasi stok tetap mengikuti proses Penerimaan yang sudah berjalan.</div></div>
+        <div><div className="font-semibold flex items-center gap-2"><Truck size={17}/> Plotting Aktif & Riwayat</div><div className="text-xs text-[#8b93a1] mt-1">Klik Tambah Kendaraan untuk memakai alur penerimaan yang sama dengan PO: pilih tumpukan, mulai/selesai bongkar, baik/rusak, lembur, dan biaya bongkar.</div></div>
         <div className="flex gap-2"><input className={inputCls} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cari plotting / pengirim / TM / MO..."/><button onClick={() => load().catch(() => {})} className="px-3 rounded-lg border border-[#334155] text-[#93c5fd]"><RefreshCcw size={15}/></button></div>
       </div>
       <div className="space-y-3">
@@ -225,10 +196,19 @@ const MoveIn = () => {
               <div className="rounded-lg bg-[#0b0f17] p-3"><div className="text-[#6b7688]">Tertaut TM</div><div className="font-mono font-bold mt-1">{formatNum(tm)}</div></div>
               <div className="rounded-lg bg-[#0b0f17] p-3"><div className="text-[#6b7688]">{row.scope === 'REBAGGING' || row.scope === 'REPROSES' ? 'Tertaut MO' : 'MO'}</div><div className="font-mono font-bold mt-1">{row.scope === 'REBAGGING' || row.scope === 'REPROSES' ? formatNum(mo) : 'Tidak berlaku'}</div></div>
             </div>
-            <div className="mt-3 text-xs space-y-1">{(row.items || []).map((item) => <div key={item.productId}><b>{item.name}</b> · {formatNum(item.qty)} {item.unit}</div>)}</div>
+            <div className="mt-3 text-xs space-y-1">{(row.items || []).map((item) => <div key={item.productId}><b>{item.name}</b> · plotting {formatNum(item.qty)} {item.unit} · diterima {formatNum(item.receivedQty || 0)} {item.unit}</div>)}</div>
+            {(row.inboundLoads || []).length > 0 && <div className="mt-3 rounded-lg border border-[#243044] bg-[#0b0f17] p-3 text-xs">
+              <div className="font-semibold mb-2">Realisasi Penerimaan</div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                <div><span className="text-[#6b7688]">Kendaraan</span><div className="font-mono mt-1">{(row.inboundLoads || []).filter((x) => x.status === 'Selesai').length} selesai</div></div>
+                <div><span className="text-[#6b7688]">Tumpukan tujuan</span><div className="font-mono mt-1">{(row.completedStacks || []).join(', ') || 'Belum ada'}</div></div>
+                <div><span className="text-[#6b7688]">Biaya bongkar tercatat</span><div className="font-mono mt-1">Rp {formatNum(row.unloadingCostTotal || 0)}</div></div>
+              </div>
+              <div className="mt-2 space-y-1">{(row.inboundLoads || []).slice(0, 8).map((load) => <div key={load.id} className="flex flex-wrap gap-x-2 text-[#8b93a1]"><span className="font-mono text-[#cbd5e1]">{load.loadNo}</span><span>{load.polisi || '—'}</span><span>{load.status}</span><span>{(load.items || []).map((x) => x.stackCode).filter(Boolean).join(', ') || 'tumpukan belum dipilih'}</span>{load.status === 'Selesai' && <span>Rp {formatNum(load.unloadingCost?.chargeable || 0)}</span>}</div>)}</div>
+            </div>}
             {(row.documentAllocations || []).length > 0 && <div className="mt-3 flex flex-wrap gap-2">{row.documentAllocations.map((doc) => <span key={doc.id} className="text-[11px] px-2 py-1 rounded-lg border border-[#334155]"><b>{doc.documentType}</b> {doc.documentNo} · {formatNum(doc.qty)}</span>)}</div>}
             <div className="flex flex-wrap gap-2 mt-4">
-              <button onClick={() => openReceipt(row)} disabled={received >= planned - 1e-9} className="text-xs px-3 py-2 rounded-lg border border-[#2563eb] text-[#93c5fd] disabled:opacity-40"><Truck size={13} className="inline mr-1"/>Catat Progres Fisik</button>
+              <button onClick={() => openInbound(row)} disabled={received >= planned - 1e-9} className="text-xs px-3 py-2 rounded-lg border border-[#2563eb] text-[#93c5fd] disabled:opacity-40"><Truck size={13} className="inline mr-1"/>Tambah Kendaraan / Proses Penerimaan</button>
               <button onClick={() => openDocument(row)} disabled={received <= 0} className="text-xs px-3 py-2 rounded-lg border border-[#334155] text-[#cbd5e1] disabled:opacity-40"><Link2 size={13} className="inline mr-1"/>Tautkan MO/TM</button>
             </div>
           </div>;
@@ -245,15 +225,6 @@ const MoveIn = () => {
         </table>
       </div>
     </section>
-
-    {activeReceipt && <div className="fixed inset-0 z-[100] bg-black/75 flex items-center justify-center p-4"><div className="card-surface w-full max-w-2xl p-6">
-      <h2 className="font-display text-xl font-bold">Catat Progres Fisik</h2>
-      <p className="text-xs text-[#8b93a1] mt-1 mb-4">{activeReceipt.plotting.plotNo} · {activeReceipt.plotting.senderName}. Catatan ini untuk tracking plotting dan tidak melakukan mutasi stok.</p>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2"><input type="date" className={inputCls} value={activeReceipt.receiptDate} onChange={(e) => setActiveReceipt({ ...activeReceipt, receiptDate: e.target.value })}/><input className={inputCls} value={activeReceipt.vehicleNo} onChange={(e) => setActiveReceipt({ ...activeReceipt, vehicleNo: e.target.value.toUpperCase() })} placeholder="Nomor polisi / kendaraan (opsional)"/></div>
-      <div className="space-y-2 mt-3">{activeReceipt.items.map((row, index) => <div key={row.productId} className="grid grid-cols-[1fr_180px] gap-2 items-center"><div className="text-sm"><div className="font-medium">{row.name}</div><div className="text-xs text-[#8b93a1]">Sisa plotting {formatNum(row.remaining)} {row.unit}</div></div><input type="number" min="0" max={row.remaining} className={inputCls} value={row.qty} onChange={(e) => setActiveReceipt({ ...activeReceipt, items: activeReceipt.items.map((x, i) => i === index ? { ...x, qty: e.target.value } : x) })} placeholder={row.unit}/></div>)}</div>
-      <textarea className={`${inputCls} mt-3`} rows={2} value={activeReceipt.note} onChange={(e) => setActiveReceipt({ ...activeReceipt, note: e.target.value })} placeholder="Catatan bongkar / surat jalan bila ada"/>
-      <div className="flex justify-end gap-2 mt-5"><button onClick={() => setActiveReceipt(null)} className="px-4 py-2 rounded-lg border border-[#334155]">Batal</button><button onClick={saveReceipt} className="btn-primary px-5 py-2 rounded-lg">Simpan Progres</button></div>
-    </div></div>}
 
     {activeDocument && <div className="fixed inset-0 z-[100] bg-black/75 flex items-center justify-center p-4"><div className="card-surface w-full max-w-xl p-6">
       <h2 className="font-display text-xl font-bold">Tautkan Dokumen</h2>
