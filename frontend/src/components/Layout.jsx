@@ -34,6 +34,7 @@ const NAV_GROUPS = [
       { to: '/retur-pemasok', label: 'Retur / Ganti Pemasok', icon: RefreshCcw, permission: 'operations' },
       { to: '/penerimaan', label: 'Penerimaan', icon: Truck, permission: 'inbound' },
       { to: '/pemenuhan-klaim', label: 'Pemenuhan Klaim', icon: Scale, permission: 'inbound' },
+      { to: '/dokumen-pengeluaran', label: 'Dokumen Pengeluaran', icon: ClipboardList, permission: 'outboundPage' },
       { to: '/pengeluaran', label: 'Pengeluaran', icon: Send, permission: 'outboundPage' },
       { to: '/monitoring-so', label: 'Monitoring SO', icon: ClipboardList, permission: 'outboundPage' },
       { to: '/koreksi-operasional', label: 'Koreksi Operasional', icon: ShieldCheck, permission: 'corrections' },
