@@ -256,8 +256,75 @@ async def add_move_in_document_allocation(plotting_id: str, body: MoveInDocument
     if not plotting:
         raise HTTPException(status_code=404, detail="Plotting Move In tidak ditemukan")
 
-    if body.documentType == "MO" and plotting.get("scope") not in ("REBAGGING", "REPROSES"):
+    process_scope = plotting.get("scope") in ("REBAGGING", "REPROSES")
+    if body.documentType == "MO" and not process_scope:
         raise HTTPException(status_code=400, detail="Nomor MO hanya berlaku untuk Move In Rebagging/Reproses")
+
+    document_no = body.documentNo.strip().upper()
+    if process_scope:
+        allocations = list(plotting.get("documentAllocations") or [])
+        same_type_numbers = {
+            str(x.get("documentNo") or "").strip().upper()
+            for x in allocations
+            if x.get("documentType") == body.documentType and str(x.get("documentNo") or "").strip()
+        }
+        if same_type_numbers and document_no not in same_type_numbers:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Satu plotting Rebagging/Reproses hanya boleh memakai satu nomor {body.documentType}. Nomor yang sudah tertaut: {', '.join(sorted(same_type_numbers))}",
+            )
+
+        other_type = "TM" if body.documentType == "MO" else "MO"
+        counterpart_numbers = {
+            str(x.get("documentNo") or "").strip().upper()
+            for x in allocations
+            if x.get("documentType") == other_type and str(x.get("documentNo") or "").strip()
+        }
+        if len(counterpart_numbers) > 1:
+            raise HTTPException(status_code=409, detail="Data dokumen lama tidak konsisten: satu plotting memiliki lebih dari satu pasangan MO/TM")
+
+        # Aturan bisnis Rebagging/Reproses: satu MO hanya boleh berpasangan
+        # dengan satu TM, dan satu TM hanya boleh berpasangan dengan satu MO.
+        if counterpart_numbers:
+            counterpart = next(iter(counterpart_numbers))
+            docs = await db.move_in_plottings.find(
+                {"scope": {"$in": ["REBAGGING", "REPROSES"]}},
+                {"_id": 0, "documentAllocations": 1},
+            ).to_list(5000)
+            for other_plot in docs:
+                other_allocs = list(other_plot.get("documentAllocations") or [])
+                has_this = any(
+                    x.get("documentType") == body.documentType
+                    and str(x.get("documentNo") or "").strip().upper() == document_no
+                    for x in other_allocs
+                )
+                has_counterpart = any(
+                    x.get("documentType") == other_type
+                    and str(x.get("documentNo") or "").strip().upper() == counterpart
+                    for x in other_allocs
+                )
+                if has_this:
+                    foreign_counterparts = {
+                        str(x.get("documentNo") or "").strip().upper()
+                        for x in other_allocs
+                        if x.get("documentType") == other_type and str(x.get("documentNo") or "").strip()
+                    }
+                    if foreign_counterparts and counterpart not in foreign_counterparts:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"{body.documentType} {document_no} sudah berpasangan dengan {other_type} {', '.join(sorted(foreign_counterparts))}. Aturan: 1 MO = 1 TM.",
+                        )
+                if has_counterpart:
+                    foreign_same = {
+                        str(x.get("documentNo") or "").strip().upper()
+                        for x in other_allocs
+                        if x.get("documentType") == body.documentType and str(x.get("documentNo") or "").strip()
+                    }
+                    if foreign_same and document_no not in foreign_same:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"{other_type} {counterpart} sudah berpasangan dengan {body.documentType} {', '.join(sorted(foreign_same))}. Aturan: 1 MO = 1 TM.",
+                        )
 
     if body.productId not in {x.get("productId") for x in plotting.get("items", [])}:
         raise HTTPException(status_code=400, detail="Produk dokumen tidak termasuk plotting ini")
@@ -278,7 +345,7 @@ async def add_move_in_document_allocation(plotting_id: str, body: MoveInDocument
     allocation = {
         "id": new_id(),
         "documentType": body.documentType,
-        "documentNo": body.documentNo.strip().upper(),
+        "documentNo": document_no,
         "documentDate": body.documentDate.strip(),
         "productId": body.productId,
         "qty": float(body.qty),
