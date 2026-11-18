@@ -171,6 +171,13 @@ async def export_purchase_order_receiving_recap_pdf(po_id: str, user: dict = Dep
     if not po:
         raise HTTPException(status_code=404, detail="PO/TM tidak ditemukan")
 
+    plotting = None
+    if str(po.get("sourceType") or "").upper() == "MOVE_IN" or po.get("moveInPlottingId"):
+        plotting = await db.move_in_plottings.find_one(
+            {"$or": [{"poId": po_id}, {"id": str(po.get("moveInPlottingId") or "")}]},
+            {"_id": 0},
+        )
+
     loads = await db.inbound_loads.find(
         {"poId": po_id, "status": "Selesai"},
         {"_id": 0},
@@ -231,11 +238,37 @@ async def export_purchase_order_receiving_recap_pdf(po_id: str, user: dict = Dep
                 stacks.append(stack)
 
         completed = local_dt(load.get("completedAt") or load.get("createdAt"))
+        planned_koli = sum(float(item.get("qty", 0) or 0) for item in (load.get("items") or []))
+        actual_koli = sum(float(item.get("documentActualQty", item.get("actualQty", 0)) or 0) for item in actual_items)
+        variance_koli = actual_koli - planned_koli
+        expiries = []
+        discrepancy_reasons = []
+        for item in actual_items:
+            exp = str(item.get("exp") or "").strip()
+            if exp and exp not in expiries:
+                expiries.append(exp)
+            reason = str(item.get("discrepancyReason") or "").strip()
+            if reason and reason not in discrepancy_reasons:
+                discrepancy_reasons.append(reason)
+
         note_parts = []
         if load.get("driver"):
             note_parts.append(f"Sopir: {load.get('driver')}")
         if load.get("keterangan"):
             note_parts.append(str(load.get("keterangan")))
+        if plotting:
+            if abs(variance_koli) <= 1e-9:
+                note_parts.append(f"Rencana/Aktual {_num(actual_koli)} · Sesuai")
+            elif variance_koli < 0:
+                note_parts.append(f"Rencana {_num(planned_koli)} · Aktual {_num(actual_koli)} · Kurang {_num(abs(variance_koli))}")
+            else:
+                note_parts.append(f"Rencana {_num(planned_koli)} · Aktual {_num(actual_koli)} · Lebih {_num(variance_koli)}")
+            if discrepancy_reasons:
+                note_parts.append("Alasan: " + "; ".join(discrepancy_reasons))
+            if expiries:
+                note_parts.append("EXP: " + ", ".join(expiries))
+            chargeable = float((load.get("unloadingCost") or {}).get("chargeable", 0) or 0)
+            note_parts.append(f"Biaya bongkar Rp {_num(chargeable)}")
         return {
             "date_key": completed.strftime("%Y-%m-%d"),
             "date_label": completed.strftime("%d-%m-%Y"),
@@ -300,14 +333,42 @@ async def export_purchase_order_receiving_recap_pdf(po_id: str, user: dict = Dep
         Paragraph("REKAPITULASI PENERIMAAN BARANG", title_style),
         Spacer(1, 2 * mm),
     ]
-    meta = Table([
-        [Paragraph("Nomor PO/TM", meta_label), Paragraph(str(po.get("no") or "-"), meta_value),
-         Paragraph("Supplier", meta_label), Paragraph(str(po.get("supplier") or "-"), meta_value)],
-        [Paragraph("Jenis Barang", meta_label), Paragraph("<br/>".join(escape(x) for x in product_names) or "-", meta_value),
-         Paragraph("Gudang", meta_label), Paragraph(str(warehouse), meta_value)],
-        [Paragraph("Periode Penerimaan", meta_label), Paragraph(period, meta_value),
-         Paragraph("Jumlah Kendaraan", meta_label), Paragraph(_num(len(rows)), meta_value)],
-    ], colWidths=[28 * mm, 94 * mm, 31 * mm, 116 * mm])
+    if plotting:
+        allocations = list(plotting.get("documentAllocations") or [])
+        def document_text(doc_type: str) -> str:
+            docs = []
+            for item in allocations:
+                if str(item.get("documentType") or "").upper() != doc_type:
+                    continue
+                text = str(item.get("documentNo") or "-")
+                if item.get("documentDate"):
+                    text += f" · {item.get('documentDate')}"
+                text += f" · {_num(float(item.get('qty', 0) or 0))}"
+                docs.append(text)
+            return "<br/>".join(escape(x) for x in docs) if docs else "Pending"
+
+        meta_rows = [
+            [Paragraph("Nomor Plotting", meta_label), Paragraph(str(po.get("no") or "-"), meta_value),
+             Paragraph("Pengirim", meta_label), Paragraph(str(po.get("supplier") or "-"), meta_value)],
+            [Paragraph("Cakupan", meta_label), Paragraph(str(plotting.get("scope") or "-"), meta_value),
+             Paragraph("MO", meta_label), Paragraph(document_text("MO") if plotting.get("scope") in ("REBAGGING", "REPROSES") else "Tidak berlaku", meta_value)],
+            [Paragraph("TM", meta_label), Paragraph(document_text("TM"), meta_value),
+             Paragraph("Gudang", meta_label), Paragraph(str(warehouse), meta_value)],
+            [Paragraph("Jenis Barang", meta_label), Paragraph("<br/>".join(escape(x) for x in product_names) or "-", meta_value),
+             Paragraph("Jumlah Kendaraan", meta_label), Paragraph(_num(len(rows)), meta_value)],
+            [Paragraph("Periode Penerimaan", meta_label), Paragraph(period, meta_value),
+             Paragraph("Status Dokumen", meta_label), Paragraph(str(plotting.get("status") or "Lihat halaman Move In"), meta_value)],
+        ]
+    else:
+        meta_rows = [
+            [Paragraph("Nomor PO/TM", meta_label), Paragraph(str(po.get("no") or "-"), meta_value),
+             Paragraph("Supplier", meta_label), Paragraph(str(po.get("supplier") or "-"), meta_value)],
+            [Paragraph("Jenis Barang", meta_label), Paragraph("<br/>".join(escape(x) for x in product_names) or "-", meta_value),
+             Paragraph("Gudang", meta_label), Paragraph(str(warehouse), meta_value)],
+            [Paragraph("Periode Penerimaan", meta_label), Paragraph(period, meta_value),
+             Paragraph("Jumlah Kendaraan", meta_label), Paragraph(_num(len(rows)), meta_value)],
+        ]
+    meta = Table(meta_rows, colWidths=[28 * mm, 94 * mm, 31 * mm, 116 * mm])
     meta.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("LEFTPADDING", (0, 0), (-1, -1), 1.5 * mm),
