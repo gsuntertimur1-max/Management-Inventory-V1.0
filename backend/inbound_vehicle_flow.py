@@ -75,6 +75,7 @@ class InboundCompleteItem(BaseModel):
     shortBagCount: int = Field(default=0, ge=0)
     shortBagActualWeightKg: float = Field(default=0, ge=0)
     shortageClaimReason: str = Field(default="", max_length=300)
+    discrepancyReason: str = Field(default="", max_length=300)
     overtimeQty: float | None = Field(default=None, ge=0)
     stackCode: str = ""
     exp: str = ""
@@ -234,6 +235,9 @@ async def create_inbound_load(body: InboundLoadCreate, user: dict = Depends(requ
             "grossMin": float(body.grossMin or 0),
             "grossMax": float(body.grossMax or 0),
             "unloadingFeeChargeMode": _normalize_unloading_fee_mode(body.unloadingFeeChargeMode),
+            "sourceType": str(po.get("sourceType") or ""),
+            "moveInPlottingId": str(po.get("moveInPlottingId") or ""),
+            "moveInScope": str(po.get("moveInScope") or ""),
             "createdAt": now,
             "createdBy": user.get("name", ""),
             "history": [{
@@ -402,6 +406,10 @@ async def complete_inbound_load(load_id: str, body: InboundLoadComplete, user: d
             raise HTTPException(status_code=409, detail="Status kendaraan berubah. Muat ulang halaman.")
 
         completion_map = {item.productId: item for item in body.items}
+        raw_po = await db.purchase_orders.find_one({"id": str(load.get("poId") or "")}, {"_id": 0}) or {}
+        is_move_in = str(raw_po.get("sourceType") or load.get("sourceType") or "").upper() == "MOVE_IN" or bool(raw_po.get("moveInPlottingId") or load.get("moveInPlottingId"))
+        po_items_by_id = {str(item.get("productId") or ""): item for item in raw_po.get("items", [])}
+        other_reserved = await _active_reserved(str(load.get("poId") or ""), exclude_id=load_id)
         product_rows = await db.products.find({"id": {"$in": product_ids}}, {"_id": 0}).to_list(len(product_ids) or 1)
         products_by_id = {str(row.get("id") or ""): row for row in product_rows}
         receipt_items = []
@@ -487,11 +495,38 @@ async def complete_inbound_load(load_id: str, body: InboundLoadComplete, user: d
             if document_total <= EPS:
                 continue
             planned_qty = float(planned_item.get("qty", 0) or 0)
-            if document_total > planned_qty + EPS:
+            variance_qty = document_total - planned_qty
+            variance_status = "SESUAI"
+            if variance_qty < -EPS:
+                variance_status = "KURANG_KIRIM"
+            elif variance_qty > EPS:
+                variance_status = "LEBIH_KIRIM"
+
+            if abs(variance_qty) > EPS and is_move_in and len(actual.discrepancyReason.strip()) < 3:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Total dokumen {planned_item.get('name', 'produk')} melebihi rencana kendaraan ({planned_qty:g} {planned_item.get('unit', '')})",
+                    detail=f"Isi alasan selisih penerimaan {planned_item.get('name', 'produk')} ({'kurang' if variance_qty < 0 else 'lebih'} {abs(variance_qty):g} {planned_item.get('unit', '')})",
                 )
+
+            if document_total > planned_qty + EPS:
+                if not is_move_in:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Total dokumen {planned_item.get('name', 'produk')} melebihi rencana kendaraan ({planned_qty:g} {planned_item.get('unit', '')})",
+                    )
+                po_item = po_items_by_id.get(product_id, {})
+                ordered = float(po_item.get("qty", 0) or 0)
+                received = float(po_item.get("receivedQty", 0) or 0)
+                pending_other = float(other_reserved.get(product_id, 0) or 0)
+                available_for_this_vehicle = max(ordered - received - pending_other, 0.0)
+                if document_total > available_for_this_vehicle + EPS:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Lebih kirim {planned_item.get('name', 'produk')} melebihi sisa plotting yang tersedia "
+                            f"({available_for_this_vehicle:g} {planned_item.get('unit', '')}). Koreksi plotting terlebih dahulu."
+                        ),
+                    )
 
             if started_minutes is None:
                 raise HTTPException(status_code=409, detail="Waktu mulai bongkar kendaraan tidak valid. Batalkan sesi dan mulai kembali.")
@@ -544,6 +579,9 @@ async def complete_inbound_load(load_id: str, body: InboundLoadComplete, user: d
                 "physicalActualQty": physical_total,
                 "documentActualQty": document_total,
                 "actualQty": physical_total,
+                "varianceQty": variance_qty,
+                "varianceStatus": variance_status,
+                "discrepancyReason": actual.discrepancyReason.strip(),
                 "overtimeQty": overtime,
                 "normalQty": normal,
                 "stackCode": stack_code,
