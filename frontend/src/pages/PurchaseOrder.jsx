@@ -60,7 +60,7 @@ const PurchaseOrder = () => {
 
   const total = selectedItems.reduce((sum, item) => sum + (item.product?.cost || 0) * Number(item.qty || 0), 0);
   const normalizedQuery = query.trim().toLowerCase();
-  const filteredPurchaseOrders = useMemo(() => purchaseOrders.filter((po) => {
+  const filteredPurchaseOrders = useMemo(() => purchaseOrders.filter((po) => po.sourceType !== 'MOVE_IN').filter((po) => {
     if (!normalizedQuery) return true;
     const text = [
       po.no,
