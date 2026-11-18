@@ -74,6 +74,11 @@ async def _hydrate(doc: dict) -> dict:
         loads = await db.inbound_loads.find({"poId": row["poId"]}, {"_id": 0}).sort("createdAt", -1).to_list(1000)
         row["inboundLoads"] = loads
         row["unloadingCostTotal"] = sum(float((x.get("unloadingCost") or {}).get("chargeable", 0) or 0) for x in loads if x.get("status") == "Selesai")
+        row["pendingInboundQty"] = sum(
+            float(item.get("qty", 0) or 0)
+            for load in loads if load.get("status") in ("Menunggu Bongkar", "Sedang Bongkar")
+            for item in load.get("items", [])
+        )
         row["completedStacks"] = sorted({
             str(item.get("stackCode") or "").strip()
             for load in loads if load.get("status") == "Selesai"
@@ -84,6 +89,7 @@ async def _hydrate(doc: dict) -> dict:
         row["_receivedQty"] = sum(float(x.get("qty", 0) or 0) for r in row.get("receipts", []) for x in r.get("items", []))
         row["inboundLoads"] = []
         row["unloadingCostTotal"] = 0
+        row["pendingInboundQty"] = 0
         row["completedStacks"] = []
 
     product_ids = {x.get("productId") for x in row.get("items", []) if x.get("productId")}
@@ -131,6 +137,9 @@ async def create_move_in_plotting(body: MoveInPlottingInput, user: dict = Depend
             "qty": float(item.qty),
             "unit": product.get("unit", ""),
             "weight": float(product.get("weight", 0) or 0),
+            "secondary": product.get("secondary", ""),
+            "secondaryQty": float(product.get("secondaryQty", 0) or 0),
+            "channel": product.get("channel", "KOM"),
         })
 
     plotting_date = body.plottingDate.strip()
@@ -148,10 +157,10 @@ async def create_move_in_plotting(body: MoveInPlottingInput, user: dict = Depend
             **item,
             "receivedQty": 0.0,
             "cancelledQty": 0.0,
-            "secondary": "",
-            "secondaryQty": 0.0,
+            "secondary": item.get("secondary", ""),
+            "secondaryQty": float(item.get("secondaryQty", 0) or 0),
             "cost": 0.0,
-            "channel": "KOM",
+            "channel": item.get("channel", "KOM"),
         })
 
     po_doc = {
@@ -311,7 +320,149 @@ async def list_move_in_legacy_references(user: dict = Depends(get_current_user))
     return rows[:500]
 
 
+async def _ensure_plotting_inbound_plan(plotting: dict) -> dict:
+    """Create/reuse the PO-compatible inbound parent for a Move In plotting.
+
+    Legacy Move In progress rows never changed stock. They are converted only
+    into Menunggu Bongkar vehicle plans so the normal inbound engine remains
+    authoritative for stack, cost, good/damaged stock and PO receivedQty.
+    """
+    plotting_id = str(plotting.get("id") or "")
+    po = None
+    po_id = str(plotting.get("poId") or "")
+    if po_id:
+        po = await db.purchase_orders.find_one({"id": po_id}, {"_id": 0})
+    if not po:
+        po = await db.purchase_orders.find_one({"moveInPlottingId": plotting_id}, {"_id": 0})
+    if not po:
+        product_ids = [str(x.get("productId") or "") for x in plotting.get("items", []) if x.get("productId")]
+        products = {
+            p["id"]: p
+            for p in await db.products.find({"id": {"$in": product_ids}}, {"_id": 0}).to_list(500)
+        } if product_ids else {}
+        po_id = new_id()
+        po_items = []
+        for item in plotting.get("items", []):
+            product = products.get(str(item.get("productId") or ""), {})
+            po_items.append({
+                "productId": item.get("productId", ""),
+                "sku": product.get("sku", item.get("sku", "")),
+                "name": product.get("name", item.get("name", "")),
+                "qty": float(item.get("qty", 0) or 0),
+                "receivedQty": 0.0,
+                "cancelledQty": 0.0,
+                "unit": product.get("unit", item.get("unit", "")),
+                "weight": float(product.get("weight", item.get("weight", 0)) or 0),
+                "secondary": product.get("secondary", item.get("secondary", "")),
+                "secondaryQty": float(product.get("secondaryQty", item.get("secondaryQty", 0)) or 0),
+                "cost": 0.0,
+                "channel": product.get("channel", item.get("channel", "KOM")),
+            })
+        po = {
+            "id": po_id,
+            "no": plotting.get("plotNo", f"PLT-IN/{plotting_id[:8]}"),
+            "supplier": plotting.get("senderName", ""),
+            "date": f"{plotting.get('plottingDate', '')}T00:00:00+07:00",
+            "status": "Belum Diterima",
+            "items": po_items,
+            "total": 0,
+            "sourceType": "MOVE_IN",
+            "moveInPlottingId": plotting_id,
+            "moveInScope": plotting.get("scope", ""),
+            "moveInSenderType": plotting.get("senderType", ""),
+            "created_by": plotting.get("createdBy", "Sistem"),
+            "created_at": plotting.get("createdAt", now_iso()),
+        }
+        await db.purchase_orders.insert_one(dict(po))
+    po_id = str(po.get("id") or "")
+    if po_id and plotting.get("poId") != po_id:
+        await db.move_in_plottings.update_one(
+            {"id": plotting_id},
+            {"$set": {"poId": po_id, "updatedAt": now_iso()}},
+        )
+
+    receipts = list(plotting.get("receipts", []))
+    changed = False
+    po_items = {str(x.get("productId") or ""): x for x in po.get("items", [])}
+    for receipt in receipts:
+        if receipt.get("inboundLoadId"):
+            continue
+        existing = await db.inbound_loads.find_one(
+            {"legacyMoveInReceiptId": receipt.get("id")},
+            {"_id": 0, "id": 1},
+        )
+        if existing:
+            receipt["inboundLoadId"] = existing.get("id")
+            changed = True
+            continue
+
+        stored_items = []
+        for item in receipt.get("items", []):
+            po_item = po_items.get(str(item.get("productId") or ""), {})
+            stored_items.append({
+                "productId": item.get("productId", ""),
+                "sku": po_item.get("sku", item.get("sku", "")),
+                "name": po_item.get("name", item.get("name", "")),
+                "unit": po_item.get("unit", item.get("unit", "")),
+                "qty": float(item.get("qty", 0) or 0),
+                "stackCode": "",
+                "exp": "",
+                "channel": po_item.get("channel", "KOM"),
+            })
+        if not stored_items:
+            continue
+
+        receipt_date = str(receipt.get("receiptDate") or plotting.get("plottingDate") or "").replace("-", "")
+        load_no = f"PB-MIG-{receipt_date or 'LEGACY'}-{str(receipt.get('id') or new_id())[:8].upper()}"
+        load_id = new_id()
+        created_at = receipt.get("recordedAt") or now_iso()
+        load_doc = {
+            "id": load_id,
+            "loadNo": load_no,
+            "poId": po_id,
+            "poNo": po.get("no", plotting.get("plotNo", "")),
+            "party": po.get("supplier", plotting.get("senderName", "")),
+            "polisi": str(receipt.get("vehicleNo") or "-").strip().upper(),
+            "driver": "",
+            "items": stored_items,
+            "status": "Menunggu Bongkar",
+            "keterangan": "Migrasi catatan progres Move In lama; stok belum berubah.",
+            "weighingForm": False,
+            "grossWeight": 0.0,
+            "grossMin": 0.0,
+            "grossMax": 0.0,
+            "unloadingFeeChargeMode": "PENGIRIM",
+            "createdAt": created_at,
+            "createdBy": receipt.get("recordedBy", plotting.get("createdBy", "Sistem")),
+            "moveInPlottingId": plotting_id,
+            "legacyMoveInReceiptId": receipt.get("id"),
+            "history": [{
+                "time": created_at,
+                "status": "Menunggu Bongkar",
+                "by": receipt.get("recordedBy", "Sistem"),
+                "note": "Migrasi dari pencatatan progres Move In lama. Belum mengubah stok/biaya/tumpukan.",
+            }],
+        }
+        await db.inbound_loads.insert_one(dict(load_doc))
+        receipt["inboundLoadId"] = load_id
+        receipt["migratedAt"] = now_iso()
+        changed = True
+
+    if changed:
+        await db.move_in_plottings.update_one(
+            {"id": plotting_id},
+            {"$set": {"receipts": receipts, "updatedAt": now_iso()}},
+        )
+    return po
+
+
 async def ensure_move_in_indexes():
     await db.move_in_plottings.create_index([("plottingDate", -1)])
     await db.move_in_plottings.create_index([("senderName", 1), ("plottingDate", -1)])
     await db.move_in_plottings.create_index("plotNo", unique=True)
+    await db.purchase_orders.create_index("moveInPlottingId")
+    await db.inbound_loads.create_index("legacyMoveInReceiptId")
+
+    legacy = await db.move_in_plottings.find({}, {"_id": 0}).to_list(1000)
+    for plotting in legacy:
+        await _ensure_plotting_inbound_plan(plotting)
