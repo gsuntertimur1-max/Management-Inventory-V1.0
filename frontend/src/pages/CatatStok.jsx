@@ -136,6 +136,7 @@ const CatatStok = ({ panel = '' }) => {
   const [fefoGuides, setFefoGuides] = useState({});
   const [soBalances, setSoBalances] = useState({});
   const [inboundReservations, setInboundReservations] = useState({});
+  const [outboundPrefillNo, setOutboundPrefillNo] = useState('');
 
   const historyRows = useMemo(() => [
     ...(outboundLoads || []),
@@ -354,6 +355,53 @@ const CatatStok = ({ panel = '' }) => {
     // URL preselection is intentionally one-shot once the requested PO is available.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type, searchParams, purchaseOrders, inboundReservations, poId]);
+
+  useEffect(() => {
+    const requestedDocumentNo = String(searchParams.get('documentNo') || '').trim().toUpperCase();
+    if (type !== 'KELUAR' || !requestedDocumentNo || outboundPrefillNo === requestedDocumentNo) return;
+    let cancelled = false;
+    api.get('/outbound-document-balance', { params: { documentNo: requestedDocumentNo } })
+      .then(({ data }) => {
+        if (cancelled || !data?.exists) return;
+        const docType = data.documentType || searchParams.get('documentType') || 'SO';
+        const remainingRows = (data.items || [])
+          .filter((item) => Number(item.remainingQty || 0) > 0)
+          .map((item) => {
+            const product = products.find((p) => p.id === item.productId);
+            const inputMode = item.inputMode === 'WEIGHT' && Number(product?.weight || item.unitWeight || 0) > 0 ? 'WEIGHT' : 'QTY';
+            return {
+              ...emptyRow(),
+              productId: item.productId,
+              inputMode,
+              inputValue: 0,
+              qty: 0,
+              documentNo: requestedDocumentNo,
+              documentQty: Number(item.orderedQty || 0),
+              soTakeMode: 'PARTIAL',
+              channel: item.channel || product?.channel || 'KOM',
+            };
+          });
+        setDocumentType(docType);
+        setDocumentRefs([requestedDocumentNo]);
+        setDocumentParties([data.party || '']);
+        setParty(data.party || '');
+        setRef(requestedDocumentNo);
+        if (docType === 'TM') {
+          setTransferScope(data.transferScope || '');
+          setProcessMoNo(data.processMoNo || '');
+        } else {
+          setTransferScope('');
+          setProcessMoNo('');
+        }
+        setRows(remainingRows.length ? remainingRows : [emptyRow()]);
+        setOutboundPrefillNo(requestedDocumentNo);
+        toast.success(`${docType} ${requestedDocumentNo} dimuat. Isi jumlah kendaraan/tahap yang akan dikeluarkan.`);
+      })
+      .catch((e) => {
+        if (!cancelled) toast.error(e?.response?.data?.detail || e.message || 'Gagal memuat dokumen pengeluaran');
+      });
+    return () => { cancelled = true; };
+  }, [type, searchParams, outboundPrefillNo, products]);
 
   const receiptQty = (row) => selectedPO ? Number(row.plannedQty || 0) : Number(row.goodQty || 0) + Number(row.damagedQty || 0);
   const chosen = rows
