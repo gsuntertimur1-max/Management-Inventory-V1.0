@@ -19,6 +19,7 @@ import Penerimaan from './pages/Penerimaan';
 import PemenuhanKlaim from './pages/PemenuhanKlaim';
 import MonitorSO from './pages/MonitorSO';
 import PurchaseOrder from './pages/PurchaseOrder';
+import MoveIn from './pages/MoveIn';
 import Supplier from './pages/Supplier';
 import LayarAntrianEnhanced from './pages/LayarAntrianEnhanced';
 import Pengguna from './pages/Pengguna';
@@ -95,6 +96,7 @@ function AppRoutes() {
       <Route path="/laporan-operasional" element={<Protected permission="mainInventory"><LaporanOperasional /></Protected>} />
       <Route path="/riwayat-bazar-ecom" element={<Protected permission="consignmentHistory"><RiwayatConsignment /></Protected>} />
       <Route path="/po" element={<Protected permission="mainInventory"><PurchaseOrder /></Protected>} />
+      <Route path="/move-in" element={<Protected permission="inbound"><MoveIn /></Protected>} />
       <Route path="/supplier" element={<Protected permission="mainInventory"><Supplier /></Protected>} />
       <Route path="/antrian" element={<Protected permission="mainInventory"><LayarAntrianEnhanced /></Protected>} />
       <Route path="/pengguna" element={<Protected permission="users"><Pengguna /></Protected>} />
