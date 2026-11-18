@@ -122,7 +122,11 @@ const MoveIn = () => {
     }
   };
   const openDocument = (plotting) => {
-    const type = plotting.scope === 'REBAGGING' || plotting.scope === 'REPROSES' ? 'MO' : 'TM';
+    const processScope = plotting.scope === 'REBAGGING' || plotting.scope === 'REPROSES';
+    const docs = plotting.documentAllocations || [];
+    const hasMo = docs.some((x) => x.documentType === 'MO');
+    const hasTm = docs.some((x) => x.documentType === 'TM');
+    const type = processScope ? (hasMo && !hasTm ? 'TM' : 'MO') : 'TM';
     setActiveDocument({
       plotting,
       documentType: type,
@@ -157,7 +161,7 @@ const MoveIn = () => {
     <div>
       <div className="label-mono mb-2">Pengadaan</div>
       <h1 className="font-display text-4xl font-bold">Move In / TM In</h1>
-      <p className="text-sm text-[#8b93a1] mt-2 max-w-4xl">Plotting menjadi induk penerimaan seperti PO. Kendaraan, bongkar, biaya bongkar, baik/rusak, dan tumpukan tujuan memakai proses Penerimaan yang sudah berjalan. MO hanya tersedia untuk Rebagging/Reproses; MO/TM dapat ditautkan belakangan tanpa menambah stok dua kali.</p>
+      <p className="text-sm text-[#8b93a1] mt-2 max-w-4xl">Plotting menjadi induk penerimaan seperti PO. Kendaraan, bongkar, biaya bongkar, baik/rusak, dan tumpukan tujuan memakai proses Penerimaan yang sudah berjalan. Khusus Rebagging/Reproses berlaku pasangan dokumen 1 MO = 1 TM; keduanya dapat menyusul tanpa menambah stok dua kali.</p>
     </div>
 
     <section className="card-surface p-5">
@@ -260,7 +264,7 @@ const MoveIn = () => {
 
     {activeDocument && <div className="fixed inset-0 z-[100] bg-black/75 flex items-center justify-center p-4"><div className="card-surface w-full max-w-xl p-6">
       <h2 className="font-display text-xl font-bold">Tautkan Dokumen</h2>
-      <p className="text-xs text-[#8b93a1] mt-1 mb-4">{activeDocument.plotting.plotNo} · Tulis nomor persis seperti dokumen resmi. Dokumen hanya menyelesaikan administrasi dan tidak mengubah stok, tumpukan, maupun biaya bongkar.</p>
+      <p className="text-xs text-[#8b93a1] mt-1 mb-4">{activeDocument.plotting.plotNo} · Tulis nomor persis seperti dokumen resmi. Khusus Rebagging/Reproses berlaku <b>1 MO = 1 TM</b>; sistem akan menolak bila satu MO dicoba dipasangkan ke TM berbeda atau sebaliknya. Penautan dokumen tidak mengubah stok, tumpukan, maupun biaya bongkar.</p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <select className={inputCls} value={activeDocument.documentType} onChange={(e) => setActiveDocument({ ...activeDocument, documentType: e.target.value })}>
           <option value="TM">TM</option>
