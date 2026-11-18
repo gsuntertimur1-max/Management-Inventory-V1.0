@@ -461,6 +461,7 @@ export const DataProvider = ({ children }) => {
       addConsignmentOpname,
       refreshConsignmentFlow,
       refreshConsignmentLayouts,
+      refreshPurchaseOrders,
     }}>
       {children}
     </DataContext.Provider>
