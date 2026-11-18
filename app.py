@@ -10,6 +10,7 @@ from backend.inventory_flow import router as inventory_flow_router
 from backend.inbound_vehicle_flow import router as inbound_vehicle_flow_router, ensure_inbound_load_indexes
 from backend.master_products import router as master_products_router
 from backend.outbound_flow import router as outbound_flow_router
+from backend.outbound_document_master import router as outbound_document_master_router
 from backend.outbound_reservation_view import router as outbound_reservation_view_router
 from backend.so_monitoring import router as so_monitoring_router
 from backend.outbound_start_guard import router as outbound_start_guard_router
@@ -102,6 +103,7 @@ app.include_router(inbound_vehicle_flow_router)
 app.include_router(inventory_flow_router)
 app.include_router(master_products_router)
 app.include_router(outbound_flow_router)
+app.include_router(outbound_document_master_router)
 app.include_router(cost_payments_router)
 app.include_router(consignment_documents_router)
 app.include_router(consignment_damaged_router)
