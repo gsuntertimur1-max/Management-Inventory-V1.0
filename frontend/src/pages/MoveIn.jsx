@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FileClock, FileText, History, Link2, Plus, RefreshCcw, Truck } from 'lucide-react';
+import { FileDown, History, Link2, Plus, RefreshCcw, Truck } from 'lucide-react';
 import { toast } from 'sonner';
-import api, { apiError } from '../lib/api';
+import api, { apiError, downloadApiFile } from '../lib/api';
 import { useData } from '../context/DataContext';
 import SearchableProductSelect from '../components/SearchableProductSelect';
 import { formatNum } from '../mock';
@@ -23,6 +23,7 @@ const MoveIn = () => {
   const [query, setQuery] = useState('');
   const [legacyQuery, setLegacyQuery] = useState('');
   const [saving, setSaving] = useState(false);
+  const [downloadingId, setDownloadingId] = useState('');
   const [activeDocument, setActiveDocument] = useState(null);
   const [form, setForm] = useState({
     plottingDate: today(),
@@ -107,12 +108,26 @@ const MoveIn = () => {
     }
   };
 
+  const downloadRecap = async (plotting) => {
+    if (!plotting?.poId || downloadingId) return;
+    setDownloadingId(plotting.id);
+    try {
+      const safeNo = String(plotting.plotNo || 'MOVE-IN').replace(/[^a-zA-Z0-9_-]+/g, '-');
+      await downloadApiFile(`/export/purchase-order/${plotting.poId}/receiving-recap.pdf`, `rekap_move_in_${safeNo}.pdf`);
+      toast.success(`Rekap penerimaan ${plotting.plotNo} berhasil diunduh`);
+    } catch (e) {
+      toast.error(apiError(e));
+    } finally {
+      setDownloadingId('');
+    }
+  };
   const openDocument = (plotting) => {
     const type = plotting.scope === 'REBAGGING' || plotting.scope === 'REPROSES' ? 'MO' : 'TM';
     setActiveDocument({
       plotting,
       documentType: type,
       documentNo: '',
+      documentDate: today(),
       productId: plotting.items?.[0]?.productId || '',
       qty: '',
       note: '',
@@ -127,6 +142,7 @@ const MoveIn = () => {
       await api.post(`/move-in-plottings/${activeDocument.plotting.id}/document-allocations`, {
         documentType: activeDocument.documentType,
         documentNo: activeDocument.documentNo,
+        documentDate: activeDocument.documentDate,
         productId: activeDocument.productId,
         qty: Number(activeDocument.qty),
         note: activeDocument.note,
@@ -204,12 +220,28 @@ const MoveIn = () => {
                 <div><span className="text-[#6b7688]">Tumpukan tujuan</span><div className="font-mono mt-1">{(row.completedStacks || []).join(', ') || 'Belum ada'}</div></div>
                 <div><span className="text-[#6b7688]">Biaya bongkar tercatat</span><div className="font-mono mt-1">Rp {formatNum(row.unloadingCostTotal || 0)}</div></div>
               </div>
-              <div className="mt-2 space-y-1">{(row.inboundLoads || []).slice(0, 8).map((load) => <div key={load.id} className="flex flex-wrap gap-x-2 text-[#8b93a1]"><span className="font-mono text-[#cbd5e1]">{load.loadNo}</span><span>{load.polisi || '—'}</span><span>{load.status}</span><span>{(load.items || []).map((x) => x.stackCode).filter(Boolean).join(', ') || 'tumpukan belum dipilih'}</span>{load.status === 'Selesai' && <span>Rp {formatNum(load.unloadingCost?.chargeable || 0)}</span>}</div>)}</div>
+              <div className="mt-2 space-y-2">{(row.inboundLoads || []).slice(0, 12).map((load) => {
+  const plan = (load.items || []).reduce((s, x) => s + Number(x.qty || 0), 0);
+  const actual = (load.actualItems || []).reduce((s, x) => s + Number(x.documentActualQty ?? x.actualQty ?? 0), 0);
+  const variance = actual - plan;
+  const actualRows = load.actualItems || [];
+  const stacks = actualRows.map((x) => x.stackCode).filter(Boolean);
+  const expiries = actualRows.map((x) => x.exp).filter(Boolean);
+  const varianceLabel = variance < 0 ? `Kurang ${formatNum(Math.abs(variance))}` : variance > 0 ? `Lebih ${formatNum(variance)}` : "Sesuai";
+  return <div key={load.id} className="rounded-lg border border-[#1f2937] px-3 py-2">
+    <div className="flex flex-wrap gap-x-2 gap-y-1 text-[#8b93a1]">
+      <span className="font-mono text-[#cbd5e1]">{load.loadNo}</span><span>{load.polisi || "—"}</span><span>{load.status}</span>
+      {load.status === "Selesai" && <><span>Rencana {formatNum(plan)}</span><span>Aktual {formatNum(actual)}</span><span className={variance < 0 ? "text-[#fbbf24]" : variance > 0 ? "text-[#93c5fd]" : "text-[#86efac]"}>{varianceLabel}</span></>}
+    </div>
+    {load.status === "Selesai" && <div className="mt-1 flex flex-wrap gap-x-3 text-[11px] text-[#6b7688]"><span>Tumpukan: {stacks.join(", ") || "—"}</span><span>Expired: {expiries.join(", ") || "—"}</span><span>Biaya bongkar: Rp {formatNum(load.unloadingCost?.chargeable || 0)}</span>{actualRows.some((x) => x.discrepancyReason) && <span>Alasan: {actualRows.map((x) => x.discrepancyReason).filter(Boolean).join("; ")}</span>}</div>}
+  </div>;
+})}</div>
             </div>}
-            {(row.documentAllocations || []).length > 0 && <div className="mt-3 flex flex-wrap gap-2">{row.documentAllocations.map((doc) => <span key={doc.id} className="text-[11px] px-2 py-1 rounded-lg border border-[#334155]"><b>{doc.documentType}</b> {doc.documentNo} · {formatNum(doc.qty)}</span>)}</div>}
+            {(row.documentAllocations || []).length > 0 && <div className="mt-3 flex flex-wrap gap-2">{row.documentAllocations.map((doc) => <span key={doc.id} className="text-[11px] px-2 py-1 rounded-lg border border-[#334155]"><b>{doc.documentType}</b> {doc.documentNo}{doc.documentDate ? ` · ${doc.documentDate}` : ""} · {formatNum(doc.qty)}</span>)}</div>}
             <div className="flex flex-wrap gap-2 mt-4">
               <button onClick={() => openInbound(row)} disabled={received >= planned - 1e-9} className="text-xs px-3 py-2 rounded-lg border border-[#2563eb] text-[#93c5fd] disabled:opacity-40"><Truck size={13} className="inline mr-1"/>Tambah Kendaraan / Proses Penerimaan</button>
-              <button onClick={() => openDocument(row)} disabled={received <= 0} className="text-xs px-3 py-2 rounded-lg border border-[#334155] text-[#cbd5e1] disabled:opacity-40"><Link2 size={13} className="inline mr-1"/>Tautkan MO/TM</button>
+              <button onClick={() => openDocument(row)} className="text-xs px-3 py-2 rounded-lg border border-[#334155] text-[#cbd5e1]"><Link2 size={13} className="inline mr-1"/>Tautkan MO/TM</button>
+              {received > 0 && <button onClick={() => downloadRecap(row)} disabled={downloadingId === row.id} className="text-xs px-3 py-2 rounded-lg border border-[#22c55e]/60 text-[#4ade80] disabled:opacity-40"><FileDown size={13} className="inline mr-1"/>{downloadingId === row.id ? "Menyiapkan…" : "Rekap Penerimaan PDF"}</button>}
             </div>
           </div>;
         })}
@@ -228,7 +260,7 @@ const MoveIn = () => {
 
     {activeDocument && <div className="fixed inset-0 z-[100] bg-black/75 flex items-center justify-center p-4"><div className="card-surface w-full max-w-xl p-6">
       <h2 className="font-display text-xl font-bold">Tautkan Dokumen</h2>
-      <p className="text-xs text-[#8b93a1] mt-1 mb-4">{activeDocument.plotting.plotNo} · Dokumen hanya menyelesaikan administrasi, tidak mengubah stok.</p>
+      <p className="text-xs text-[#8b93a1] mt-1 mb-4">{activeDocument.plotting.plotNo} · Tulis nomor persis seperti dokumen resmi. Dokumen hanya menyelesaikan administrasi dan tidak mengubah stok, tumpukan, maupun biaya bongkar.</p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <select className={inputCls} value={activeDocument.documentType} onChange={(e) => setActiveDocument({ ...activeDocument, documentType: e.target.value })}>
           <option value="TM">TM</option>
@@ -236,6 +268,7 @@ const MoveIn = () => {
         </select>
         <input className={inputCls} value={activeDocument.documentNo} onChange={(e) => setActiveDocument({ ...activeDocument, documentNo: e.target.value.toUpperCase() })} placeholder={activeDocument.documentType === 'MO' ? 'Nomor MO' : 'Nomor TM'}/>
       </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2"><input type="date" className={inputCls} value={activeDocument.documentDate || ""} onChange={(e) => setActiveDocument({ ...activeDocument, documentDate: e.target.value })}/><div className="rounded-lg border border-[#334155] px-3 py-2 text-xs text-[#8b93a1] flex items-center">Tanggal dokumen resmi</div></div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2"><select className={inputCls} value={activeDocument.productId} onChange={(e) => setActiveDocument({ ...activeDocument, productId: e.target.value })}>{(activeDocument.plotting.items || []).map((item) => <option key={item.productId} value={item.productId}>{item.name}</option>)}</select><input type="number" min="0" className={inputCls} value={activeDocument.qty} onChange={(e) => setActiveDocument({ ...activeDocument, qty: e.target.value })} placeholder="Kuantum dokumen"/></div>
       <textarea className={`${inputCls} mt-2`} rows={2} value={activeDocument.note} onChange={(e) => setActiveDocument({ ...activeDocument, note: e.target.value })} placeholder="Catatan (opsional)"/>
       <div className="flex justify-end gap-2 mt-5"><button onClick={() => setActiveDocument(null)} className="px-4 py-2 rounded-lg border border-[#334155]">Batal</button><button onClick={saveDocument} className="btn-primary px-5 py-2 rounded-lg">Tautkan Dokumen</button></div>
