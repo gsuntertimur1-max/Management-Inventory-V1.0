@@ -347,6 +347,14 @@ const CatatStok = ({ panel = '' }) => {
     setRows(remainingItems.length ? remainingItems : [emptyRow()]);
   };
 
+  useEffect(() => {
+    const requestedPoId = searchParams.get('poId');
+    if (type !== 'MASUK' || !requestedPoId || poId === requestedPoId) return;
+    if (purchaseOrders.some((item) => item.id === requestedPoId)) choosePO(requestedPoId);
+    // URL preselection is intentionally one-shot once the requested PO is available.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [type, searchParams, purchaseOrders, inboundReservations, poId]);
+
   const receiptQty = (row) => selectedPO ? Number(row.plannedQty || 0) : Number(row.goodQty || 0) + Number(row.damagedQty || 0);
   const chosen = rows
     .map((row) => ({ ...row, qty: type === 'MASUK' ? receiptQty(row) : row.qty, product: products.find((product) => product.id === row.productId) }))
