@@ -18,6 +18,7 @@ import Pengeluaran from './pages/Pengeluaran';
 import DokumenPengeluaran from './pages/DokumenPengeluaran';
 import Penerimaan from './pages/Penerimaan';
 import PemenuhanKlaim from './pages/PemenuhanKlaim';
+import SelisihMitra from './pages/SelisihMitra';
 import MonitorSO from './pages/MonitorSO';
 import PurchaseOrder from './pages/PurchaseOrder';
 import MoveIn from './pages/MoveIn';
@@ -88,6 +89,7 @@ function AppRoutes() {
       <Route path="/temuan-kerusakan" element={<Protected permission="operations"><CatatStok panel="damage" /></Protected>} />
       <Route path="/retur-pemasok" element={<Protected permission="operations"><CatatStok panel="supplier-return" /></Protected>} />
       <Route path="/penerimaan" element={<Protected permission="inbound"><Penerimaan /></Protected>} />
+      <Route path="/selisih-mitra" element={<Protected permission="inbound"><SelisihMitra /></Protected>} />
       <Route path="/pemenuhan-klaim" element={<Protected permission="inbound"><PemenuhanKlaim /></Protected>} />
       <Route path="/dokumen-pengeluaran" element={<Protected permission="outboundPage"><DokumenPengeluaran /></Protected>} />
       <Route path="/pengeluaran" element={<Protected permission="outboundPage"><><PengeluaranReservationPanel /><Pengeluaran /></></Protected>} />
