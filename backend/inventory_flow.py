@@ -1222,21 +1222,31 @@ async def settle_inbound_shortage_claim_group(
         default_stack = unique_stacks[0] if len(unique_stacks) == 1 else ""
         target_stack = str(body.stackCode or default_stack).strip().upper()
         fulfilled_kg = 0.0
+        # stock_added_qty = tambahan fisik bersih dari pengirim (ekuivalen unit).
+        # Untuk BS yang diperbaiki, jumlah yang masuk stok baik dapat lebih besar
+        # karena saldo rusak lama direklasifikasi menjadi stok baik.
         stock_added_qty = 0.0
+        good_added_qty = 0.0
+        damaged_added_qty = 0.0
+        damaged_reclassified_qty = 0.0
+        stack_added_qty = 0.0
         replacement_expected_kg = 0.0
 
         if method == "TAMBAHAN_FISIK":
             fulfilled_kg = float(body.fulfilledWeightKg or 0)
             if fulfilled_kg <= 1e-9:
                 raise HTTPException(status_code=400, detail="Berat pemenuhan fisik wajib lebih dari 0 kg")
+            stock_added_qty = fulfilled_kg / unit_weight_kg
             if stock_condition == "BAIK":
                 if not target_stack:
                     raise HTTPException(status_code=400, detail="Pilih tumpukan tujuan pemenuhan fisik")
                 if target_stack not in await valid_stack_codes():
                     raise HTTPException(status_code=400, detail="Tumpukan tujuan tidak valid")
+                good_added_qty = stock_added_qty
+                stack_added_qty = good_added_qty
             else:
                 target_stack = ""
-            stock_added_qty = fulfilled_kg / unit_weight_kg
+                damaged_added_qty = stock_added_qty
         elif method == "GANTI_KARUNG":
             if int(body.replacementBagCount or 0) <= 0:
                 raise HTTPException(status_code=400, detail="Jumlah kemasan pengganti wajib diisi")
@@ -1247,14 +1257,24 @@ async def settle_inbound_shortage_claim_group(
             if withdrawn_kg >= replacement_expected_kg - 1e-9:
                 raise HTTPException(status_code=400, detail="Berat kemasan lama harus lebih kecil dari berat kemasan pengganti")
             fulfilled_kg = replacement_expected_kg - withdrawn_kg
-            if stock_condition == "BAIK":
-                if not target_stack:
-                    raise HTTPException(status_code=400, detail="Pilih tumpukan tempat kemasan pengganti diterima")
-                if target_stack not in await valid_stack_codes():
-                    raise HTTPException(status_code=400, detail="Tumpukan tujuan tidak valid")
-            else:
-                target_stack = ""
             stock_added_qty = fulfilled_kg / unit_weight_kg
+
+            if not target_stack:
+                raise HTTPException(status_code=400, detail="Pilih tumpukan untuk kemasan hasil perbaikan")
+            if target_stack not in await valid_stack_codes():
+                raise HTTPException(status_code=400, detail="Tumpukan tujuan tidak valid")
+
+            if stock_condition == "RUSAK":
+                # Contoh B0010152Z: 2 BS berisi 15 kg = 1,5 pack rusak.
+                # Mitra menambah 5 kg lalu kemasan dijahit ulang -> 2 pack baik.
+                damaged_reclassified_qty = withdrawn_kg / unit_weight_kg
+                good_added_qty = float(body.replacementBagCount or 0)
+                stack_added_qty = good_added_qty
+            else:
+                # Legacy kurang timbang barang baik: isi lama sudah tercatat sebagai
+                # stok baik ekuivalen, sehingga hanya tambahan kg yang menambah stok.
+                good_added_qty = stock_added_qty
+                stack_added_qty = good_added_qty
         elif method == "ADMINISTRATIF":
             fulfilled_kg = float(body.fulfilledWeightKg or 0)
             if fulfilled_kg <= 1e-9:
@@ -1278,6 +1298,17 @@ async def settle_inbound_shortage_claim_group(
             first_claim.get("channel") or (first_state.get("sourceTx") or {}).get("channel"),
             normalize_channel(product.get("channel")),
         )
+        if damaged_reclassified_qty > 1e-9:
+            damaged_balance = float(product.get("damaged", 0) or 0)
+            channel_damaged = float(((product.get("channelStock") or {}).get(channel) or {}).get("damaged", 0) or 0)
+            if damaged_balance + 1e-9 < damaged_reclassified_qty or channel_damaged + 1e-9 < damaged_reclassified_qty:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Saldo barang rusak tidak mencukupi untuk diperbaiki "
+                        f"({damaged_reclassified_qty:g} {product.get('unit', '')}). Muat ulang stok rusak terlebih dahulu."
+                    ),
+                )
         exp = str(first_claim.get("exp") or (first_state.get("sourceTx") or {}).get("exp") or "").strip()
         po_no = str(first_claim.get("poNo") or "")
         supplier = str(first_claim.get("supplier") or "")
@@ -1331,13 +1362,14 @@ async def settle_inbound_shortage_claim_group(
                     if method == "GANTI_KARUNG"
                     else ("PEMENUHAN_KLAIM_FISIK" if method == "TAMBAHAN_FISIK" else "PENYELESAIAN_KLAIM_ADMIN")
                 ),
-                "kondisi": stock_condition,
+                "kondisi": "BAIK" if good_added_qty > 1e-9 else stock_condition,
                 "product_id": product.get("id", ""),
                 "product": product.get("name", ""),
                 "sku": product.get("sku", ""),
                 "change": stock_added_qty,
-                "good_change": stock_added_qty if stock_condition == "BAIK" else 0,
-                "damaged_change": stock_added_qty if stock_condition == "RUSAK" else 0,
+                "good_change": good_added_qty,
+                "damaged_change": damaged_added_qty - damaged_reclassified_qty,
+                "damaged_reclassified_qty": damaged_reclassified_qty,
                 "unit": product.get("unit", ""),
                 "weight": unit_weight_kg,
                 "total_weight": fulfilled_kg,
@@ -1345,8 +1377,8 @@ async def settle_inbound_shortage_claim_group(
                 "secondaryQty": float(product.get("secondaryQty", 0) or 0),
                 "channel": channel,
                 "exp": exp,
-                "stackCode": target_stack if stock_added_qty > 1e-9 else "",
-                "receipt_location": target_stack if stock_added_qty > 1e-9 else "",
+                "stackCode": target_stack if stack_added_qty > 1e-9 else "",
+                "receipt_location": target_stack if stack_added_qty > 1e-9 else "",
                 "penerima": supplier,
                 "polisi": "MULTI" if len({str(x.get("polisi") or "") for x in claims if x.get("polisi")}) > 1 else str(first_claim.get("polisi") or ""),
                 "operator": operator,
@@ -1360,23 +1392,32 @@ async def settle_inbound_shortage_claim_group(
                 "keterangan": str(body.note or "").strip(),
             }
 
-            if stock_added_qty > 1e-9:
-                stock_field = "damaged" if stock_condition == "RUSAK" else "stock"
+            product_inc = {}
+            if good_added_qty > 1e-9:
+                product_inc["stock"] = good_added_qty
+                product_inc[f"channelStock.{channel}.stock"] = good_added_qty
+            damaged_net = damaged_added_qty - damaged_reclassified_qty
+            if abs(damaged_net) > 1e-9:
+                product_inc["damaged"] = damaged_net
+                product_inc[f"channelStock.{channel}.damaged"] = damaged_net
+
+            if product_inc:
                 result = await db.products.update_one(
                     {"id": product["id"]},
-                    {"$inc": {stock_field: stock_added_qty, f"channelStock.{channel}.{stock_field}": stock_added_qty}},
+                    {"$inc": product_inc},
                 )
                 if result.matched_count == 0:
                     raise HTTPException(status_code=409, detail="Master produk berubah. Muat ulang lalu coba kembali.")
                 product_incremented = True
-                if stock_condition == "BAIK":
-                    await allocate_stock_to_stack(product, target_stack, stock_added_qty, operator)
-                    stack_incremented = True
+
+            if stack_added_qty > 1e-9:
+                await allocate_stock_to_stack(product, target_stack, stack_added_qty, operator)
+                stack_incremented = True
 
             await db.transactions.insert_one(dict(transaction))
             transaction_inserted = True
 
-            if stock_added_qty > 1e-9 and stock_condition == "BAIK":
+            if stack_added_qty > 1e-9:
                 from backend.stack_lots import record_receipt_lots
                 await record_receipt_lots(None, {"transactions": [transaction]})
                 lot_inserted = True
@@ -1413,7 +1454,10 @@ async def settle_inbound_shortage_claim_group(
                     "fulfilledWeightKg": take,
                     "groupFulfilledWeightKg": fulfilled_kg,
                     "stockAddedQty": stock_added_qty,
-                    "stackCode": target_stack if stock_added_qty > 1e-9 else "",
+                    "goodAddedQty": good_added_qty,
+                    "damagedAddedQty": damaged_added_qty,
+                    "damagedReclassifiedQty": damaged_reclassified_qty,
+                    "stackCode": target_stack if stack_added_qty > 1e-9 else "",
                     "replacementBagCount": int(body.replacementBagCount or 0),
                     "replacementExpectedWeightKg": replacement_expected_kg,
                     "withdrawnOldWeightKg": float(body.withdrawnOldWeightKg or 0),
@@ -1459,7 +1503,10 @@ async def settle_inbound_shortage_claim_group(
                 "method": method,
                 "fulfilledWeightKg": fulfilled_kg,
                 "stockAddedQty": stock_added_qty,
-                "stackCode": target_stack if stock_added_qty > 1e-9 else "",
+                "goodAddedQty": good_added_qty,
+                "damagedAddedQty": damaged_added_qty,
+                "damagedReclassifiedQty": damaged_reclassified_qty,
+                "stackCode": target_stack if stack_added_qty > 1e-9 else "",
                 "replacementBagCount": int(body.replacementBagCount or 0),
                 "replacementExpectedWeightKg": replacement_expected_kg,
                 "withdrawnOldWeightKg": float(body.withdrawnOldWeightKg or 0),
@@ -1483,7 +1530,10 @@ async def settle_inbound_shortage_claim_group(
                 "method": method,
                 "fulfilledWeightKg": fulfilled_kg,
                 "stockAddedQty": stock_added_qty,
-                "stackCode": target_stack if stock_added_qty > 1e-9 else "",
+                "goodAddedQty": good_added_qty,
+                "damagedAddedQty": damaged_added_qty,
+                "damagedReclassifiedQty": damaged_reclassified_qty,
+                "stackCode": target_stack if stack_added_qty > 1e-9 else "",
                 "remainingWeightKg": group_remaining_after,
                 "status": settlement_doc["status"],
                 "allocations": allocations,
@@ -1520,15 +1570,20 @@ async def settle_inbound_shortage_claim_group(
                 await db.transactions.delete_many({"id": transaction_id})
             if stack_incremented:
                 try:
-                    await decrease_stack_allocation(product["id"], target_stack, stock_added_qty, "Sistem (rollback pemenuhan klaim TM)")
+                    await decrease_stack_allocation(product["id"], target_stack, stack_added_qty, "Sistem (rollback pemenuhan klaim TM)")
                 except Exception:
                     pass
             if product_incremented:
-                stock_field = "damaged" if stock_condition == "RUSAK" else "stock"
-                await db.products.update_one(
-                    {"id": product["id"]},
-                    {"$inc": {stock_field: -stock_added_qty, f"channelStock.{channel}.{stock_field}": -stock_added_qty}},
-                )
+                rollback_inc = {}
+                if good_added_qty > 1e-9:
+                    rollback_inc["stock"] = -good_added_qty
+                    rollback_inc[f"channelStock.{channel}.stock"] = -good_added_qty
+                damaged_net = damaged_added_qty - damaged_reclassified_qty
+                if abs(damaged_net) > 1e-9:
+                    rollback_inc["damaged"] = -damaged_net
+                    rollback_inc[f"channelStock.{channel}.damaged"] = -damaged_net
+                if rollback_inc:
+                    await db.products.update_one({"id": product["id"]}, {"$inc": rollback_inc})
             raise
 
     from backend.operational_guards import idempotent_operation, lock_keys
