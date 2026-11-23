@@ -116,10 +116,104 @@ async def _hydrate(doc: dict) -> dict:
     return row
 
 
+async def _hydrate_many(docs: list[dict]) -> list[dict]:
+    if not docs:
+        return []
+
+    po_ids = {str(doc.get("poId") or "") for doc in docs if doc.get("poId")}
+    product_ids = {
+        str(item.get("productId") or "")
+        for doc in docs
+        for item in doc.get("items", [])
+        if item.get("productId")
+    }
+
+    po_rows = await db.purchase_orders.find(
+        {"id": {"$in": list(po_ids)}} if po_ids else {"id": {"$in": []}},
+        {"_id": 0},
+    ).to_list(max(len(po_ids), 1))
+    po_by_id = {str(po.get("id") or ""): po for po in po_rows}
+
+    load_rows = await db.inbound_loads.find(
+        {"poId": {"$in": list(po_ids)}} if po_ids else {"poId": {"$in": []}},
+        {"_id": 0},
+    ).sort("createdAt", -1).to_list(5000)
+    loads_by_po: dict[str, list[dict]] = {}
+    for load in load_rows:
+        loads_by_po.setdefault(str(load.get("poId") or ""), []).append(load)
+
+    product_rows = await db.products.find(
+        {"id": {"$in": list(product_ids)}} if product_ids else {"id": {"$in": []}},
+        {"_id": 0},
+    ).to_list(max(len(product_ids), 1))
+    products = {str(product.get("id") or ""): product for product in product_rows}
+
+    result = []
+    for doc in docs:
+        row = dict(doc)
+        row.pop("_id", None)
+        po = po_by_id.get(str(row.get("poId") or ""))
+
+        if po:
+            po_items = {str(x.get("productId") or ""): x for x in po.get("items", [])}
+            row["_receivedQty"] = sum(float(x.get("receivedQty", 0) or 0) for x in po.get("items", []))
+            row["poStatus"] = po.get("status", "")
+            loads = loads_by_po.get(str(po.get("id") or ""), [])
+            row["inboundLoads"] = loads
+            row["unloadingCostTotal"] = sum(
+                float((x.get("unloadingCost") or {}).get("chargeable", 0) or 0)
+                for x in loads if x.get("status") == "Selesai"
+            )
+            row["pendingInboundQty"] = sum(
+                float(item.get("qty", 0) or 0)
+                for load in loads if load.get("status") in ("Menunggu Bongkar", "Sedang Bongkar")
+                for item in load.get("items", [])
+            )
+            row["completedStacks"] = sorted({
+                str(item.get("stackCode") or "").strip()
+                for load in loads if load.get("status") == "Selesai"
+                for item in load.get("items", [])
+                if str(item.get("stackCode") or "").strip()
+            })
+        else:
+            po_items = {}
+            row["_receivedQty"] = sum(
+                float(x.get("qty", 0) or 0)
+                for receipt in row.get("receipts", [])
+                for x in receipt.get("items", [])
+            )
+            row["inboundLoads"] = []
+            row["unloadingCostTotal"] = 0
+            row["pendingInboundQty"] = 0
+            row["completedStacks"] = []
+
+        hydrated_items = []
+        for raw_item in row.get("items", []):
+            item = dict(raw_item)
+            po_item = po_items.get(str(item.get("productId") or ""))
+            if po_item:
+                item["receivedQty"] = float(po_item.get("receivedQty", 0) or 0)
+                item["cancelledQty"] = float(po_item.get("cancelledQty", 0) or 0)
+            product = products.get(str(item.get("productId") or ""), {})
+            item.update({
+                "name": product.get("name", item.get("name", "")),
+                "sku": product.get("sku", item.get("sku", "")),
+                "unit": product.get("unit", item.get("unit", "")),
+                "weight": float(product.get("weight", item.get("weight", 0)) or 0),
+            })
+            hydrated_items.append(item)
+
+        row["items"] = hydrated_items
+        row["status"] = _status(row)
+        result.append(row)
+
+    return result
+
+
 @router.get("/move-in-plottings")
 async def list_move_in_plottings(user: dict = Depends(get_current_user)):
     docs = await db.move_in_plottings.find({}, {"_id": 0}).sort([("plottingDate", -1), ("createdAt", -1)]).to_list(1000)
-    return [await _hydrate(doc) for doc in docs]
+    return await _hydrate_many(docs)
 
 
 @router.post("/move-in-plottings")
