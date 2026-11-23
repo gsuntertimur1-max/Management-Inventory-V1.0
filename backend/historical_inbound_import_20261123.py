@@ -192,7 +192,10 @@ async def _import_vehicle(plot_doc: dict, plot: dict, vehicle: dict, product: di
             poId=str(plot_doc.get("poId") or ""),
             items=[InboundPlanItem(
                 productId=product["id"],
-                qty=float(vehicle["plannedQty"]),
+                # Untuk import historis, reservasi awal memakai aktual dokumen
+                # agar kendaraan kurang/lebih kirim tetap dapat direkonstruksi.
+                # Setelah dibuat, qty rencana dikembalikan sebelum completion.
+                qty=_doc_total(vehicle),
                 stackCode=vehicle.get("stackCode", ""),
                 exp=vehicle.get("exp", ""),
                 channel=product.get("channel", "PSO"),
@@ -216,6 +219,7 @@ async def _import_vehicle(plot_doc: dict, plot: dict, vehicle: dict, product: di
                 "historicalImportAlias": plot["alias"],
                 "historicalImportSource": MARKER,
                 "createdAt": start_stamp,
+                "items.0.qty": float(vehicle["plannedQty"]),
             }},
         )
         load = await db.inbound_loads.find_one({"id": load["id"]}, {"_id": 0}) or load
