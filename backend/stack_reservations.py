@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from backend.server import db
-from backend.partner_variances import reserved_partner_excess_qty
 
 EPS = 1e-9
 ACTIVE_STATUSES = ["Menunggu", "Sedang Dimuat"]
@@ -25,6 +24,8 @@ async def reserved_stack_qty(product_id: str, stack_code: str, exclude_load_id: 
 
 async def available_stack_qty(product_id: str, stack_code: str, physical_qty: float, exclude_load_id: str = "") -> tuple[float, float]:
     outbound_reserved = await reserved_stack_qty(product_id, stack_code, exclude_load_id)
+    # Lazy import avoids the startup cycle operational_guards -> outbound -> FEFO -> stack reservations.
+    from backend.partner_variances import reserved_partner_excess_qty
     partner_reserved = await reserved_partner_excess_qty(product_id, stack_code=stack_code)
     reserved = outbound_reserved + partner_reserved
     return reserved, max(float(physical_qty or 0) - reserved, 0.0)
