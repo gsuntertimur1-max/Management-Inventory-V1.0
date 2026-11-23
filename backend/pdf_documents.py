@@ -429,7 +429,7 @@ async def export_purchase_order_receiving_recap_pdf(po_id: str, user: dict = Dep
                 Paragraph(_num(row["good_netto"]), tiny),
                 Paragraph(escape(row["stacks"]), tiny),
                 Paragraph(_num(row["weighing"]) if row["weighing"] else "-", tiny),
-                Paragraph(escape(row["note"]), tiny_left),
+                "",  # Keterangan Mitra sengaja dikosongkan; selisih dicatat di ledger Selisih Mitra.
             ])
             row_number += 1
 
