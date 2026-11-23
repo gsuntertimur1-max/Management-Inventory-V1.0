@@ -27,6 +27,7 @@ from backend.server import (
 from backend.stack_allocations import valid_stack_codes, allocate_stock_to_stack, decrease_stack_allocation, reconcile_product_allocations
 from backend.fefo_selection import get_fefo_pick_guide, selection_requires_reason
 from backend.stack_reservations import available_stack_qty
+from backend.partner_variances import reserved_partner_excess_qty
 from backend.consignment_locations import normalize_consignment_stack_code
 from backend.work_time_costs import handling_fee, holiday_from_settings, local_datetime, work_split
 
@@ -926,6 +927,8 @@ async def _reserved_qty(product_id: str, kondisi: str, exclude_id: str = "", cha
         for item in doc.get("items", []):
             if item.get("productId") == product_id and (not channel or normalize_channel(item.get("channel"), normalize_channel(doc.get("channel"))) == channel):
                 total += float(item.get("qty", 0) or 0)
+    if str(kondisi or "BAIK").strip().upper() == "BAIK":
+        total += await reserved_partner_excess_qty(product_id, channel=channel)
     return total
 
 
