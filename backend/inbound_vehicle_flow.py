@@ -580,7 +580,7 @@ async def complete_inbound_load(load_id: str, body: InboundLoadComplete, user: d
                 shortBagActualWeightKg=short_actual_kg,
                 damagedPackageCount=damaged_package_count,
                 damagedActualWeightKg=damaged_actual_kg,
-                shortageClaimReason=actual.shortageClaimReason.strip() or ("Karung sobek / tidak utuh saat pembongkaran" if shortage_weight_kg > EPS else ""),
+                shortageClaimReason=actual.shortageClaimReason.strip() or ("Kemasan rusak / kurang timbang saat pembongkaran" if shortage_weight_kg > EPS else ""),
                 normalQtyBefore1600=normal,
                 exp=actual.exp.strip() or str(planned_item.get("exp") or ""),
                 stackCode=stack_code,
