@@ -57,7 +57,6 @@ from backend.cost_payment_hardening import router as cost_payment_hardening_rout
 from backend.consignment_documents import router as consignment_documents_router, ensure_consignment_document_indexes
 from backend.monitoring_pdf import router as monitoring_pdf_router
 from backend.move_in_flow import router as move_in_flow_router, ensure_move_in_indexes
-from backend.historical_inbound_import_20261123 import run_historical_inbound_import_20261123
 import backend.opname_lot_atomic  # noqa: F401 - installs compensated lot reducer for opname engines
 
 # QC state is authoritative for explicit QC-linked receipts. PENDING/REJECTED must
@@ -163,7 +162,6 @@ async def hardened_lifespan(application):
         await ensure_consignment_document_indexes()
         await ensure_consignment_location_codes()
         await ensure_move_in_indexes()
-        await run_historical_inbound_import_20261123()
         yield
 
 
