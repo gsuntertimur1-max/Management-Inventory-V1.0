@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, UploadFile, File
 from fastapi.responses import StreamingResponse
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ReturnDocument
 from pymongo.errors import OperationFailure
@@ -1539,3 +1540,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Compress large JSON/history responses transparently for browser clients.
+app.add_middleware(GZipMiddleware, minimum_size=2048, compresslevel=4)
