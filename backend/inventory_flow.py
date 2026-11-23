@@ -65,6 +65,10 @@ class ReceiptItemInput(BaseModel):
     poReceivedQty: float | None = Field(default=None, ge=0)
     shortBagCount: int = Field(default=0, ge=0)
     shortBagActualWeightKg: float = Field(default=0, ge=0)
+    # BS/kemasan rusak dapat berjumlah utuh secara dokumen tetapi isi aktualnya
+    # lebih ringan. Saldo rusak disimpan sebagai ekuivalen qty berdasarkan kg aktual.
+    damagedPackageCount: int = Field(default=0, ge=0)
+    damagedActualWeightKg: float = Field(default=0, ge=0)
     shortageClaimReason: str = Field(default="", max_length=300)
     normalQtyBefore1600: float | None = Field(default=None, ge=0)
     exp: str = ""
@@ -569,7 +573,11 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
         po_received_qty = float(item.poReceivedQty) if item.poReceivedQty is not None else physical_total_qty
         short_bag_count = int(item.shortBagCount or 0)
         short_actual_kg = float(item.shortBagActualWeightKg or 0)
+        damaged_package_count = int(item.damagedPackageCount or 0)
+        damaged_actual_kg = float(item.damagedActualWeightKg or 0)
         rice_50kg = is_rice_50kg_product(product)
+        unit_weight_kg = float(product.get("weight", 0) or 0)
+        weight_based_kg = str(product.get("measureUnit") or "kg").strip().lower() == "kg" and unit_weight_kg > 0
 
         if physical_total_qty <= 0 and po_received_qty <= 0:
             raise HTTPException(status_code=400, detail="Jumlah baik atau rusak harus diisi")
@@ -578,21 +586,33 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
 
         if short_bag_count > 0:
             if not rice_50kg:
-                raise HTTPException(status_code=400, detail="Fitur karung tidak utuh hanya berlaku untuk beras kemasan 50 kg")
+                raise HTTPException(status_code=400, detail="Fitur karung tidak utuh lama hanya berlaku untuk beras kemasan 50 kg")
             expected_short_kg = float(short_bag_count) * 50.0
             if short_actual_kg > expected_short_kg + 1e-9:
                 raise HTTPException(status_code=400, detail=f"Berat aktual karung tidak utuh {product.get('name', 'beras')} melebihi {expected_short_kg:g} kg")
-            # PO/document quantity must account for every torn bag as one bag.
             if po_received_qty + 1e-9 < float(short_bag_count):
                 raise HTTPException(status_code=400, detail="Kuantum dokumen tidak sesuai jumlah karung tidak utuh")
         elif short_actual_kg > 1e-9:
             raise HTTPException(status_code=400, detail="Isi jumlah karung tidak utuh sebelum mengisi berat aktualnya")
 
-        # Normal packaged receipts remain integer-only. A 50 kg rice shortage
-        # may store a fractional bag-equivalent representing the actual kg.
+        if damaged_package_count > 0:
+            if not weight_based_kg:
+                raise HTTPException(status_code=400, detail=f"BS kurang timbang hanya dapat digunakan untuk produk berbasis kg: {product.get('name', 'produk')}")
+            expected_damaged_kg = float(damaged_package_count) * unit_weight_kg
+            if damaged_actual_kg <= 0:
+                raise HTTPException(status_code=400, detail=f"Isi berat aktual BS kurang timbang {product.get('name', 'produk')}")
+            if damaged_actual_kg > expected_damaged_kg + 1e-9:
+                raise HTTPException(status_code=400, detail=f"Berat aktual BS {product.get('name', 'produk')} melebihi berat seharusnya {expected_damaged_kg:g} kg")
+            if po_received_qty + 1e-9 < float(damaged_package_count):
+                raise HTTPException(status_code=400, detail="Kuantum dokumen tidak sesuai jumlah kemasan BS")
+        elif damaged_actual_kg > 1e-9:
+            raise HTTPException(status_code=400, detail="Isi jumlah kemasan BS sebelum mengisi berat aktual BS")
+
+        # Normal packaged receipts remain integer-only. Fractional equivalents are
+        # only accepted for actual-weight shortages.
         if good_qty > 0 and not (rice_50kg and short_bag_count > 0):
             _validate_pack_qty(product, good_qty)
-        if damaged_qty > 0:
+        if damaged_qty > 0 and damaged_package_count <= 0:
             _validate_pack_qty(product, damaged_qty)
         _validate_pack_qty(product, po_received_qty)
 
@@ -604,6 +624,8 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
             "_po_received_qty": po_received_qty,
             "_short_bag_count": short_bag_count,
             "_short_bag_actual_kg": short_actual_kg,
+            "_damaged_package_count": damaged_package_count,
+            "_damaged_actual_weight_kg": damaged_actual_kg,
             "_shortage_claim_reason": str(item.shortageClaimReason or "").strip(),
             "_rice_50kg": rice_50kg,
         })
@@ -697,8 +719,13 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
             po_received_qty = float(product.get("_po_received_qty", total_qty) or 0)
             short_bag_count = int(product.get("_short_bag_count", 0) or 0)
             short_actual_kg = float(product.get("_short_bag_actual_kg", 0) or 0)
+            damaged_package_count = int(product.get("_damaged_package_count", 0) or 0)
+            damaged_actual_kg = float(product.get("_damaged_actual_weight_kg", 0) or 0)
+            unit_weight_kg = float(product.get("weight", 0) or 0)
             short_expected_kg = float(short_bag_count) * 50.0
-            shortage_weight_kg = max(short_expected_kg - short_actual_kg, 0.0) if product.get("_rice_50kg") else 0.0
+            legacy_shortage_weight_kg = max(short_expected_kg - short_actual_kg, 0.0) if product.get("_rice_50kg") else 0.0
+            damaged_expected_kg = float(damaged_package_count) * unit_weight_kg
+            damaged_shortage_weight_kg = max(damaged_expected_kg - damaged_actual_kg, 0.0) if damaged_package_count > 0 else 0.0
             increments = {}
             if good_qty > 0:
                 increments.update({"stock": good_qty, f"channelStock.{channel}.stock": good_qty})
@@ -777,8 +804,11 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
                 "po_received_qty": po_received_qty,
                 "short_bag_count": short_bag_count if kondisi == "BAIK" else 0,
                 "short_bag_actual_weight_kg": short_actual_kg if kondisi == "BAIK" else 0,
-                "shortage_claim_weight_kg": shortage_weight_kg if kondisi == "BAIK" else 0,
-                "shortage_claim_reason": product.get("_shortage_claim_reason", "") if kondisi == "BAIK" else "",
+                "shortage_claim_weight_kg": legacy_shortage_weight_kg if kondisi == "BAIK" else damaged_shortage_weight_kg,
+                "shortage_claim_reason": product.get("_shortage_claim_reason", ""),
+                "damaged_package_count": damaged_package_count if kondisi == "RUSAK" else 0,
+                "damaged_actual_weight_kg": damaged_actual_kg if kondisi == "RUSAK" else 0,
+                "damaged_expected_weight_kg": damaged_expected_kg if kondisi == "RUSAK" else 0,
                 "unit": product.get("unit", ""),
                 "weight": float(product.get("weight", 0) or 0),
                 "total_weight": float(product.get("weight", 0) or 0) * qty,
@@ -815,7 +845,7 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
                 damaged_cost = unloading_fee if good_qty <= 0 else {}
                 txns.append(receipt_txn("RUSAK", damaged_qty, damaged_cost, good_qty <= 0))
 
-            if shortage_weight_kg > 1e-9:
+            if legacy_shortage_weight_kg > 1e-9:
                 claim_no = f"KP-{op_now.strftime('%Y%m%d')}-{await next_sequence('inbound-shortage-claim', 0):04d}"
                 shortage_claims.append({
                     "id": new_id(),
@@ -837,14 +867,52 @@ async def receive_stock(body: ReceiptInput, user: dict = Depends(require_write))
                     "shortBagCount": short_bag_count,
                     "expectedWeightKg": short_expected_kg,
                     "actualWeightKg": short_actual_kg,
-                    "shortageWeightKg": shortage_weight_kg,
+                    "shortageWeightKg": legacy_shortage_weight_kg,
                     "physicalGoodQty": good_qty,
                     "poReceivedQty": po_received_qty,
+                    "sourceCondition": "BAIK",
                     "reason": product.get("_shortage_claim_reason", "") or "Karung tidak utuh / kekurangan timbang saat penerimaan",
                     "status": "BELUM_DISELESAIKAN",
                     "settledWeightKg": 0.0,
-                    "remainingWeightKg": shortage_weight_kg,
+                    "remainingWeightKg": legacy_shortage_weight_kg,
                     "sourceStackCode": stack_code,
+                    "channel": channel,
+                    "exp": exp,
+                    "createdBy": user.get("name", ""),
+                    "settlementHistory": [],
+                })
+
+            if damaged_shortage_weight_kg > 1e-9:
+                claim_no = f"KP-{op_now.strftime('%Y%m%d')}-{await next_sequence('inbound-shortage-claim', 0):04d}"
+                shortage_claims.append({
+                    "id": new_id(),
+                    "claimNo": claim_no,
+                    "operation_id": operation_id,
+                    "inboundLoadId": body.inboundLoadId.strip(),
+                    "createdAt": time,
+                    "recordedAt": recorded_at,
+                    "operationalDate": op_now.strftime("%Y-%m-%d"),
+                    "poId": po.get("id", "") if po else "",
+                    "poNo": po.get("no", "") if po else "",
+                    "supplier": party,
+                    "polisi": body.polisi.strip().upper(),
+                    "productId": product.get("id", ""),
+                    "sku": product.get("sku", ""),
+                    "product": product.get("name", ""),
+                    "unit": product.get("unit", ""),
+                    "bagWeightKg": unit_weight_kg,
+                    "shortBagCount": damaged_package_count,
+                    "expectedWeightKg": damaged_expected_kg,
+                    "actualWeightKg": damaged_actual_kg,
+                    "shortageWeightKg": damaged_shortage_weight_kg,
+                    "physicalDamagedQty": damaged_qty,
+                    "poReceivedQty": po_received_qty,
+                    "sourceCondition": "RUSAK",
+                    "reason": product.get("_shortage_claim_reason", "") or "BS / kemasan rusak kurang timbang saat penerimaan",
+                    "status": "BELUM_DISELESAIKAN",
+                    "settledWeightKg": 0.0,
+                    "remainingWeightKg": damaged_shortage_weight_kg,
+                    "sourceStackCode": "",
                     "channel": channel,
                     "exp": exp,
                     "createdBy": user.get("name", ""),
