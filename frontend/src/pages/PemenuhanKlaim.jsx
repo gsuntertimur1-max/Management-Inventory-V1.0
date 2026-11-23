@@ -100,9 +100,9 @@ const PemenuhanKlaim = () => {
     const amount = modal.method === 'GANTI_KARUNG' ? replacementFulfilled : payload.fulfilledWeightKg;
     if (amount <= 0) return toast.error('Jumlah pemenuhan harus lebih dari 0 kg');
     if (amount > remaining + 1e-9) return toast.error(`Pemenuhan melebihi sisa klaim ${fmt(remaining)} kg`);
-    if (modal.method !== 'ADMINISTRATIF' && claimStockCondition === 'BAIK' && !payload.stackCode) return toast.error('Pilih tumpukan tujuan');
+    if ((modal.method === 'GANTI_KARUNG' || (modal.method === 'TAMBAHAN_FISIK' && claimStockCondition === 'BAIK')) && !payload.stackCode) return toast.error('Pilih tumpukan tujuan');
     if (modal.method === 'GANTI_KARUNG' && (!payload.replacementBagCount || !payload.withdrawnOldWeightKg)) {
-      return toast.error('Isi jumlah karung pengganti dan berat karung lama yang ditarik');
+      return toast.error('Isi jumlah kemasan pengganti dan berat kemasan lama yang ditarik');
     }
     if (modal.method === 'ADMINISTRATIF' && payload.note.length < 3) {
       return toast.error('Catatan penyelesaian administratif wajib diisi');
@@ -274,7 +274,7 @@ const PemenuhanKlaim = () => {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-4">
           {[
             ['TAMBAHAN_FISIK','Tambahan Fisik'],
-            ['GANTI_KARUNG','Ganti Karung'],
+            ['GANTI_KARUNG','Ganti/Jahit Kemasan'],
             ['ADMINISTRATIF','Administratif'],
           ].map(([value,label]) => <button key={value} type="button" onClick={() => setMethod(value)}
             className={`rounded-lg border px-3 py-2.5 text-xs font-semibold ${modal.method === value ? 'border-[#2563eb] bg-[#2563eb]/15 text-[#93c5fd]' : 'border-[#374151] text-[#cbd5e1]'}`}>
@@ -286,21 +286,24 @@ const PemenuhanKlaim = () => {
           <div className="rounded-lg border border-[#1d4ed8]/50 bg-[#1e3a8a]/10 px-3 py-2 text-xs text-[#bfdbfe]">Jumlah boleh lebih kecil dari sisa klaim. Contoh sisa 35 kg, hari ini datang 10 kg: status TM menjadi Dipenuhi Sebagian dan sisa 25 kg.</div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div><label className="text-xs text-[#8b93a1] block mb-1.5">Berat pemenuhan (kg)</label><input type="number" min="0.01" step="0.01" className={inputCls} value={modal.fulfilledWeightKg} onChange={(e) => setModal({...modal, fulfilledWeightKg:e.target.value})}/></div>
-            <div><label className="text-xs text-[#8b93a1] block mb-1.5">Tumpukan tujuan</label><input list="claim-stack-codes" className={inputCls} value={modal.stackCode} onChange={(e) => setModal({...modal,stackCode:e.target.value.toUpperCase()})} placeholder="Contoh 22/A03"/></div>
+            {claimStockCondition === 'BAIK'
+              ? <div><label className="text-xs text-[#8b93a1] block mb-1.5">Tumpukan tujuan</label><input list="claim-stack-codes" className={inputCls} value={modal.stackCode} onChange={(e) => setModal({...modal,stackCode:e.target.value.toUpperCase()})} placeholder="Contoh 22/A03"/></div>
+              : <div className="rounded-lg border border-[#92400e] bg-[#451a03]/20 p-3 text-xs text-[#fbbf24]">Tambahan fisik tanpa perbaikan kemasan akan menambah saldo Area Barang Rusak.</div>}
           </div>
           <div className="text-xs text-[#8b93a1]">Setara penambahan stok: <b className="text-[#e5e7eb]">{fmt(Number(modal.fulfilledWeightKg || 0) / claimUnitWeightKg, 4)} {modal.item.unit}</b> · masuk ke <b>{claimStockCondition === 'RUSAK' ? 'Area Barang Rusak' : 'stok baik'}</b>.</div>
         </div>}
 
         {modal.method === 'GANTI_KARUNG' && <div className="space-y-3 mt-4">
-          <div className="rounded-lg border border-[#854d0e] bg-[#451a03]/20 px-3 py-2 text-xs text-[#fbbf24]">Gunakan bila karung kurang timbang ditarik lalu diganti karung utuh. Sistem menambah selisih bersih dan tetap mengalokasikan pemenuhan ke rincian kendaraan.</div>
+          <div className="rounded-lg border border-[#854d0e] bg-[#451a03]/20 px-3 py-2 text-xs text-[#fbbf24]">{claimStockCondition === 'RUSAK' ? 'Gunakan bila BS kurang timbang ditambah kekurangannya lalu kemasan dijahit/diperbaiki. Saldo rusak lama akan dipindahkan menjadi stok baik utuh di tumpukan yang dipilih.' : 'Gunakan bila kemasan kurang timbang ditarik lalu diganti/diperbaiki menjadi kemasan utuh. Sistem menambah selisih bersih dan tetap mengalokasikan pemenuhan ke rincian kendaraan.'}</div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div><label className="text-xs text-[#8b93a1] block mb-1.5">Jumlah karung pengganti 50 kg</label><input type="number" min="1" step="1" className={inputCls} value={modal.replacementBagCount} onChange={(e) => setModal({...modal,replacementBagCount:e.target.value})}/></div>
-            <div><label className="text-xs text-[#8b93a1] block mb-1.5">Total berat karung lama yang ditarik (kg)</label><input type="number" min="0.01" step="0.01" className={inputCls} value={modal.withdrawnOldWeightKg} onChange={(e) => setModal({...modal,withdrawnOldWeightKg:e.target.value})}/></div>
+            <div><label className="text-xs text-[#8b93a1] block mb-1.5">Jumlah kemasan hasil perbaikan ({fmt(claimUnitWeightKg)} kg/kemasan)</label><input type="number" min="1" step="1" className={inputCls} value={modal.replacementBagCount} onChange={(e) => setModal({...modal,replacementBagCount:e.target.value})}/></div>
+            <div><label className="text-xs text-[#8b93a1] block mb-1.5">Berat aktual kemasan lama/BS yang diperbaiki (kg)</label><input type="number" min="0.01" step="0.01" className={inputCls} value={modal.withdrawnOldWeightKg} onChange={(e) => setModal({...modal,withdrawnOldWeightKg:e.target.value})}/></div>
           </div>
           <div className="rounded-lg border border-[#243044] p-3 text-sm">
             Perhitungan: <b>{Number(modal.replacementBagCount || 0)} × {fmt(claimUnitWeightKg)} kg</b> − <b>{fmt(modal.withdrawnOldWeightKg)} kg</b> = <b className="text-[#86efac]">{fmt(replacementFulfilled)} kg pemenuhan</b>
           </div>
-          {claimStockCondition === 'BAIK' ? <div><label className="text-xs text-[#8b93a1] block mb-1.5">Tumpukan tempat penggantian diterima</label><input list="claim-stack-codes" className={inputCls} value={modal.stackCode} onChange={(e) => setModal({...modal,stackCode:e.target.value.toUpperCase()})} placeholder="Pilih GBB/MP1"/></div> : <div className="text-xs text-[#fbbf24]">Kemasan pengganti untuk klaim BS tetap masuk Area Barang Rusak sampai proses perbaikan/rebagging selesai.</div>}
+          <div><label className="text-xs text-[#8b93a1] block mb-1.5">{claimStockCondition === 'RUSAK' ? 'Tumpukan stok baik setelah dijahit/diperbaiki' : 'Tumpukan tempat penggantian diterima'}</label><input list="claim-stack-codes" className={inputCls} value={modal.stackCode} onChange={(e) => setModal({...modal,stackCode:e.target.value.toUpperCase()})} placeholder="Pilih GBB/MP1"/></div>
+          {claimStockCondition === 'RUSAK' && <div className="rounded-lg border border-[#166534] bg-[#052e16]/30 p-3 text-xs text-[#86efac]">Contoh 2 BS = 15 kg: mitra menambah 5 kg, hasil akhir 2 pack baik. PEPEG mengurangi 1,5 pack-eq dari Area Barang Rusak, menambah 2 pack ke stok baik/tumpukan, sehingga kenaikan total fisik bersih hanya 0,5 pack (5 kg).</div>}
         </div>}
 
         {modal.method === 'ADMINISTRATIF' && <div className="space-y-3 mt-4">
