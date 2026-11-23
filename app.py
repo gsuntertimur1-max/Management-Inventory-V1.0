@@ -8,6 +8,7 @@ from backend.server import app
 import backend.role_four_config  # noqa: F401 - consolidates legacy roles into warehouse roles
 from backend.inventory_flow import router as inventory_flow_router
 from backend.inbound_vehicle_flow import router as inbound_vehicle_flow_router, ensure_inbound_load_indexes
+from backend.partner_variances import router as partner_variances_router, ensure_partner_variance_indexes
 from backend.master_products import router as master_products_router
 from backend.outbound_flow import router as outbound_flow_router
 from backend.outbound_document_master import router as outbound_document_master_router
@@ -100,6 +101,7 @@ app.include_router(cost_payment_hardening_router)
 # performs the per-stack reservation check while these guards serialize product writes.
 app.include_router(operational_guards_router)
 app.include_router(inbound_vehicle_flow_router)
+app.include_router(partner_variances_router)
 app.include_router(inventory_flow_router)
 app.include_router(master_products_router)
 app.include_router(outbound_flow_router)
@@ -150,6 +152,7 @@ async def hardened_lifespan(application):
         await ensure_performance_indexes()
         await ensure_operational_guard_indexes()
         await ensure_inbound_load_indexes()
+        await ensure_partner_variance_indexes()
         await ensure_stack_lot_indexes()
         await ensure_consignment_operation_indexes()
         await ensure_consignment_damaged_indexes()
