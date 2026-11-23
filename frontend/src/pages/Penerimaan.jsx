@@ -204,9 +204,13 @@ const Penerimaan = () => {
         goodQty: Number(item.qty || 0),
         damagedQty: 0,
         rice50kg,
+        unitWeightKg: Number(product?.weight || 0),
+        weightBasedKg: String(product?.measureUnit || 'kg').toLowerCase() === 'kg' && Number(product?.weight || 0) > 0,
         shortBagCount: 0,
         shortBagActualWeightKg: '',
-        shortageClaimReason: 'Karung sobek / tidak utuh saat pembongkaran',
+        damagedPackageCount: 0,
+        damagedActualWeightKg: '',
+        shortageClaimReason: 'Kemasan rusak / kurang timbang saat pembongkaran',
         discrepancyReason: '',
         // Untuk sesi yang mulai sebelum 16.00, biarkan kosong sampai selesai.
         // Jika modal dibuka sebelum 16.00 tetapi disimpan setelah 16.00,
@@ -255,6 +259,24 @@ const Penerimaan = () => {
     }));
   };
 
+  const setDamagedPackageCount = (index, value) => {
+    setCompletion((prev) => ({
+      ...prev,
+      rows: prev.rows.map((row, rowIndex) => {
+        if (rowIndex !== index) return row;
+        const previousCount = Number(row.damagedPackageCount || 0);
+        const nextCount = Math.max(0, Math.floor(Number(value || 0)));
+        const adjustedGood = Math.max(Number(row.goodQty || 0) + previousCount - nextCount, 0);
+        return {
+          ...row,
+          damagedPackageCount: nextCount,
+          goodQty: adjustedGood,
+          damagedActualWeightKg: nextCount > 0 ? row.damagedActualWeightKg : '',
+        };
+      }),
+    }));
+  };
+
   const setActualCompletedAt = (value) => {
     setCompletion((prev) => {
       if (!prev) return prev;
@@ -284,7 +306,9 @@ const Penerimaan = () => {
       const damaged = Number(row.damagedQty || 0);
       const shortCount = row.rice50kg ? Number(row.shortBagCount || 0) : 0;
       const shortActualKg = row.rice50kg && row.shortBagActualWeightKg !== '' ? Number(row.shortBagActualWeightKg) : 0;
-      const documentTotal = intactGood + damaged + shortCount;
+      const damagedPackageCount = row.weightBasedKg ? Number(row.damagedPackageCount || 0) : 0;
+      const damagedActualKg = row.weightBasedKg && row.damagedActualWeightKg !== '' ? Number(row.damagedActualWeightKg) : 0;
+      const documentTotal = intactGood + damaged + shortCount + damagedPackageCount;
       const vehicleVariance = documentTotal - Number(row.plannedQty || 0);
       if (vehicleVariance > 1e-9 && !isMoveInLoad(completion.load)) {
         return toast.error(`${row.name}: jumlah dokumen melebihi rencana kendaraan`);
@@ -299,6 +323,15 @@ const Penerimaan = () => {
           return toast.error(`${row.name}: berat aktual karung tidak utuh maksimal ${formatNum(shortCount * 50)} kg`);
         }
       }
+      if (damagedPackageCount > 0) {
+        if (!row.weightBasedKg) return toast.error(`${row.name}: BS kurang timbang hanya untuk produk berbasis kg`);
+        if (row.damagedActualWeightKg === '') return toast.error(`${row.name}: isi berat aktual BS kurang timbang`);
+        if (!Number.isInteger(damagedPackageCount) || damagedPackageCount < 0) return toast.error(`${row.name}: jumlah kemasan BS harus bilangan bulat`);
+        const expectedDamagedKg = damagedPackageCount * Number(row.unitWeightKg || 0);
+        if (damagedActualKg <= 0 || damagedActualKg > expectedDamagedKg + 1e-9) {
+          return toast.error(`${row.name}: berat aktual BS harus > 0 dan maksimal ${formatNum(expectedDamagedKg)} kg`);
+        }
+      }
       const physicalGood = intactGood + (row.rice50kg && shortCount > 0 ? shortActualKg / 50 : 0);
       if (physicalGood > 0 && !row.stackCode) return toast.error(`Pilih tumpukan barang baik untuk ${row.name}`);
       if (documentTotal > 0 && crossesCutoffNow && row.overtimeQty === '') {
@@ -309,7 +342,7 @@ const Penerimaan = () => {
       }
     }
     const actualTotal = completion.rows.reduce((sum, row) => (
-      sum + Number(row.goodQty || 0) + Number(row.damagedQty || 0) + (row.rice50kg ? Number(row.shortBagCount || 0) : 0)
+      sum + Number(row.goodQty || 0) + Number(row.damagedQty || 0) + (row.rice50kg ? Number(row.shortBagCount || 0) : 0) + (row.weightBasedKg ? Number(row.damagedPackageCount || 0) : 0)
     ), 0);
     if (actualTotal <= 0) return toast.error('Tidak ada jumlah aktual. Jika kendaraan tidak jadi bongkar, gunakan Batalkan.');
 
@@ -322,10 +355,12 @@ const Penerimaan = () => {
           damagedQty: Number(row.damagedQty || 0),
           shortBagCount: row.rice50kg ? Number(row.shortBagCount || 0) : 0,
           shortBagActualWeightKg: row.rice50kg ? Number(row.shortBagActualWeightKg || 0) : 0,
-          shortageClaimReason: row.rice50kg ? String(row.shortageClaimReason || '').trim() : '',
+          damagedPackageCount: row.weightBasedKg ? Number(row.damagedPackageCount || 0) : 0,
+          damagedActualWeightKg: row.weightBasedKg ? Number(row.damagedActualWeightKg || 0) : 0,
+          shortageClaimReason: String(row.shortageClaimReason || '').trim(),
           discrepancyReason: String(row.discrepancyReason || '').trim(),
           overtimeQty: fullOvertimeNow
-            ? Number(row.goodQty || 0) + Number(row.damagedQty || 0) + (row.rice50kg ? Number(row.shortBagCount || 0) : 0)
+            ? Number(row.goodQty || 0) + Number(row.damagedQty || 0) + (row.rice50kg ? Number(row.shortBagCount || 0) : 0) + (row.weightBasedKg ? Number(row.damagedPackageCount || 0) : 0)
             : (crossesCutoffNow ? (row.overtimeQty === '' ? null : Number(row.overtimeQty)) : null),
           stackCode: row.stackCode || '',
           exp: row.exp || '',
@@ -388,7 +423,7 @@ const Penerimaan = () => {
           <thead className="text-[#8b93a1]"><tr><th className="text-left py-2">Komoditi</th><th className="text-right">Rencana</th>{load.status === 'Selesai' && <><th className="text-right">Baik/Fisik</th><th className="text-right">Rusak</th><th className="text-right">Klaim</th><th className="text-right">Lembur</th></>}</tr></thead>
           <tbody>{(load.items || []).map((item) => {
             const actual = (load.actualItems || []).find((row) => row.productId === item.productId);
-            return <tr key={item.productId} className="border-t border-[#1f2937]"><td className="py-2"><div className="font-medium">{item.name}</div><div className="font-mono text-[10px] text-[#8b93a1]">{item.sku || '—'}</div></td><td className="text-right font-mono">{formatNum(item.qty)} {item.unit}</td>{load.status === 'Selesai' && <><td className="text-right font-mono">{formatNum(actual?.goodQty || 0)}{Number(actual?.shortBagCount || 0) > 0 && <div className="text-[9px] text-[#8b93a1]">{formatNum(actual?.intactGoodQty || 0)} utuh + {formatNum(actual?.shortBagActualWeightKg || 0)} kg tidak utuh</div>}</td><td className="text-right font-mono">{formatNum(actual?.damagedQty || 0)}</td><td className="text-right font-mono text-[#fbbf24]">{Number(actual?.shortageClaimWeightKg || 0) > 0 ? `${formatNum(actual.shortageClaimWeightKg)} kg` : '—'}</td><td className="text-right font-mono">{formatNum(actual?.overtimeQty || 0)}</td></>}</tr>;
+            return <tr key={item.productId} className="border-t border-[#1f2937]"><td className="py-2"><div className="font-medium">{item.name}</div><div className="font-mono text-[10px] text-[#8b93a1]">{item.sku || '—'}</div></td><td className="text-right font-mono">{formatNum(item.qty)} {item.unit}</td>{load.status === 'Selesai' && <><td className="text-right font-mono">{formatNum(actual?.goodQty || 0)}{Number(actual?.shortBagCount || 0) > 0 && <div className="text-[9px] text-[#8b93a1]">{formatNum(actual?.intactGoodQty || 0)} utuh + {formatNum(actual?.shortBagActualWeightKg || 0)} kg tidak utuh</div>}</td><td className="text-right font-mono">{formatNum(actual?.damagedQty || 0)}{Number(actual?.damagedPackageCount || 0) > 0 && <div className="text-[9px] text-[#fda4af]">{formatNum(actual?.damagedPackageCount || 0)} kemasan / {formatNum(actual?.damagedActualWeightKg || 0)} kg</div>}</td><td className="text-right font-mono text-[#fbbf24]">{Number(actual?.shortageClaimWeightKg || 0) > 0 ? `${formatNum(actual.shortageClaimWeightKg)} kg` : '—'}</td><td className="text-right font-mono">{formatNum(actual?.overtimeQty || 0)}</td></>}</tr>;
           })}</tbody>
         </table>
       </div>
@@ -425,7 +460,7 @@ const Penerimaan = () => {
     </>}
 
     {shortageClaims.length > 0 && <section>
-      <div className="flex items-center gap-2 mb-3"><AlertTriangle size={17}/><h2 className="font-display text-xl font-bold">Klaim Kekurangan Beras 50 kg</h2></div>
+      <div className="flex items-center gap-2 mb-3"><AlertTriangle size={17}/><h2 className="font-display text-xl font-bold">Klaim Kekurangan Timbang</h2></div>
       <div className="space-y-3">{shortageClaims.slice(0,20).map((group) => <div key={group.groupId || group.poNo} className="card-surface p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -487,9 +522,13 @@ const Penerimaan = () => {
       <div className="space-y-3 mt-4">{completion.rows.map((row, index) => {
         const shortCount = row.rice50kg ? Number(row.shortBagCount || 0) : 0;
         const shortActualKg = row.rice50kg ? Number(row.shortBagActualWeightKg || 0) : 0;
-        const actual = Number(row.goodQty || 0) + Number(row.damagedQty || 0) + shortCount;
+        const damagedPackageCount = row.weightBasedKg ? Number(row.damagedPackageCount || 0) : 0;
+        const damagedActualKg = row.weightBasedKg ? Number(row.damagedActualWeightKg || 0) : 0;
+        const actual = Number(row.goodQty || 0) + Number(row.damagedQty || 0) + shortCount + damagedPackageCount;
         const physicalGood = Number(row.goodQty || 0) + (row.rice50kg && shortCount > 0 ? shortActualKg / 50 : 0);
-        const shortageKg = row.rice50kg ? Math.max(shortCount * 50 - shortActualKg, 0) : 0;
+        const damagedEquivalent = Number(row.damagedQty || 0) + (damagedPackageCount > 0 && Number(row.unitWeightKg || 0) > 0 ? damagedActualKg / Number(row.unitWeightKg) : 0);
+        const shortageKg = (row.rice50kg ? Math.max(shortCount * 50 - shortActualKg, 0) : 0)
+          + (damagedPackageCount > 0 ? Math.max(damagedPackageCount * Number(row.unitWeightKg || 0) - damagedActualKg, 0) : 0);
         const overtime = completion.fullOvertime ? actual : Number(row.overtimeQty || 0);
         const normal = Math.max(actual - overtime, 0);
         return <div key={row.productId} className="rounded-xl border border-[#243044] p-4">
@@ -501,10 +540,11 @@ const Penerimaan = () => {
           </div>
           <div className="mt-3 rounded-lg border border-[#263244] bg-[#0a0f17] p-3">
             <div className="text-[10px] uppercase tracking-wide text-[#8b93a1] mb-2">Kuantum aktual hasil bongkar</div>
-            <div className={`grid grid-cols-1 ${row.rice50kg ? 'sm:grid-cols-3' : 'sm:grid-cols-2'} gap-3`}>
+            <div className={`grid grid-cols-1 ${row.rice50kg || row.weightBasedKg ? 'sm:grid-cols-3' : 'sm:grid-cols-2'} gap-3`}>
               <div><label className="text-xs font-semibold text-[#22c55e]">{row.rice50kg ? 'Karung utuh' : `Baik (${row.unit})`}</label><input type="number" min="0" max={isMoveInLoad(completion.load) ? undefined : row.plannedQty} step={row.rice50kg ? '1' : 'any'} value={row.goodQty} onChange={(e) => setCompleteRow(index,{goodQty:e.target.value})} className="w-full mt-1 bg-[#0b0f17] border border-[#166534] rounded-lg px-3 py-2.5 font-mono"/></div>
-              <div><label className="text-xs font-semibold text-[#f59e0b]">Rusak ({row.unit})</label><input type="number" min="0" max={isMoveInLoad(completion.load) ? undefined : row.plannedQty} step={row.rice50kg ? '1' : 'any'} value={row.damagedQty} onChange={(e) => setCompleteRow(index,{damagedQty:e.target.value})} className="w-full mt-1 bg-[#0b0f17] border border-[#92400e] rounded-lg px-3 py-2.5 font-mono"/></div>
-              {row.rice50kg && <div><label className="text-xs font-semibold text-[#60a5fa]">Karung tidak utuh</label><input type="number" min="0" max={isMoveInLoad(completion.load) ? undefined : row.plannedQty} step="1" value={row.shortBagCount} onChange={(e) => setShortBagCount(index,e.target.value)} className="w-full mt-1 bg-[#0b0f17] border border-[#1d4ed8] rounded-lg px-3 py-2.5 font-mono"/></div>}
+              <div><label className="text-xs font-semibold text-[#f59e0b]">Rusak utuh ({row.unit})</label><input type="number" min="0" max={isMoveInLoad(completion.load) ? undefined : row.plannedQty} step={row.rice50kg ? '1' : 'any'} value={row.damagedQty} onChange={(e) => setCompleteRow(index,{damagedQty:e.target.value})} className="w-full mt-1 bg-[#0b0f17] border border-[#92400e] rounded-lg px-3 py-2.5 font-mono"/></div>
+              {row.rice50kg && <div><label className="text-xs font-semibold text-[#60a5fa]">Karung baik tidak utuh</label><input type="number" min="0" max={isMoveInLoad(completion.load) ? undefined : row.plannedQty} step="1" value={row.shortBagCount} onChange={(e) => setShortBagCount(index,e.target.value)} className="w-full mt-1 bg-[#0b0f17] border border-[#1d4ed8] rounded-lg px-3 py-2.5 font-mono"/></div>}
+              {!row.rice50kg && row.weightBasedKg && <div><label className="text-xs font-semibold text-[#fb7185]">BS kurang timbang (kemasan)</label><input type="number" min="0" max={isMoveInLoad(completion.load) ? undefined : row.plannedQty} step="1" value={row.damagedPackageCount} onChange={(e) => setDamagedPackageCount(index,e.target.value)} className="w-full mt-1 bg-[#0b0f17] border border-[#be123c] rounded-lg px-3 py-2.5 font-mono"/></div>}
             </div>
             {isMoveInLoad(completion.load) && Math.abs(actual - Number(row.plannedQty || 0)) > 1e-9 && <div className={`mt-3 rounded-lg border p-3 ${actual < Number(row.plannedQty || 0) ? 'border-[#92400e] bg-[#1f1408]' : 'border-[#1d4ed8] bg-[#0c1730]'}`}>
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -513,6 +553,20 @@ const Penerimaan = () => {
               </div>
               <label className="text-[10px] text-[#cbd5e1] block mt-2 mb-1">Alasan selisih pengiriman *</label>
               <input value={row.discrepancyReason || ''} onChange={(e) => setCompleteRow(index,{discrepancyReason:e.target.value})} placeholder={actual < Number(row.plannedQty || 0) ? 'Contoh: jumlah fisik kendaraan kurang dari plotting' : 'Contoh: muatan aktual lebih dari rencana kendaraan'} className="w-full bg-[#0b0f17] border border-[#334155] rounded-lg px-3 py-2 text-sm"/>
+            </div>}
+            {row.weightBasedKg && Number(row.damagedPackageCount || 0) > 0 && <div className="mt-3 rounded-lg border border-[#be123c]/60 bg-[#2a0b13] p-3">
+              <div className="text-xs font-semibold text-[#fda4af]">BS / Kemasan Rusak Kurang Timbang</div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
+                <div><label className="text-[10px] text-[#fda4af]">Berat aktual seluruh BS kurang timbang (kg)</label><input type="number" min="0.01" max={Number(row.damagedPackageCount || 0) * Number(row.unitWeightKg || 0)} step="0.01" value={row.damagedActualWeightKg} onChange={(e) => setCompleteRow(index,{damagedActualWeightKg:e.target.value})} className="w-full mt-1 bg-[#0b0f17] border border-[#be123c] rounded-lg px-3 py-2.5 font-mono"/></div>
+                <div><label className="text-[10px] text-[#fda4af]">Alasan / dasar klaim pengirim</label><input value={row.shortageClaimReason} onChange={(e) => setCompleteRow(index,{shortageClaimReason:e.target.value})} className="w-full mt-1 bg-[#0b0f17] border border-[#be123c] rounded-lg px-3 py-2.5 text-sm"/></div>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3 text-xs">
+                <div className="rounded bg-[#0b0f17] p-2"><span className="text-[#8b93a1]">Kemasan fisik</span><div className="font-mono font-semibold">{formatNum(damagedPackageCount)} {row.unit}</div></div>
+                <div className="rounded bg-[#0b0f17] p-2"><span className="text-[#8b93a1]">Seharusnya</span><div className="font-mono font-semibold">{formatNum(damagedPackageCount * Number(row.unitWeightKg || 0))} kg</div></div>
+                <div className="rounded bg-[#0b0f17] p-2"><span className="text-[#8b93a1]">Masuk stok rusak</span><div className="font-mono font-semibold">{formatNum(damagedEquivalent)} {row.unit}</div></div>
+                <div className="rounded bg-[#1f1408] p-2 border border-[#92400e]"><span className="text-[#fbbf24]">Klaim pengirim</span><div className="font-mono font-bold text-[#fbbf24]">{formatNum(Math.max(damagedPackageCount * Number(row.unitWeightKg || 0) - damagedActualKg, 0))} kg</div></div>
+              </div>
+              <p className="text-[10px] text-[#8b93a1] mt-2">Jumlah kemasan fisik tetap tercatat, tetapi saldo Area Barang Rusak hanya bertambah sesuai berat aktual. Kekurangan kg menjadi klaim pengirim.</p>
             </div>}
             {row.rice50kg && Number(row.shortBagCount || 0) > 0 && <div className="mt-3 rounded-lg border border-[#1d4ed8]/60 bg-[#0c1730] p-3">
               <div className="text-xs font-semibold text-[#93c5fd]">Tidak Utuh / Kurang Timbang — Beras 50 kg</div>
