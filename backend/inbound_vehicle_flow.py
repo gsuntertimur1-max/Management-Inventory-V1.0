@@ -74,6 +74,8 @@ class InboundCompleteItem(BaseModel):
     damagedQty: float = Field(default=0, ge=0)
     shortBagCount: int = Field(default=0, ge=0)
     shortBagActualWeightKg: float = Field(default=0, ge=0)
+    damagedPackageCount: int = Field(default=0, ge=0)
+    damagedActualWeightKg: float = Field(default=0, ge=0)
     shortageClaimReason: str = Field(default="", max_length=300)
     discrepancyReason: str = Field(default="", max_length=300)
     overtimeQty: float | None = Field(default=None, ge=0)
@@ -468,13 +470,17 @@ async def complete_inbound_load(load_id: str, body: InboundLoadComplete, user: d
                 raise HTTPException(status_code=404, detail=f"Master produk {planned_item.get('name', '')} tidak ditemukan")
 
             intact_good = float(actual.goodQty or 0)
-            damaged = float(actual.damagedQty or 0)
+            damaged_full = float(actual.damagedQty or 0)
             short_bag_count = int(actual.shortBagCount or 0)
             short_actual_kg = float(actual.shortBagActualWeightKg or 0)
+            damaged_package_count = int(actual.damagedPackageCount or 0)
+            damaged_actual_kg = float(actual.damagedActualWeightKg or 0)
             rice_50kg = is_rice_50kg_product(product)
+            unit_weight_kg = float(product.get("weight", 0) or 0)
+            weight_based_kg = str(product.get("measureUnit") or "kg").strip().lower() == "kg" and unit_weight_kg > 0
 
             if short_bag_count > 0 and not rice_50kg:
-                raise HTTPException(status_code=400, detail=f"Karung tidak utuh hanya dapat digunakan untuk beras 50 kg: {planned_item.get('name', 'produk')}")
+                raise HTTPException(status_code=400, detail=f"Karung tidak utuh lama hanya dapat digunakan untuk beras 50 kg: {planned_item.get('name', 'produk')}")
             if short_bag_count == 0 and short_actual_kg > EPS:
                 raise HTTPException(status_code=400, detail=f"Isi jumlah karung tidak utuh untuk {planned_item.get('name', 'produk')}")
 
@@ -485,12 +491,28 @@ async def complete_inbound_load(load_id: str, body: InboundLoadComplete, user: d
                     detail=f"Berat aktual karung tidak utuh {planned_item.get('name', 'beras')} melebihi berat seharusnya {short_expected_kg:g} kg",
                 )
 
-            # PO/document settles by the number of bags physically presented.
-            # Stock only receives the actual rice weight from torn bags.
-            document_total = intact_good + damaged + float(short_bag_count)
+            if damaged_package_count > 0 and not weight_based_kg:
+                raise HTTPException(status_code=400, detail=f"BS kurang timbang hanya dapat digunakan untuk produk berbasis kg: {planned_item.get('name', 'produk')}")
+            if damaged_package_count == 0 and damaged_actual_kg > EPS:
+                raise HTTPException(status_code=400, detail=f"Isi jumlah kemasan BS untuk {planned_item.get('name', 'produk')}")
+            damaged_expected_kg = float(damaged_package_count) * unit_weight_kg
+            if damaged_package_count > 0 and damaged_actual_kg <= EPS:
+                raise HTTPException(status_code=400, detail=f"Isi berat aktual BS {planned_item.get('name', 'produk')}")
+            if damaged_actual_kg > damaged_expected_kg + EPS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Berat aktual BS {planned_item.get('name', 'produk')} melebihi berat seharusnya {damaged_expected_kg:g} kg",
+                )
+
+            # Dokumen menghitung jumlah kemasan fisik yang datang. Saldo stok menghitung
+            # berat aktual sebagai ekuivalen pack untuk kemasan kurang timbang.
+            document_total = intact_good + damaged_full + float(short_bag_count) + float(damaged_package_count)
             physical_good = intact_good + (short_actual_kg / 50.0 if rice_50kg and short_bag_count > 0 else 0.0)
-            physical_total = physical_good + damaged
-            shortage_weight_kg = max(short_expected_kg - short_actual_kg, 0.0) if rice_50kg else 0.0
+            physical_damaged = damaged_full + (damaged_actual_kg / unit_weight_kg if damaged_package_count > 0 and unit_weight_kg > 0 else 0.0)
+            physical_total = physical_good + physical_damaged
+            legacy_shortage_weight_kg = max(short_expected_kg - short_actual_kg, 0.0) if rice_50kg else 0.0
+            damaged_shortage_weight_kg = max(damaged_expected_kg - damaged_actual_kg, 0.0) if damaged_package_count > 0 else 0.0
+            shortage_weight_kg = legacy_shortage_weight_kg + damaged_shortage_weight_kg
 
             if document_total <= EPS:
                 continue
@@ -552,10 +574,12 @@ async def complete_inbound_load(load_id: str, body: InboundLoadComplete, user: d
                 productId=product_id,
                 qty=physical_total,
                 goodQty=physical_good,
-                damagedQty=damaged,
+                damagedQty=physical_damaged,
                 poReceivedQty=document_total,
                 shortBagCount=short_bag_count,
                 shortBagActualWeightKg=short_actual_kg,
+                damagedPackageCount=damaged_package_count,
+                damagedActualWeightKg=damaged_actual_kg,
                 shortageClaimReason=actual.shortageClaimReason.strip() or ("Karung sobek / tidak utuh saat pembongkaran" if shortage_weight_kg > EPS else ""),
                 normalQtyBefore1600=normal,
                 exp=actual.exp.strip() or str(planned_item.get("exp") or ""),
@@ -570,12 +594,17 @@ async def complete_inbound_load(load_id: str, body: InboundLoadComplete, user: d
                 "plannedQty": planned_qty,
                 "goodQty": physical_good,
                 "intactGoodQty": intact_good,
-                "damagedQty": damaged,
+                "damagedQty": physical_damaged,
+                "damagedFullQty": damaged_full,
+                "damagedPackageCount": damaged_package_count,
+                "damagedActualWeightKg": damaged_actual_kg,
+                "damagedExpectedWeightKg": damaged_expected_kg,
+                "damagedShortageWeightKg": damaged_shortage_weight_kg,
                 "shortBagCount": short_bag_count,
                 "shortBagActualWeightKg": short_actual_kg,
                 "shortBagExpectedWeightKg": short_expected_kg,
                 "shortageClaimWeightKg": shortage_weight_kg,
-                "shortageClaimReason": actual.shortageClaimReason.strip() or ("Karung sobek / tidak utuh saat pembongkaran" if shortage_weight_kg > EPS else ""),
+                "shortageClaimReason": actual.shortageClaimReason.strip() or ("Kemasan rusak / kurang timbang saat pembongkaran" if shortage_weight_kg > EPS else ""),
                 "physicalActualQty": physical_total,
                 "documentActualQty": document_total,
                 "actualQty": physical_total,
