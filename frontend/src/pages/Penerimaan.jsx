@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, CalendarClock, CheckCircle2, Clock3, Play, Printer, RefreshCcw, RotateCcw, Truck, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
@@ -65,10 +65,13 @@ const isMoveInLoad = (load) => String(load?.sourceType || '').toUpperCase() === 
   || String(load?.poNo || '').toUpperCase().startsWith('PLT-IN/');
 
 const Penerimaan = () => {
-  const { products, settings, fetchAll, user } = useData();
+  const { products, settings, user } = useData();
   const navigate = useNavigate();
   const STACKS = stackCodes(settings?.warehouses);
-  const [loads, setLoads] = useState([]);
+  const [active, setActive] = useState([]);
+  const [history, setHistory] = useState([]);
+  const [historyTotal, setHistoryTotal] = useState(0);
+  const [completedTotal, setCompletedTotal] = useState(0);
   const [shortageClaims, setShortageClaims] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
@@ -77,42 +80,38 @@ const Penerimaan = () => {
   const [cancelModal, setCancelModal] = useState(null);
   const [historyPage, setHistoryPage] = useState(1);
   const completionModalRef = useRef(null);
+  const historyPageSize = 10;
 
   const loadAll = useCallback(async () => {
     try {
-      const [loadsResponse, claimsResponse] = await Promise.all([
-        api.get('/inbound-loads'),
+      const [activeResponse, historyResponse, claimsResponse] = await Promise.all([
+        api.get('/inbound-loads?view=active'),
+        api.get(`/inbound-loads?view=history&page=${historyPage}&pageSize=${historyPageSize}`),
         api.get('/inbound-shortage-claim-groups'),
       ]);
-      setLoads(Array.isArray(loadsResponse.data) ? loadsResponse.data : []);
+      const historyPayload = historyResponse.data || {};
+      setActive(Array.isArray(activeResponse.data) ? activeResponse.data : []);
+      setHistory(Array.isArray(historyPayload.items) ? historyPayload.items : []);
+      setHistoryTotal(Number(historyPayload.total || 0));
+      setCompletedTotal(Number(historyPayload.completed || 0));
       setShortageClaims(Array.isArray(claimsResponse.data) ? claimsResponse.data : []);
     } catch (error) {
       toast.error(apiError(error));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [historyPage]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
-  const active = useMemo(
-    () => loads.filter((row) => ['Menunggu Bongkar', 'Sedang Bongkar'].includes(row.status)),
-    [loads],
-  );
-  const history = useMemo(
-    () => loads.filter((row) => ['Selesai', 'Dibatalkan'].includes(row.status)),
-    [loads],
-  );
   const canBackdateStart = ['Administrator', 'Superadmin', 'Supervisor', 'Admin', 'Admin Operasional'].includes(String(user?.role || ''));
   const isSuperadmin = String(user?.role || '').trim().toLowerCase() === 'superadmin';
   const backdateLimitLabel = isSuperadmin ? '3 bulan' : '7 hari';
-  const historyPageSize = 10;
-  const paginatedHistory = history.slice((historyPage - 1) * historyPageSize, historyPage * historyPageSize);
 
   useEffect(() => {
-    const maxPage = Math.max(1, Math.ceil(history.length / historyPageSize));
+    const maxPage = Math.max(1, Math.ceil(historyTotal / historyPageSize));
     if (historyPage > maxPage) setHistoryPage(maxPage);
-  }, [history.length, historyPage]);
+  }, [historyTotal, historyPage]);
 
   useEffect(() => {
     if (!completion?.load?.id) return;
@@ -447,15 +446,15 @@ const Penerimaan = () => {
     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
       <div className="card-surface p-4"><div className="text-xs text-[#8b93a1]">Menunggu / Bongkar</div><div className="font-display text-2xl font-bold mt-1">{active.length}</div></div>
       <div className="card-surface p-4"><div className="text-xs text-[#8b93a1]">Sedang Bongkar</div><div className="font-display text-2xl font-bold mt-1 text-[#60a5fa]">{active.filter((x) => x.status === 'Sedang Bongkar').length}</div></div>
-      <div className="card-surface p-4"><div className="text-xs text-[#8b93a1]">Selesai</div><div className="font-display text-2xl font-bold mt-1 text-[#22c55e]">{history.filter((x) => x.status === 'Selesai').length}</div></div>
+      <div className="card-surface p-4"><div className="text-xs text-[#8b93a1]">Selesai</div><div className="font-display text-2xl font-bold mt-1 text-[#22c55e]">{completedTotal}</div></div>
     </div>
 
     {loading ? <div className="card-surface p-10 text-center text-[#8b93a1]">Memuat kendaraan...</div> : <>
       <section><div className="flex items-center gap-2 mb-3"><Clock3 size={17}/><h2 className="font-display text-xl font-bold">Kendaraan Aktif</h2></div><div className="space-y-3">{active.length ? active.map(renderLoad) : <div className="card-surface p-8 text-center text-[#6b7688]">Tidak ada kendaraan menunggu bongkar.</div>}</div></section>
       <section>
         <div className="flex items-center gap-2 mb-3"><RotateCcw size={17}/><h2 className="font-display text-xl font-bold">Riwayat Kendaraan</h2></div>
-        <div className="space-y-3">{paginatedHistory.map(renderLoad)}</div>
-        <PaginationControls page={historyPage} totalItems={history.length} pageSize={historyPageSize} onChange={setHistoryPage} label="transaksi penerimaan" />
+        <div className="space-y-3">{history.map(renderLoad)}</div>
+        <PaginationControls page={historyPage} totalItems={historyTotal} pageSize={historyPageSize} onChange={setHistoryPage} label="transaksi penerimaan" />
       </section>
     </>}
 
