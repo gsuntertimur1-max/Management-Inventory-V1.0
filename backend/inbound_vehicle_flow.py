@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from collections import defaultdict
 from datetime import datetime
 
@@ -42,6 +44,7 @@ async def ensure_inbound_load_indexes() -> None:
     await db.inbound_loads.create_index("loadNo", unique=True)
     await db.inbound_loads.create_index([("poId", 1), ("status", 1)])
     await db.inbound_loads.create_index([("createdAt", -1)])
+    await db.inbound_loads.create_index([("status", 1), ("createdAt", -1)])
 
 
 class InboundPlanItem(BaseModel):
@@ -149,7 +152,43 @@ def _started_minutes(value: str) -> int | None:
 
 
 @router.get("/inbound-loads")
-async def list_inbound_loads(user: dict = Depends(get_current_user)):
+async def list_inbound_loads(
+    view: str = "",
+    page: int = 1,
+    pageSize: int = 10,
+    user: dict = Depends(get_current_user),
+):
+    normalized_view = str(view or "").strip().lower()
+    safe_page = max(int(page or 1), 1)
+    safe_page_size = min(max(int(pageSize or 10), 1), 100)
+
+    if normalized_view == "active":
+        return await db.inbound_loads.find(
+            {"status": {"$in": ACTIVE_STATUSES}},
+            {"_id": 0},
+        ).sort("createdAt", -1).to_list(500)
+
+    if normalized_view == "history":
+        history_query = {"status": {"$in": ["Selesai", "Dibatalkan"]}}
+        skip = (safe_page - 1) * safe_page_size
+        total, completed, items = await asyncio.gather(
+            db.inbound_loads.count_documents(history_query),
+            db.inbound_loads.count_documents({"status": "Selesai"}),
+            db.inbound_loads.find(history_query, {"_id": 0})
+                .sort("createdAt", -1)
+                .skip(skip)
+                .limit(safe_page_size)
+                .to_list(safe_page_size),
+        )
+        return {
+            "items": items,
+            "total": total,
+            "completed": completed,
+            "page": safe_page,
+            "pageSize": safe_page_size,
+        }
+
+    # Backward-compatible response for existing callers.
     return await db.inbound_loads.find({}, {"_id": 0}).sort("createdAt", -1).to_list(1000)
 
 
