@@ -219,18 +219,24 @@ async def export_purchase_order_receiving_recap_pdf(po_id: str, user: dict = Dep
             product_id = str(item.get("productId") or "")
             po_item = po_items.get(product_id, {})
             weight = float(po_item.get("weight", 0) or 0)
-            document_qty = float(item.get("documentActualQty", item.get("plannedQty", 0)) or 0)
+            planned_qty = float(item.get("plannedQty", 0) or 0)
+            if planned_qty <= 0:
+                planned_qty = float(next(
+                    (x.get("qty", 0) for x in (load.get("items") or []) if str(x.get("productId") or "") == product_id),
+                    0,
+                ) or 0)
+            actual_qty = float(item.get("documentActualQty", item.get("actualQty", planned_qty)) or 0)
             damaged_qty = float(item.get("damagedQty", 0) or 0)
             physical_good_qty = float(item.get("goodQty", 0) or 0)
             shortage_kg = float(item.get("shortageClaimWeightKg", 0) or 0)
 
-            sj_koli += document_qty
-            sj_netto += document_qty * weight
-            received_koli += document_qty
+            sj_koli += planned_qty
+            sj_netto += planned_qty * weight
+            received_koli += actual_qty
             bad_koli += damaged_qty
             bad_netto += damaged_qty * weight
             shortage_netto += shortage_kg
-            good_koli += max(document_qty - damaged_qty, 0)
+            good_koli += physical_good_qty
             good_netto += physical_good_qty * weight
 
             stack = str(item.get("stackCode") or "").strip().upper()
@@ -269,6 +275,15 @@ async def export_purchase_order_receiving_recap_pdf(po_id: str, user: dict = Dep
                 note_parts.append("EXP: " + ", ".join(expiries))
             chargeable = float((load.get("unloadingCost") or {}).get("chargeable", 0) or 0)
             note_parts.append(f"Biaya bongkar Rp {_num(chargeable)}")
+        variance_shortage_koli = abs(variance_koli) if variance_koli < -1e-9 else 0.0
+        variance_excess_koli = variance_koli if variance_koli > 1e-9 else 0.0
+        if variance_shortage_koli > 0:
+            variance_label = f"Kurang {_num(variance_shortage_koli)}"
+        elif variance_excess_koli > 0:
+            variance_label = f"Lebih {_num(variance_excess_koli)}"
+        else:
+            variance_label = "Sesuai"
+
         return {
             "date_key": completed.strftime("%Y-%m-%d"),
             "date_label": completed.strftime("%d-%m-%Y"),
@@ -276,6 +291,9 @@ async def export_purchase_order_receiving_recap_pdf(po_id: str, user: dict = Dep
             "sj_koli": sj_koli,
             "sj_netto": sj_netto,
             "received_koli": received_koli,
+            "variance_shortage_koli": variance_shortage_koli,
+            "variance_excess_koli": variance_excess_koli,
+            "variance_label": variance_label,
             "bad_koli": bad_koli,
             "bad_netto": bad_netto,
             "shortage_netto": shortage_netto,
@@ -335,7 +353,7 @@ async def export_purchase_order_receiving_recap_pdf(po_id: str, user: dict = Dep
     ]
     if plotting:
         allocations = list(plotting.get("documentAllocations") or [])
-        def document_text(doc_type: str) -> str:
+        def document_text(doc_type: str, unit_suffix: str = "") -> str:
             docs = []
             for item in allocations:
                 if str(item.get("documentType") or "").upper() != doc_type:
@@ -343,26 +361,20 @@ async def export_purchase_order_receiving_recap_pdf(po_id: str, user: dict = Dep
                 text = str(item.get("documentNo") or "-")
                 if item.get("documentDate"):
                     text += f" · {item.get('documentDate')}"
-                text += f" · {_num(float(item.get('qty', 0) or 0))}"
+                qty_text = _num(float(item.get("qty", 0) or 0))
+                text += f" · {qty_text}{(' ' + unit_suffix) if unit_suffix else ''}"
                 docs.append(text)
             return "<br/>".join(escape(x) for x in docs) if docs else "Pending"
 
-        tm_total = sum(float(item.get("qty", 0) or 0) for item in allocations if str(item.get("documentType") or "").upper() == "TM")
-        mo_total = sum(float(item.get("qty", 0) or 0) for item in allocations if str(item.get("documentType") or "").upper() == "MO")
-        admin_summary = f"TM {_num(tm_total)}"
-        if plotting.get("scope") in ("REBAGGING", "REPROSES"):
-            admin_summary += f" · MO {_num(mo_total)}"
         meta_rows = [
             [Paragraph("Nomor Plotting", meta_label), Paragraph(str(po.get("no") or "-"), meta_value),
              Paragraph("Pengirim", meta_label), Paragraph(str(po.get("supplier") or "-"), meta_value)],
-            [Paragraph("Cakupan", meta_label), Paragraph(str(plotting.get("scope") or "-"), meta_value),
+            [Paragraph("TM", meta_label), Paragraph(document_text("TM", "kg"), meta_value),
              Paragraph("MO", meta_label), Paragraph(document_text("MO") if plotting.get("scope") in ("REBAGGING", "REPROSES") else "Tidak berlaku", meta_value)],
-            [Paragraph("TM", meta_label), Paragraph(document_text("TM"), meta_value),
-             Paragraph("Gudang", meta_label), Paragraph(str(warehouse), meta_value)],
             [Paragraph("Jenis Barang", meta_label), Paragraph("<br/>".join(escape(x) for x in product_names) or "-", meta_value),
-             Paragraph("Jumlah Kendaraan", meta_label), Paragraph(_num(len(rows)), meta_value)],
+             Paragraph("Gudang", meta_label), Paragraph(str(warehouse), meta_value)],
             [Paragraph("Periode Penerimaan", meta_label), Paragraph(period, meta_value),
-             Paragraph("Alokasi Dokumen", meta_label), Paragraph(admin_summary, meta_value)],
+             Paragraph("Jumlah Kendaraan", meta_label), Paragraph(_num(len(rows)), meta_value)],
         ]
     else:
         meta_rows = [
@@ -384,11 +396,11 @@ async def export_purchase_order_receiving_recap_pdf(po_id: str, user: dict = Dep
     story.extend([meta, Spacer(1, 4 * mm)])
 
     header1 = [
-        "NO", "TGL", "NOPOL", "SURAT JALAN", "", "PENERIMAAN", "", "", "",
+        "NO", "TGL", "NOPOL", "SURAT JALAN / RENCANA", "", "PENERIMAAN", "", "", "", "",
         "TERIMA BAIK", "", "TUMPUKAN", "UJI TIMBANG", "KETERANGAN MITRA",
     ]
     header2 = [
-        "", "", "", "KOLI", "NETTO / KG", "TERIMA KOLI", "BS KOLI", "BS NETTO / KG",
+        "", "", "", "KOLI", "NETTO / KG", "TERIMA KOLI", "SELISIH KIRIM", "BS KOLI", "BS NETTO / KG",
         "KURANG NETTO / KG", "KOLI", "TOTAL / KG", "", "", "",
     ]
     table_data = [
@@ -399,9 +411,19 @@ async def export_purchase_order_receiving_recap_pdf(po_id: str, user: dict = Dep
     row_number = 1
 
     grand = {
-        "sj_koli": 0.0, "sj_netto": 0.0, "received_koli": 0.0, "bad_koli": 0.0,
-        "bad_netto": 0.0, "shortage_netto": 0.0, "good_koli": 0.0, "good_netto": 0.0,
+        "sj_koli": 0.0, "sj_netto": 0.0, "received_koli": 0.0,
+        "variance_shortage_koli": 0.0, "variance_excess_koli": 0.0,
+        "bad_koli": 0.0, "bad_netto": 0.0, "shortage_netto": 0.0,
+        "good_koli": 0.0, "good_netto": 0.0,
     }
+
+    def variance_total_label(values: dict) -> str:
+        parts = []
+        if float(values.get("variance_shortage_koli", 0) or 0) > 1e-9:
+            parts.append(f"Kurang {_num(values['variance_shortage_koli'])}")
+        if float(values.get("variance_excess_koli", 0) or 0) > 1e-9:
+            parts.append(f"Lebih {_num(values['variance_excess_koli'])}")
+        return " / ".join(parts) if parts else "Sesuai"
     grand_weighing = []
 
     for date_key in sorted(grouped):
@@ -422,6 +444,7 @@ async def export_purchase_order_receiving_recap_pdf(po_id: str, user: dict = Dep
                 Paragraph(_num(row["sj_koli"]), tiny),
                 Paragraph(_num(row["sj_netto"]), tiny),
                 Paragraph(_num(row["received_koli"]), tiny),
+                Paragraph(escape(row["variance_label"]), tiny_bold),
                 Paragraph(_num(row["bad_koli"]) if row["bad_koli"] else "-", tiny),
                 Paragraph(_num(row["bad_netto"]) if row["bad_netto"] else "-", tiny),
                 Paragraph(_num(row["shortage_netto"]) if row["shortage_netto"] else "-", tiny),
@@ -442,6 +465,7 @@ async def export_purchase_order_receiving_recap_pdf(po_id: str, user: dict = Dep
             Paragraph(_num(day["sj_koli"]), tiny_bold),
             Paragraph(_num(day["sj_netto"]), tiny_bold),
             Paragraph(_num(day["received_koli"]), tiny_bold),
+            Paragraph(escape(variance_total_label(day)), tiny_bold),
             Paragraph(_num(day["bad_koli"]) if day["bad_koli"] else "-", tiny_bold),
             Paragraph(_num(day["bad_netto"]) if day["bad_netto"] else "-", tiny_bold),
             Paragraph(_num(day["shortage_netto"]) if day["shortage_netto"] else "-", tiny_bold),
@@ -459,6 +483,7 @@ async def export_purchase_order_receiving_recap_pdf(po_id: str, user: dict = Dep
         Paragraph(_num(grand["sj_koli"]), tiny_bold),
         Paragraph(_num(grand["sj_netto"]), tiny_bold),
         Paragraph(_num(grand["received_koli"]), tiny_bold),
+        Paragraph(escape(variance_total_label(grand)), tiny_bold),
         Paragraph(_num(grand["bad_koli"]) if grand["bad_koli"] else "-", tiny_bold),
         Paragraph(_num(grand["bad_netto"]) if grand["bad_netto"] else "-", tiny_bold),
         Paragraph(_num(grand["shortage_netto"]) if grand["shortage_netto"] else "-", tiny_bold),
@@ -470,8 +495,8 @@ async def export_purchase_order_receiving_recap_pdf(po_id: str, user: dict = Dep
     ])
 
     col_widths = [
-        8 * mm, 18 * mm, 24 * mm, 14 * mm, 18 * mm, 17 * mm, 14 * mm,
-        18 * mm, 19 * mm, 15 * mm, 20 * mm, 24 * mm, 17 * mm, 32 * mm,
+        8 * mm, 18 * mm, 22 * mm, 14 * mm, 18 * mm, 16 * mm, 20 * mm, 13 * mm,
+        17 * mm, 18 * mm, 14 * mm, 19 * mm, 22 * mm, 16 * mm, 26 * mm,
     ]
     table = LongTable(table_data, colWidths=col_widths, repeatRows=2, hAlign="CENTER")
     style = [
@@ -480,8 +505,8 @@ async def export_purchase_order_receiving_recap_pdf(po_id: str, user: dict = Dep
         ("BACKGROUND", (0, 0), (-1, 1), colors.HexColor("#E7EFF3")),
         ("TEXTCOLOR", (0, 0), (-1, 1), colors.black),
         ("SPAN", (0, 0), (0, 1)), ("SPAN", (1, 0), (1, 1)), ("SPAN", (2, 0), (2, 1)),
-        ("SPAN", (3, 0), (4, 0)), ("SPAN", (5, 0), (8, 0)), ("SPAN", (9, 0), (10, 0)),
-        ("SPAN", (11, 0), (11, 1)), ("SPAN", (12, 0), (12, 1)), ("SPAN", (13, 0), (13, 1)),
+        ("SPAN", (3, 0), (4, 0)), ("SPAN", (5, 0), (9, 0)), ("SPAN", (10, 0), (11, 0)),
+        ("SPAN", (12, 0), (12, 1)), ("SPAN", (13, 0), (13, 1)), ("SPAN", (14, 0), (14, 1)),
         ("LEFTPADDING", (0, 0), (-1, -1), 0.8 * mm),
         ("RIGHTPADDING", (0, 0), (-1, -1), 0.8 * mm),
         ("TOPPADDING", (0, 0), (-1, -1), 1.0 * mm),
