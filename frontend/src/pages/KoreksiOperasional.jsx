@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { FilePenLine, RefreshCcw, RotateCcw, Search, ShieldAlert } from 'lucide-react';
+import { FilePenLine, RefreshCcw, RotateCcw, Search, ShieldAlert, X } from 'lucide-react';
 import { toast } from 'sonner';
 import api, { apiError } from '../lib/api';
 import { useData } from '../context/DataContext';
@@ -197,11 +197,43 @@ const KoreksiOperasional = () => {
         </div>
       )}
 
-      {receiptCorrection && <div className="card-surface p-5 border border-[#7f1d1d]">
-        <h2 className="font-display text-xl font-bold">Konfirmasi Reversal Penerimaan</h2>
-        <p className="text-sm text-[#8b93a1] mt-1">Seluruh penerimaan <span className="font-mono text-[#e7ebf2]">{receiptCorrection.ref}</span> pada operasi ini akan dibalik. Setelah itu input ulang penerimaan dengan data yang benar.</p>
-        <textarea rows="3" value={receiptReason} onChange={(e) => setReceiptReason(e.target.value)} placeholder="Alasan wajib, contoh: salah input kuantum penerimaan" className="w-full mt-4 bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#ef4444]" />
-        <div className="flex gap-2 justify-end mt-3"><button disabled={Boolean(busy)} onClick={() => setReceiptCorrection(null)} className="px-4 py-2 rounded-lg border border-[#242f3d]">Batal</button><button disabled={Boolean(busy)} onClick={submitReceiptCorrection} className="px-4 py-2 rounded-lg bg-[#b91c1c] text-white disabled:opacity-50">{busy ? 'Memproses...' : 'Buat Reversal'}</button></div>
+      {receiptCorrection && <div className="fixed inset-0 z-[120] bg-black/75 overflow-y-auto flex items-start sm:items-center justify-center p-4 sm:p-6">
+        <div className="card-surface w-full max-w-2xl p-5 sm:p-6 border border-[#7f1d1d] shadow-2xl">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="label-mono text-[9px] text-[#fca5a5] mb-1">KOREKSI PENERIMAAN SELESAI</div>
+              <h2 className="font-display text-xl font-bold">Konfirmasi Reversal Penerimaan</h2>
+              <p className="text-sm text-[#8b93a1] mt-1">Seluruh penerimaan <span className="font-mono text-[#e7ebf2]">{receiptCorrection.ref}</span> pada operasi ini akan dibalik. Setelah itu input ulang penerimaan dengan data yang benar.</p>
+            </div>
+            <button disabled={Boolean(busy)} onClick={() => setReceiptCorrection(null)} className="shrink-0 p-2 rounded-lg border border-[#242f3d] hover:bg-[#141a24] disabled:opacity-50" aria-label="Tutup">
+              <X size={16} />
+            </button>
+          </div>
+
+          <div className="mt-4 rounded-lg border border-[#3f1d1d] bg-[#1f0d0d] p-3">
+            <div className="text-xs text-[#fca5a5] font-semibold">Data yang akan direversal</div>
+            <div className="text-xs text-[#cbd5e1] mt-1">{displayDate(receiptCorrection.time)} · PO {receiptCorrection.poNo || '—'} · {receiptCorrection.party || '—'}</div>
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {(receiptCorrection.items || []).map((item, index) => (
+                <div key={`${item.transactionId}-modal-${index}`} className="rounded-lg border border-[#382020] bg-[#0b0f17] p-3">
+                  <div className="font-medium text-sm">{item.product}</div>
+                  <div className="text-xs text-[#8b93a1] mt-1">{item.sku || '—'} · {qtyText(item)} · Lokasi {item.receiptLocation || item.stackCode || '—'}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <label className="block text-xs text-[#cbd5e1] mt-4 mb-1.5">Alasan koreksi <span className="text-[#f87171]">*</span></label>
+          <textarea autoFocus rows="3" value={receiptReason} onChange={(e) => setReceiptReason(e.target.value)} placeholder="Contoh: salah input kuantum penerimaan kendaraan" className="w-full bg-[#0b0f17] border border-[#242f3d] rounded-lg px-3 py-2.5 text-sm outline-none focus:border-[#ef4444]" />
+          <div className="text-[10px] text-[#6b7688] mt-1">Minimal 3 karakter. Reversal akan tercatat pada audit trail dan stok/tumpukan dikembalikan secara otomatis.</div>
+
+          <div className="flex flex-col-reverse sm:flex-row gap-2 justify-end mt-5">
+            <button disabled={Boolean(busy)} onClick={() => setReceiptCorrection(null)} className="px-4 py-2 rounded-lg border border-[#242f3d] disabled:opacity-50">Batal</button>
+            <button disabled={Boolean(busy) || receiptReason.trim().length < 3} onClick={submitReceiptCorrection} className="px-4 py-2 rounded-lg bg-[#b91c1c] text-white disabled:opacity-40 disabled:cursor-not-allowed">
+              {busy ? 'Memproses...' : 'Buat Reversal'}
+            </button>
+          </div>
+        </div>
       </div>}
 
       {outboundCorrection && <div className="card-surface p-5 border border-[#1d4ed8]">
