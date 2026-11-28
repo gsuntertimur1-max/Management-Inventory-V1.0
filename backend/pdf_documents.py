@@ -178,8 +178,18 @@ async def export_purchase_order_receiving_recap_pdf(po_id: str, user: dict = Dep
             {"_id": 0},
         )
 
+    # Rekap hanya menampilkan penerimaan aktif yang benar-benar berlaku.
+    # Kendaraan yang sudah direversal tetap disimpan sebagai status Selesai
+    # untuk audit, tetapi harus dikeluarkan dari rekap operasional/PDF.
     loads = await db.inbound_loads.find(
-        {"poId": po_id, "status": "Selesai"},
+        {
+            "poId": po_id,
+            "status": "Selesai",
+            "$or": [
+                {"reversedAt": {"$exists": False}},
+                {"reversedAt": {"$in": ["", None]}},
+            ],
+        },
         {"_id": 0},
     ).sort("completedAt", 1).to_list(5000)
     if not loads:
